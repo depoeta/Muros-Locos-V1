@@ -3,1256 +3,1940 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useRef, useState } from 'react';
-import {
-  aplicarMovimiento,
-  aplicarMuro,
-  avanzarTurno,
-  bfsCamino,
-  calcularDesglosePuntos,
-  calcularJugadaBot,
-  inicializarPartida,
-  movimientosLegales,
-  registrarResultadoRondaTorneo,
-  reiniciarTableroParaSiguienteRonda,
-} from './game/murosLocosEngine';
-import {
-  actualizarDespuesDePartida,
-  cargarAjustes,
-  cargarRanking,
-  cerrarSesion,
-  guardarAjustes,
-  obtenerUsuarioActual,
-  penalizarAbandono,
-  sincronizarConNube,
-  verificarCambiosUsuario,
-} from './game/storage';
-import { onlineService } from './game/onlineService';
-import { sounds } from './audio/murosAudio';
+import React, { useEffect, useMemo, useState } from 'react';
+import confetti from 'canvas-confetti';
+import { sounds } from '../audio/murosAudio';
 import {
   AchievementDef,
   AppSettings,
-  Coord,
+  BoardTheme,
   GameState,
+  HatType,
   LevelInfo,
-  MatchConfig,
+  MatchResultRecord,
+  RankEntry,
   ScoreBreakdown,
-  Screen,
+  TorneoState,
   UserAccount,
-  WallOrientation,
-} from './types/murosLocos';
-import { ActionBar, HistorialPanel, PlayerCards } from './components/GameControls';
+} from '../types/murosLocos';
+import { CartoonCharacter } from './CartoonCharacter';
 import {
-  AdminPanelModal,
-  AjustesModal,
-  ComoSeJuegaModal,
-  LogrosModal,
-  OnlineDisconnectModal,
-  PerfilModal,
-  RankingModal,
-  TorneoModal,
-  VictoryModal,
-} from './components/Modals';
-import { ConfigScreen } from './components/ConfigScreen';
-import { MenuScreen } from './components/MenuScreen';
-import { MurosBoard } from './components/MurosBoard';
-import { OnlineLobbyScreen } from './components/OnlineLobbyScreen';
-
-export default function App() {
-  const [pantalla, setPantalla] = useState<Screen>('menu');
-  const [esModoTorneoConfig, setEsModoTorneoConfig] = useState<boolean>(false);
-  const [modalAbierto, setModalAbierto] = useState<
-    'ranking' | 'logros' | 'como_jugar' | 'ajustes' | 'victoria' | 'torneo' | 'perfil' | 'admin' | null
-  >(null);
-  const [mostrarHistorial, setMostrarHistorial] = useState<boolean>(false);
-  const [confirmandoAbandono, setConfirmandoAbandono] = useState<boolean>(false);
-  const [desconexionSegundos, setDesconexionSegundos] = useState<number | null>(null);
-  const [usuarioActual, setUsuarioActual] = useState<UserAccount | null>(() => obtenerUsuarioActual());
-
-  const [ajustes, setAjustes] = useState<AppSettings>(() => cargarAjustes());
-  const [estado, setEstado] = useState<GameState>(() =>
-    inicializarPartida({
-      numJugadores: 2,
-      jugadores: [
-        { nombre: 'Tú', tipo: 'humano' },
-        { nombre: 'Bot Normal', tipo: 'bot_normal' },
-      ],
-      empiezaAlAzar: false,
-      permitirDeshacer: true,
-      permitirPistas: true,
-      modoConTiempo: false,
-      segundosPorTurno: 30,
-    })
-  );
-
-  const [bloqueadoPorAnimacion, setBloqueadoPorAnimacion] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [desgloses, setDesgloses] = useState<Map<number, ScoreBreakdown>>(new Map());
-  const [nuevosLogros, setNuevosLogros] = useState<Map<string, AchievementDef[]>>(new Map());
-  const [subidasNivel, setSubidasNivel] = useState<Map<string, { anterior: LevelInfo; nuevo: LevelInfo }>>(
-    new Map()
-  );
-
-  const startTimeRef = useRef<number>(Date.now());
-  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const modalPrevioRef = useRef<string | null>(null);
-
-  // Global exception safety
-  useEffect(() => {
-    const handleErr = () => {
-      showToast('Ups, algo falló. La partida sigue.');
-    };
-    window.addEventListener('error', handleErr);
-    window.addEventListener('unhandledrejection', handleErr);
-    return () => {
-      window.removeEventListener('error', handleErr);
-      window.removeEventListener('unhandledrejection', handleErr);
-    };
-  }, []);
-
-  // Detect ?sala=CODE on initial load
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('sala')) {
-        setPantalla('online_lobby');
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  // Sincronizar automáticamente con Cloudflare KV al cargar la web
-  useEffect(() => {
-    sincronizarConNube(false).catch(() => {});
-  }, []);
-
-  // Monitorizar cambios en la cuenta del usuario en tiempo real (eliminación, admin, clave, nombre)
-  useEffect(() => {
-    if (!usuarioActual) return;
-
-    const chequearCuenta = async () => {
-      await sincronizarConNube(false).catch(() => {});
-      const res = verificarCambiosUsuario(usuarioActual);
-      if (res.eliminado) {
-        cerrarSesion();
-        setUsuarioActual(null);
-        if (modalAbierto === 'perfil' || modalAbierto === 'admin') {
-          setModalAbierto(null);
-        }
-        showToast(res.mensaje || '⚠️ Tu cuenta ha sido eliminada por el administrador.');
-      } else if (res.cambiado && res.usuarioActualizado) {
-        setUsuarioActual(res.usuarioActualizado);
-        if (res.mensaje) {
-          showToast(res.mensaje);
-        }
-      }
-    };
-
-    const intervalId = setInterval(chequearCuenta, 5000);
-    window.addEventListener('storage', chequearCuenta);
-
-    return () => {
-      clearInterval(intervalId);
-      window.removeEventListener('storage', chequearCuenta);
-    };
-  }, [usuarioActual, modalAbierto]);
-
-  const showToast = (msg: string) => {
-    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
-    setToastMessage(msg);
-    toastTimeoutRef.current = setTimeout(() => {
-      setToastMessage(null);
-    }, 2800);
-  };
-
-  // Wire Online P2P Callbacks
-  useEffect(() => {
-    onlineService.setCallbacks({
-      onLobbyFull: (maxPlayers) => {
-        // Auto-start immediately when the other player enters!
-        if (onlineService.getRole() === 'host') {
-          handleIniciarPartidaOnline(maxPlayers);
-        }
-      },
-      onGameStart: (initialState) => {
-        const myId = onlineService.getMyPlayerId();
-        const role = onlineService.getRole();
-        setEstado({
-          ...initialState,
-          miJugadorId: myId,
-          esAnfitrion: role === 'host',
-          modoOnline: true,
-        });
-        setPantalla('juego');
-        setModalAbierto(null);
-        setMostrarHistorial(false);
-        setConfirmandoAbandono(false);
-        setDesconexionSegundos(null);
-        sounds.playTurn();
-      },
-      onStateSync: (syncedState) => {
-        const myId = onlineService.getMyPlayerId();
-        const role = onlineService.getRole();
-        setEstado((prev) => {
-          return {
-            ...syncedState,
-            miJugadorId: myId,
-            esAnfitrion: role === 'host',
-            modoOnline: true,
-            codigoSala: prev.codigoSala || onlineService.getRoomCode(),
-          };
-        });
-        sounds.playTurn();
-        if (syncedState.terminada && syncedState.ganador !== null) {
-          setTimeout(() => concluirPartida(syncedState), 50);
-        }
-      },
-      onClientAction: (jugadorId, accion, payload) => {
-        // Authoritative Host processes client action
-        setEstado((current) => {
-          if (current.terminada || current.turnoActual !== jugadorId) return current;
-
-          const next = structuredClone(current);
-          let huboGanador = false;
-
-          if (accion === 'mover' && payload.destino) {
-            const res = aplicarMovimiento(next, payload.destino);
-            sounds.playMove();
-            if (res.ganador) {
-              huboGanador = true;
-            } else {
-              sounds.playTurn();
-            }
-          } else if (
-            accion === 'muro' &&
-            payload.orientacion &&
-            payload.r !== undefined &&
-            payload.c !== undefined
-          ) {
-            aplicarMuro(next, payload.orientacion, payload.r, payload.c);
-            sounds.playWall();
-            sounds.playTurn();
-          }
-
-          onlineService.syncGameStateFromHost(next);
-
-          if (huboGanador) {
-            setTimeout(() => concluirPartida(next), 50);
-          }
-
-          return next;
-        });
-      },
-      onReaction: (jugadorId, emoji) => {
-        sounds.playClick();
-        setEstado((s) => ({
-          ...s,
-          reaccionActiva: { jugadorId, emoji, ts: Date.now() },
-        }));
-        setTimeout(() => {
-          setEstado((s) => (s.reaccionActiva?.ts ? { ...s, reaccionActiva: null } : s));
-        }, 2500);
-      },
-      onRematchRequested: (jugadorId) => {
-        sounds.playAchievement();
-        showToast('⚔️ ¡El rival ha solicitado la revancha! Pulsa Revancha para aceptar');
-      },
-      onHostDisconnected: (sec) => {
-        setDesconexionSegundos(sec);
-      },
-      onHostReconnected: () => {
-        setDesconexionSegundos(null);
-        showToast('¡Anfitrión reconectado! Reanudando partida...');
-        sounds.playAchievement();
-      },
-      onDisconnectTimeout: () => {
-        setDesconexionSegundos(null);
-        setEstado((current) => {
-          if (!current.modoOnline || current.terminada) return current;
-          const remainingPlayerId = current.miJugadorId !== undefined ? current.miJugadorId : 0;
-          const remainingPlayer = current.jugadores[remainingPlayerId];
-          const next = structuredClone(current);
-          next.terminada = true;
-          next.ganador = remainingPlayerId;
-          next.ultimoMensaje = `🏆 ¡${remainingPlayer?.nombre || 'Jugador'} gana por abandono del rival!`;
-          sounds.playVictory();
-          concluirPartida(next);
-          return next;
-        });
-        showToast('🏆 ¡Victoria por abandono! El rival no regresó en 10 segundos');
-      },
-      onError: (err) => {
-        showToast(err);
-      },
-    });
-  }, []);
-
-  // Conclude game and calculate scores
-  const concluirPartida = (est: GameState) => {
-    const duracion = Math.round((Date.now() - startTimeRef.current) / 1000);
-    const breakdownMap = new Map<number, ScoreBreakdown>();
-    const puntosRondaObj: Record<number, number> = {};
-    const rankingActual = cargarRanking();
-
-    est.jugadores.forEach((p) => {
-      const prevEntry = rankingActual[p.nombre.trim().toLowerCase()];
-      const rachaPrevia = prevEntry?.rachaActual || 0;
-      const rachaParaDesglose = est.ganador === p.id ? rachaPrevia + 1 : 0;
-      const breakdown = calcularDesglosePuntos(p, est, rachaParaDesglose);
-      breakdownMap.set(p.id, breakdown);
-      puntosRondaObj[p.id] = breakdown.total;
-    });
-
-    setDesgloses(breakdownMap);
-
-    const { nuevosLogrosPorJugador, subidasNivelPorJugador } = actualizarDespuesDePartida(
-      est,
-      breakdownMap,
-      duracion
-    );
-
-    setNuevosLogros(nuevosLogrosPorJugador);
-    setSubidasNivel(subidasNivelPorJugador);
-    setUsuarioActual(obtenerUsuarioActual());
-
-    // If tournament mode is active, update tournament state
-    if (est.torneo && est.torneo.activo) {
-      const ganadorNombre =
-        est.ganador !== null && est.ganador >= 0
-          ? est.jugadores[est.ganador].nombre
-          : 'Empate';
-      const torneoActualizado = registrarResultadoRondaTorneo(
-        est.torneo,
-        est.ganador ?? -1,
-        ganadorNombre,
-        puntosRondaObj
-      );
-      est.torneo = torneoActualizado;
-
-      sounds.playVictory();
-      setModalAbierto('torneo');
-    } else {
-      sounds.playVictory();
-      setModalAbierto('victoria');
-    }
-  };
-
-  // Watchdog: Ensure victory modal is ALWAYS shown if match finishes in online or local
-  useEffect(() => {
-    if (
-      pantalla === 'juego' &&
-      estado.terminada &&
-      estado.ganador !== null &&
-      modalAbierto !== 'victoria' &&
-      modalAbierto !== 'torneo'
-    ) {
-      concluirPartida(estado);
-    }
-  }, [pantalla, estado.terminada, estado.ganador, modalAbierto]);
-
-  // Keyboard navigation & shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (confirmandoAbandono) {
-        if (e.key === 'Escape') setConfirmandoAbandono(false);
-        return;
-      }
-
-      if (mostrarHistorial) {
-        if (e.key === 'Escape') setMostrarHistorial(false);
-        return;
-      }
-
-      if (modalAbierto) {
-        if (e.key === 'Escape') {
-          setModalAbierto(null);
-        }
-        return;
-      }
-
-      if (pantalla !== 'juego' || bloqueadoPorAnimacion) return;
-
-      const jugador = estado.jugadores[estado.turnoActual];
-      if (jugador.tipo !== 'humano') return;
-      if (estado.modoOnline && estado.miJugadorId !== undefined && estado.turnoActual !== estado.miJugadorId) {
-        return;
-      }
-
-      switch (e.key.toLowerCase()) {
-        case 'w':
-          if (jugador.muros > 0) {
-            sounds.playClick();
-            setEstado((s) => ({ ...s, modoAccion: 'muro' }));
-          } else {
-            sounds.playError();
-            showToast('¡Ya no te quedan muros!');
-          }
-          break;
-        case 'm':
-          sounds.playClick();
-          setEstado((s) => ({ ...s, modoAccion: 'mover' }));
-          break;
-        case 'r':
-          sounds.playClick();
-          setEstado((s) => ({
-            ...s,
-            orientacionMuro: s.orientacionMuro === 'H' ? 'V' : 'H',
-          }));
-          break;
-        case 'p':
-          pedirPista();
-          break;
-        case 'z':
-          deshacer();
-          break;
-        case 'h':
-          setMostrarHistorial((prev) => !prev);
-          break;
-        case 'escape':
-          if (pantalla === 'juego' && !estado.terminada) {
-            setConfirmandoAbandono(true);
-          } else {
-            setBloqueadoPorAnimacion(false);
-            setPantalla('menu');
-          }
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [pantalla, modalAbierto, mostrarHistorial, confirmandoAbandono, bloqueadoPorAnimacion, estado]);
-
-  // Turn timer interval (Host authoritative in online mode)
-  useEffect(() => {
-    if (pantalla !== 'juego' || estado.terminada || !estado.config.modoConTiempo) return;
-    if (estado.modoOnline && !estado.esAnfitrion) return; // Client receives sync from host
-
-    const timer = setInterval(() => {
-      if (estado.terminada || !estado.config.modoConTiempo) return;
-
-      if (estado.tiempoRestante <= 1) {
-        const next = structuredClone(estado);
-        const curPlayer = next.jugadores[next.turnoActual];
-        curPlayer.estadisticas.turnosAgotados++;
-
-        const { camino } = bfsCamino(curPlayer, next.murosH, next.murosV);
-        const legales = movimientosLegales(curPlayer, next);
-        const pasoDeseado = camino.length > 1 ? camino[1] : null;
-        const destino =
-          pasoDeseado && legales.some((m) => m.r === pasoDeseado.r && m.c === pasoDeseado.c)
-            ? pasoDeseado
-            : legales.length > 0
-            ? legales[0]
-            : null;
-
-        if (destino) {
-          const res = aplicarMovimiento(next, destino);
-          sounds.playMove();
-          if (res.ganador) {
-            concluirPartida(next);
-          } else {
-            sounds.playTurn();
-          }
-        } else {
-          avanzarTurno(next);
-          sounds.playTurn();
-        }
-
-        sounds.playError();
-        showToast(`⏰ Se acabó el tiempo de ${curPlayer.nombre}`);
-
-        if (next.modoOnline) {
-          onlineService.syncGameStateFromHost(next);
-        }
-        setEstado(next);
-      } else {
-        setEstado((prev) => ({ ...prev, tiempoRestante: prev.tiempoRestante - 1 }));
-      }
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [pantalla, estado.terminada, estado.config.modoConTiempo, estado.turnoActual, estado.tiempoRestante, estado.modoOnline, estado.esAnfitrion]);
-
-  // Bot Turn Logic (Only in local games)
-  useEffect(() => {
-    if (pantalla !== 'juego' || estado.terminada || estado.modoOnline) return;
-
-    const jugador = estado.jugadores[estado.turnoActual];
-    if (jugador.tipo === 'humano') return;
-
-    setBloqueadoPorAnimacion(true);
-    setEstado((s) => ({
-      ...s,
-      pensandoBot: true,
-      ultimoMensaje: `🤖 ${jugador.nombre} está pensando...`,
-    }));
-
-    // Natural bot delay (0.8s - 1.2s)
-    const delay = Math.floor(Math.random() * 400) + 800;
-    const botTimeout = setTimeout(() => {
-      if (estado.terminada) {
-        setBloqueadoPorAnimacion(false);
-        return;
-      }
-
-      const next = structuredClone(estado);
-      const botPlayer = next.jugadores[next.turnoActual];
-      const jugada = calcularJugadaBot(botPlayer, next);
-
-      if (jugada.tipo === 'mover') {
-        const res = aplicarMovimiento(next, jugada.coord);
-        sounds.playMove();
-        if (res.ganador) {
-          concluirPartida(next);
-        }
-      } else if (jugada.tipo === 'muro') {
-        aplicarMuro(next, jugada.orientacion, jugada.coord.r, jugada.coord.c);
-        sounds.playWall();
-      } else {
-        // Pass turn
-        avanzarTurno(next);
-        sounds.playTurn();
-        showToast(`${botPlayer.nombre} pasa turno`);
-      }
-
-      next.pensandoBot = false;
-      setBloqueadoPorAnimacion(false);
-      setEstado(next);
-    }, delay);
-
-    return () => {
-      clearTimeout(botTimeout);
-      setBloqueadoPorAnimacion(false);
-    };
-  }, [pantalla, estado.turnoActual, estado.terminada, estado.modoOnline]);
-
-  // Actions
-  const handleMover = (destino: Coord) => {
-    if (bloqueadoPorAnimacion || estado.terminada) return;
-
-    if (estado.modoOnline) {
-      if (estado.miJugadorId !== undefined && estado.turnoActual !== estado.miJugadorId) {
-        showToast('No es tu turno');
-        return;
-      }
-
-      if (estado.esAnfitrion) {
-        const next = structuredClone(estado);
-        const res = aplicarMovimiento(next, destino);
-        sounds.playMove();
-        if (res.ganador) concluirPartida(next);
-        else sounds.playTurn();
-        onlineService.syncGameStateFromHost(next);
-        setEstado(next);
-      } else {
-        sounds.playMove();
-        onlineService.sendAction('mover', { destino });
-      }
-      return;
-    }
-
-    const next = structuredClone(estado);
-    const res = aplicarMovimiento(next, destino);
-    sounds.playMove();
-
-    if (res.ganador) {
-      concluirPartida(next);
-    } else {
-      sounds.playTurn();
-    }
-
-    setEstado(next);
-  };
-
-  const handlePonerMuro = (orientacion: WallOrientation, r: number, c: number) => {
-    if (bloqueadoPorAnimacion || estado.terminada) return;
-
-    if (estado.modoOnline) {
-      if (estado.miJugadorId !== undefined && estado.turnoActual !== estado.miJugadorId) {
-        showToast('No es tu turno');
-        return;
-      }
-
-      if (estado.esAnfitrion) {
-        const next = structuredClone(estado);
-        const res = aplicarMuro(next, orientacion, r, c);
-        sounds.playWall();
-        if (res.esMuroMaestro) showToast('🧱 ¡Muro maestro!');
-        sounds.playTurn();
-        onlineService.syncGameStateFromHost(next);
-        setEstado(next);
-      } else {
-        sounds.playWall();
-        onlineService.sendAction('muro', { orientacion, r, c });
-      }
-      return;
-    }
-
-    const next = structuredClone(estado);
-    const res = aplicarMuro(next, orientacion, r, c);
-    sounds.playWall();
-
-    if (res.esMuroMaestro) {
-      showToast('🧱 ¡Muro maestro! (+10 pts de bonificación)');
-    }
-    sounds.playTurn();
-    setEstado(next);
-  };
-
-  const pedirPista = () => {
-    if (
-      bloqueadoPorAnimacion ||
-      estado.terminada ||
-      estado.modoOnline ||
-      !estado.config.permitirPistas ||
-      !ajustes.permitirPistas
-    ) {
-      showToast('Las pistas están desactivadas');
-      return;
-    }
-    const jugador = estado.jugadores[estado.turnoActual];
-
-    const { camino } = bfsCamino(jugador, estado.murosH, estado.murosV);
-    if (camino.length > 0) {
-      jugador.estadisticas.usosPista++;
-      sounds.playAchievement();
-      showToast('💡 Pista mostrada (-5 puntos)');
-      setEstado((s) => ({ ...s, caminoPista: camino }));
-    }
-  };
-
-  const deshacer = () => {
-    if (
-      bloqueadoPorAnimacion ||
-      estado.terminada ||
-      estado.modoOnline ||
-      estado.historial.length === 0 ||
-      !estado.config.permitirDeshacer ||
-      !ajustes.permitirDeshacer
-    ) {
-      showToast('No hay nada que deshacer');
-      return;
-    }
-
-    const next = structuredClone(estado);
-    if (next.historial.length === 0) return;
-
-    // Retain cumulative undo count so it is never wiped out by older snapshots
-    const currentUndos = next.jugadores.map((p) => p.estadisticas.usosDeshacer);
-
-    // Pop previous state
-    let snap = next.historial.pop();
-    if (!snap) return;
-
-    // If playing against bots, rewind through all consecutive bot turns back to the human's turn
-    while (
-      next.historial.length > 0 &&
-      snap.jugadores[snap.turnoActual].tipo !== 'humano'
-    ) {
-      snap = next.historial.pop()!;
-    }
-
-    next.jugadores.forEach((p, i) => {
-      p.r = snap!.jugadores[i].r;
-      p.c = snap!.jugadores[i].c;
-      p.muros = snap!.jugadores[i].muros;
-      p.estadisticas = { ...snap!.jugadores[i].estadisticas };
-      p.estadisticas.usosDeshacer = currentUndos[i];
-    });
-    next.murosH = snap.murosH;
-    next.murosV = snap.murosV;
-    next.turnoActual = snap.turnoActual;
-    next.turnosTotales = snap.turnosTotales;
-    next.caminoPista = null;
-    next.muroPrevisualizado = null;
-    next.pensandoBot = false;
-    next.modoAccion = 'mover';
-    next.tiempoRestante = next.config.segundosPorTurno || 30;
-    if (snap.registroAcciones) {
-      next.registroAcciones = snap.registroAcciones;
-    }
-
-    // Charge the penalty to the human player who gets to re-take their turn
-    const jugadorPenalizado = next.jugadores[next.turnoActual];
-    jugadorPenalizado.estadisticas.usosDeshacer++;
-    next.ultimoMensaje = `↩ Turno de ${jugadorPenalizado.nombre} (jugada deshecha)`;
-
+  adminActualizarUsuario,
+  adminActualizarUsuarioAsync,
+  adminEliminarUsuario,
+  adminEliminarUsuarioAsync,
+  adminResetearRanking,
+  adminResetearRankingAsync,
+  borrarRankingLocal,
+  cargarCuentas,
+  cargarHistorial,
+  cargarRanking,
+  cargarRankingLocal,
+  cerrarSesion,
+  darDeBajaUsuarioAsync,
+  estaKvConectado,
+  exportarDatosJSON,
+  guardarCuentas,
+  guardarRanking,
+  importarDatosJSON,
+  iniciarSesionAsync,
+  LOGROS_LISTA,
+  obtenerNivelYTitulo,
+  registrarUsuarioAsync,
+  sincronizarConNube,
+} from '../game/storage';
+
+// =========================================================================
+// 1. AJUSTES MODAL
+// =========================================================================
+interface AjustesModalProps {
+  ajustes: AppSettings;
+  onGuardar: (nuevosAjustes: AppSettings) => void;
+  onCerrar: () => void;
+}
+
+export const AjustesModal: React.FC<AjustesModalProps> = ({
+  ajustes,
+  onGuardar,
+  onCerrar,
+}) => {
+  const [localAjustes, setLocalAjustes] = useState<AppSettings>({ ...ajustes });
+
+  const toggle = (key: keyof AppSettings) => {
     sounds.playClick();
-    showToast(`↩ Jugada deshecha por ${jugadorPenalizado.nombre} (-10 pts)`);
-    setEstado(next);
-  };
-
-  const iniciarNuevaPartida = (config: MatchConfig) => {
-    setBloqueadoPorAnimacion(false);
-    startTimeRef.current = Date.now();
-    const cfg: MatchConfig = { ...config };
-    if (usuarioActual && cfg.jugadores && cfg.jugadores.length > 0) {
-      cfg.jugadores[0] = {
-        ...cfg.jugadores[0],
-        nombre: usuarioActual.nombre,
-        color: usuarioActual.avatarColor,
-        hat: usuarioActual.avatarHat as any,
-      };
-    }
-    const nueva = inicializarPartida(cfg);
-    setEstado(nueva);
-    setPantalla('juego');
-    setModalAbierto(null);
-    setMostrarHistorial(false);
-    setConfirmandoAbandono(false);
-    sounds.playTurn();
-  };
-
-  const handleIniciarPartidaOnline = (maxJugadores: 2 | 4) => {
-    setBloqueadoPorAnimacion(false);
-    startTimeRef.current = Date.now();
-
-    const lobbyPlayers = onlineService.getLobbyPlayers();
-    const fallbackColors = ['#ff6b6b', '#4dabf7', '#ffd43b', '#51cf66'];
-    const fallbackHats = ['corona', 'pompon', 'antena', 'brote'] as const;
-
-    const jugadoresConfig = Array.from({ length: maxJugadores }).map((_, idx) => {
-      const lp = lobbyPlayers[idx];
-      return {
-        nombre: lp ? lp.nombre : `Jugador ${idx + 1}`,
-        tipo: 'humano' as const,
-        color: lp ? lp.color : fallbackColors[idx] || '#4dabf7',
-        hat: lp ? lp.hat : fallbackHats[idx] || 'corona',
-      };
-    });
-
-    const nueva = inicializarPartida({
-      numJugadores: maxJugadores,
-      jugadores: jugadoresConfig,
-      empiezaAlAzar: false,
-      permitirDeshacer: false,
-      permitirPistas: false,
-      modoConTiempo: true,
-      segundosPorTurno: 30,
-    });
-
-    nueva.modoOnline = true;
-    nueva.miJugadorId = 0;
-    nueva.codigoSala = onlineService.getRoomCode();
-    nueva.esAnfitrion = true;
-
-    onlineService.startGameAsHost(nueva);
-    setEstado(nueva);
-    setPantalla('juego');
-    setModalAbierto(null);
-    setMostrarHistorial(false);
-    setConfirmandoAbandono(false);
-    sounds.playTurn();
-  };
-
-  const revancha = () => {
-    setBloqueadoPorAnimacion(false);
-    if (estado.modoOnline) {
-      if (estado.esAnfitrion) {
-        handleIniciarPartidaOnline(estado.n);
-      } else {
-        onlineService.sendRematchRequest();
-        showToast('⚔️ Solicitud de revancha enviada al anfitrión...');
+    setLocalAjustes((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      if (key === 'sonido') {
+        sounds.setEnabled(next.sonido);
       }
-    } else {
-      iniciarNuevaPartida(estado.config);
-    }
+      return next;
+    });
   };
 
-  const handleSiguienteRondaTorneo = () => {
-    setBloqueadoPorAnimacion(false);
-    startTimeRef.current = Date.now();
-    const siguiente = reiniciarTableroParaSiguienteRonda(estado);
-    setEstado(siguiente);
-    setModalAbierto(null);
-    setMostrarHistorial(false);
-    setConfirmandoAbandono(false);
-    sounds.playTurn();
+  const handleGuardar = () => {
+    sounds.playClick();
+    onGuardar(localAjustes);
+    onCerrar();
   };
+
+  const opciones: { key: keyof AppSettings; label: string; desc: string; icon: string }[] = [
+    { key: 'sonido', label: 'Efectos de Sonido', desc: 'Sonidos retro y efectos en cada jugada', icon: '🔊' },
+    { key: 'animacionesReducidas', label: 'Animaciones Reducidas', desc: 'Desactiva efectos visuales continuos', icon: '⚡' },
+    { key: 'mostrarDistancia', label: 'Mostrar Distancia a Meta', desc: 'Indica los pasos mínimos en la tarjeta del jugador', icon: '📏' },
+    { key: 'permitirDeshacer', label: 'Permitir Deshacer', desc: 'Permite retroceder turnos con penalización (-10 pts)', icon: '↩️' },
+    { key: 'permitirPistas', label: 'Permitir Pistas', desc: 'Muestra el camino óptimo hacia la meta (-5 pts)', icon: '💡' },
+    { key: 'modoDaltonico', label: 'Modo Alto Contraste / Daltónico', desc: 'Iconos y patrones geométricos distintivos', icon: '👁️' },
+  ];
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden flex flex-col font-['Fredoka',system-ui,sans-serif] bg-gradient-to-b from-[#74c0fc] via-[#a5d8ff] to-[#d0ebff] select-none text-[#2b2140]">
-      {/* Cartoon Background Clouds Animation (Fluid & Puffy, Zero Cut-offs) */}
-      <div
-        className={`absolute inset-0 pointer-events-none overflow-hidden z-0 ${
-          ajustes.animacionesReducidas ? '[&_*]:!animation-none' : ''
-        }`}
-      >
-        {/* Cloud Layer 1 - High altitude, drifting gracefully */}
-        <div className="absolute top-5 left-0 animate-[cloudDriftA_54s_linear_infinite] [animation-delay:-18s] opacity-90 pointer-events-none">
-          <div className="animate-[cloudBob1_7.2s_ease-in-out_infinite]">
-            <svg width="240" height="110" viewBox="0 0 240 110" className="drop-shadow-[0_6px_0_rgba(43,33,64,0.12)] overflow-visible">
-              <path
-                d="M 60 82 C 38 82, 20 74, 18 58 C 16 42, 32 32, 48 34 C 56 18, 80 12, 104 20 C 118 8, 150 8, 168 20 C 188 14, 214 24, 218 44 C 226 56, 218 74, 200 80 C 185 85, 162 82, 146 79 C 126 84, 96 85, 60 82 Z"
-                fill="#ffffff"
-                stroke="#2b2140"
-                strokeWidth="4"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-              <path
-                d="M 28 66 C 42 74, 58 76, 75 75 C 105 78, 135 76, 155 72 C 175 76, 192 73, 204 68 C 192 78, 168 81, 146 78 C 126 83, 96 84, 60 81 C 42 81, 30 74, 28 66 Z"
-                fill="#e7f5ff"
-              />
-            </svg>
-          </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+      <div className="relative w-full max-w-md bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_10px_0_#2b2140,0_20px_30px_rgba(0,0,0,0.3)] flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
+          <h3 className="text-xl font-black text-[#2b2140] flex items-center gap-2">
+            <span>⚙️</span> Ajustes del Juego
+          </h3>
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onCerrar();
+            }}
+            className="w-8 h-8 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-sm font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] flex items-center justify-center transition-colors cursor-pointer"
+          >
+            ✕
+          </button>
         </div>
 
-        {/* Cloud Layer 2 - Mid altitude, wider puffy cloud */}
-        <div className="absolute top-28 left-0 animate-[cloudDriftB_70s_linear_infinite] [animation-delay:-45s] opacity-80 pointer-events-none">
-          <div className="animate-[cloudBob2_8.6s_ease-in-out_infinite]">
-            <svg width="290" height="120" viewBox="0 0 290 120" className="drop-shadow-[0_7px_0_rgba(43,33,64,0.12)] overflow-visible">
-              <path
-                d="M 70 92 C 42 92, 22 82, 20 64 C 18 46, 36 34, 56 36 C 66 18, 96 10, 126 18 C 144 6, 186 6, 208 18 C 232 10, 264 22, 268 44 C 278 58, 270 78, 248 88 C 226 94, 196 90, 178 86 C 152 93, 114 94, 70 92 Z"
-                fill="#ffffff"
-                stroke="#2b2140"
-                strokeWidth="4"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-              <path
-                d="M 32 72 C 48 82, 70 85, 95 84 C 130 87, 168 85, 190 80 C 215 85, 238 82, 252 76 C 238 87, 210 90, 182 86 C 152 92, 114 93, 70 91 C 48 91, 35 82, 32 72 Z"
-                fill="#e7f5ff"
-              />
-            </svg>
-          </div>
-        </div>
-
-        {/* Cloud Layer 3 - Gentle companion cloud */}
-        <div className="absolute top-48 left-0 animate-[cloudDriftC_62s_linear_infinite] [animation-delay:-12s] opacity-75 pointer-events-none">
-          <div className="animate-[cloudBob3_6.8s_ease-in-out_infinite]">
-            <svg width="200" height="95" viewBox="0 0 200 95" className="drop-shadow-[0_5px_0_rgba(43,33,64,0.10)] overflow-visible">
-              <path
-                d="M 52 74 C 32 74, 18 65, 18 50 C 18 36, 32 28, 48 29 C 56 16, 80 12, 102 18 C 120 12, 148 18, 156 34 C 168 44, 164 62, 148 70 C 134 75, 112 73, 98 70 C 84 74, 68 75, 52 74 Z"
-                fill="#ffffff"
-                stroke="#2b2140"
-                strokeWidth="4"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-              <path
-                d="M 28 58 C 42 66, 62 68, 80 67 C 105 70, 126 68, 142 63 C 132 71, 112 74, 98 71 C 84 75, 68 75, 52 74 C 38 73, 30 66, 28 58 Z"
-                fill="#e7f5ff"
-              />
-            </svg>
-          </div>
-        </div>
-
-        {/* Cartoon Meadow Hill at Bottom */}
-        <div className="absolute -bottom-16 left-0 right-0 h-32 bg-[#51cf66] rounded-[50%_50%_0_0] border-t-4 border-[#2b2140] shadow-[inset_0_8px_0_#69db7c]" />
-      </div>
-
-      {/* Screen Views */}
-      {pantalla === 'menu' && (
-        <MenuScreen
-          usuarioActual={usuarioActual}
-          onAbrirPerfil={() => setModalAbierto('perfil')}
-          onAbrirAdmin={() => setModalAbierto('admin')}
-          onIniciarPartida={() => {
-            setEsModoTorneoConfig(false);
-            setPantalla('config');
-          }}
-          onIniciarTorneo={() => {
-            setEsModoTorneoConfig(true);
-            setPantalla('config');
-          }}
-          onAbrirOnline={() => setPantalla('online_lobby')}
-          onAbrirRanking={() => setModalAbierto('ranking')}
-          onAbrirLogros={() => setModalAbierto('logros')}
-          onAbrirComoJugar={() => setModalAbierto('como_jugar')}
-          onAbrirAjustes={() => setModalAbierto('ajustes')}
-        />
-      )}
-
-      {pantalla === 'online_lobby' && (
-        <OnlineLobbyScreen
-          usuarioActual={usuarioActual}
-          onIniciarPartidaOnline={handleIniciarPartidaOnline}
-          onVolverAlMenu={() => setPantalla('menu')}
-          onShowToast={showToast}
-        />
-      )}
-
-      {pantalla === 'config' && (
-        <ConfigScreen
-          ajustes={ajustes}
-          esTorneoInicial={esModoTorneoConfig}
-          usuarioActual={usuarioActual}
-          onIniciar={iniciarNuevaPartida}
-          onVolver={() => setPantalla('menu')}
-        />
-      )}
-
-      {pantalla === 'juego' && (
-        <div className="relative z-10 w-full h-full flex flex-col justify-between p-2 sm:p-3 overflow-y-auto">
-          {/* Top Bar */}
-          <div className="w-full max-w-[620px] mx-auto flex items-center justify-between gap-2 mb-1">
-            <button
-              onClick={() => {
-                sounds.playClick();
-                if (!estado.terminada) {
-                  setConfirmandoAbandono(true);
-                } else {
-                  setBloqueadoPorAnimacion(false);
-                  onlineService.cleanUp();
-                  setPantalla('menu');
-                }
-              }}
-              className="py-1.5 px-3 rounded-xl bg-white border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] text-xs font-black text-[#2b2140] hover:bg-[#ffe3e3] active:translate-y-0.5 cursor-pointer flex items-center gap-1"
-            >
-              🏠 Menú
-            </button>
-
-            {/* Room code badge or Tournament badge */}
-            <div className="flex-1 flex items-center justify-center gap-1.5 min-w-0">
-              {estado.codigoSala && (
-                <div className="py-1 px-2.5 bg-[#4dabf7] text-[#183247] rounded-xl border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-xs font-black whitespace-nowrap flex-shrink-0 animate-pulse">
-                  🌐 Sala {estado.codigoSala}
+        <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-2.5 my-2">
+          {opciones.map((op) => {
+            const activo = localAjustes[op.key];
+            return (
+              <div
+                key={op.key}
+                onClick={() => toggle(op.key)}
+                className={`p-3 rounded-2xl border-2 border-[#2b2140] flex items-center justify-between gap-3 cursor-pointer transition-all select-none ${
+                  activo
+                    ? 'bg-[#d3f9d8] shadow-[0_2px_0_#2b2140]'
+                    : 'bg-white hover:bg-[#f8f9fa] shadow-sm'
+                }`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="text-2xl flex-shrink-0">{op.icon}</span>
+                  <div className="min-w-0">
+                    <span className="font-extrabold text-xs sm:text-sm text-[#2b2140] block truncate">
+                      {op.label}
+                    </span>
+                    <span className="text-[11px] font-medium text-[#86542d] block leading-tight">
+                      {op.desc}
+                    </span>
+                  </div>
                 </div>
-              )}
 
-              {estado.torneo && (
-                <div className="py-1 px-2.5 bg-[#ffd43b] text-[#5c3c00] rounded-xl border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-xs font-black whitespace-nowrap flex-shrink-0 animate-pulse">
-                  🏆 R{estado.torneo.rondaActual}/{estado.torneo.totalRondas}
+                <div
+                  className={`w-12 h-7 rounded-full border-2 border-[#2b2140] p-0.5 transition-colors flex items-center flex-shrink-0 ${
+                    activo ? 'bg-[#51cf66] justify-end' : 'bg-[#dee2e6] justify-start'
+                  }`}
+                >
+                  <div className="w-5 h-5 rounded-full bg-white border-2 border-[#2b2140] shadow-sm" />
                 </div>
-              )}
-
-              <div className="flex-1 text-center py-1.5 px-3 bg-[#fff8e7] rounded-xl border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] truncate">
-                <span className="text-xs sm:text-sm font-extrabold text-[#2b2140]">
-                  {estado.modoOnline &&
-                  estado.miJugadorId !== undefined &&
-                  estado.turnoActual !== estado.miJugadorId
-                    ? `⏳ Esperando a ${estado.jugadores[estado.turnoActual]?.nombre}...`
-                    : estado.pensandoBot
-                    ? '🤖 Pensando...'
-                    : estado.ultimoMensaje}
+              </div>
+            );
+          })}
+          {/* Selector de Tema del Tablero */}
+          <div className="p-3 rounded-2xl border-2 border-[#2b2140] bg-white flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">🎨</span>
+              <div>
+                <span className="font-extrabold text-xs sm:text-sm text-[#2b2140] block">
+                  Tema Visual del Tablero
+                </span>
+                <span className="text-[11px] font-medium text-[#86542d] block leading-tight">
+                  Estilo de madera, neón futurista, hielo ártico o lava volcánica
                 </span>
               </div>
             </div>
 
-            {/* Quick Historial Log Toggle Button */}
-            <button
-              onClick={() => {
-                sounds.playClick();
-                setMostrarHistorial((prev) => !prev);
-              }}
-              className="w-9 h-9 rounded-xl bg-white border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] text-sm font-bold flex items-center justify-center hover:bg-[#e7f5ff] active:translate-y-0.5 cursor-pointer"
-              title="Abrir historial de jugadas"
-            >
-              📜
-            </button>
-
-            {/* Sound Toggle Button */}
-            <button
-              onClick={() => {
-                const nextSound = !ajustes.sonido;
-                sounds.setEnabled(nextSound);
-                setAjustes((a) => {
-                  const updated = { ...a, sonido: nextSound };
-                  guardarAjustes(updated);
-                  return updated;
-                });
-              }}
-              className="w-9 h-9 rounded-xl bg-white border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] text-sm font-bold flex items-center justify-center hover:bg-[#f1f3f5] active:translate-y-0.5 cursor-pointer"
-              title={ajustes.sonido ? 'Silenciar' : 'Activar sonido'}
-            >
-              {ajustes.sonido ? '🔊' : '🔇'}
-            </button>
-          </div>
-
-          {/* Turn Timer Bar (if enabled) */}
-          {estado.config.modoConTiempo && (
-            <div className="w-full max-w-[620px] mx-auto mb-1">
-              <div className="w-full bg-[#ede4d0] h-2.5 rounded-full border-2 border-[#2b2140] overflow-hidden">
-                <div
-                  className={`h-full transition-all duration-1000 ${
-                    estado.tiempoRestante <= 5
-                      ? 'bg-[#ff6b6b] animate-pulse'
-                      : estado.tiempoRestante <= 10
-                      ? 'bg-[#ffd43b]'
-                      : 'bg-[#51cf66]'
-                  }`}
-                  style={{
-                    width: `${
-                      (estado.tiempoRestante / (estado.config.segundosPorTurno || 30)) *
-                      100
-                    }%`,
-                  }}
-                />
-              </div>
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              {[
+                { id: 'madera' as BoardTheme, label: '🪵 Madera Clásica', border: 'border-[#86542d]', bg: 'bg-[#ffec99]' },
+                { id: 'neon' as BoardTheme, label: '⚡ Neón Cyber', border: 'border-[#0c8599]', bg: 'bg-[#c5f6fa]' },
+                { id: 'hielo' as BoardTheme, label: '❄️ Hielo Ártico', border: 'border-[#1971c2]', bg: 'bg-[#d0ebff]' },
+                { id: 'lava' as BoardTheme, label: '🌋 Volcán Lava', border: 'border-[#c92a2a]', bg: 'bg-[#ffe3e3]' },
+              ].map((theme) => {
+                const isSelected = (localAjustes.temaTablero || 'madera') === theme.id;
+                return (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    onClick={() => {
+                      sounds.playClick();
+                      setLocalAjustes((prev) => ({ ...prev, temaTablero: theme.id }));
+                    }}
+                    className={`p-2 rounded-xl border-2 text-xs font-black cursor-pointer transition-all flex items-center justify-center gap-1.5 ${theme.border} ${
+                      isSelected
+                        ? `${theme.bg} shadow-[0_2px_0_#2b2140] scale-[1.02]`
+                        : 'bg-white opacity-70 hover:opacity-100 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>{theme.label}</span>
+                    {isSelected && <span className="text-xs">✓</span>}
+                  </button>
+                );
+              })}
             </div>
-          )}
-
-          {/* Players Status Cards */}
-          <PlayerCards
-            estado={estado}
-            mostrarDistancia={ajustes.mostrarDistancia}
-          />
-
-          {/* Interactive 2D Cartoon Board */}
-          <MurosBoard
-            estado={estado}
-            modoDaltonico={ajustes.modoDaltonico}
-            animacionesReducidas={ajustes.animacionesReducidas}
-            temaTablero={ajustes.temaTablero}
-            onMover={handleMover}
-            onPonerMuro={handlePonerMuro}
-            onRotarMuro={() =>
-              setEstado((s) => ({
-                ...s,
-                orientacionMuro: s.orientacionMuro === 'H' ? 'V' : 'H',
-              }))
-            }
-            onInvalidWallAttempt={(motivo) => {
-              const jugador = estado.jugadores[estado.turnoActual];
-              jugador.estadisticas.intentosMuroInvalido++;
-              showToast(motivo);
-            }}
-            bloqueadoPorAnimacion={
-              bloqueadoPorAnimacion ||
-              Boolean(
-                estado.modoOnline &&
-                  estado.miJugadorId !== undefined &&
-                  estado.turnoActual !== estado.miJugadorId
-              )
-            }
-          />
-
-          {/* Bottom Action Bar with Reaction emojis */}
-          <ActionBar
-            estado={estado}
-            onCambiarModo={(m) => {
-              sounds.playClick();
-              setEstado((s) => ({ ...s, modoAccion: m }));
-            }}
-            onRotarMuro={() => {
-              sounds.playClick();
-              setEstado((s) => ({
-                ...s,
-                orientacionMuro: s.orientacionMuro === 'H' ? 'V' : 'H',
-              }));
-            }}
-            onPedirPista={pedirPista}
-            onDeshacer={deshacer}
-            onAbrirHistorial={() => {
-              sounds.playClick();
-              setMostrarHistorial(true);
-            }}
-            onEnviarReaccion={(emoji) => onlineService.sendReaction(emoji)}
-            deshabilitado={
-              bloqueadoPorAnimacion ||
-              Boolean(
-                estado.modoOnline &&
-                  estado.miJugadorId !== undefined &&
-                  estado.turnoActual !== estado.miJugadorId
-              ) ||
-              estado.jugadores[estado.turnoActual].tipo !== 'humano'
-            }
-          />
+          </div>
         </div>
-      )}
 
-      {/* Floating button to reopen VictoryModal if user clicked Ver Tablero */}
-      {pantalla === 'juego' && estado.terminada && modalAbierto === null && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 animate-bounce">
+        <div className="pt-3 border-t-2 border-[#2b2140]/15 flex items-center justify-end gap-2">
+          <button
+            onClick={handleGuardar}
+            className="w-full py-2.5 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer"
+          >
+            💾 Guardar y Aplicar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// =========================================================================
+// 2. CÓMO SE JUEGA MODAL
+// =========================================================================
+interface ComoSeJuegaModalProps {
+  onCerrar: () => void;
+}
+
+export const ComoSeJuegaModal: React.FC<ComoSeJuegaModalProps> = ({ onCerrar }) => {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+      <div className="relative w-full max-w-lg bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 sm:p-6 shadow-[0_10px_0_#2b2140,0_20px_30px_rgba(0,0,0,0.3)] flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
+          <h3 className="text-xl sm:text-2xl font-black text-[#2b2140] flex items-center gap-2">
+            <span>📖</span> ¿Cómo se juega?
+          </h3>
           <button
             onClick={() => {
               sounds.playClick();
-              setModalAbierto('victoria');
+              onCerrar();
             }}
-            className="py-2.5 px-5 rounded-2xl bg-[#ffd43b] text-[#5c3c00] border-3 border-[#2b2140] font-black text-xs sm:text-sm shadow-[0_6px_0_#2b2140] hover:bg-[#fcc419] active:translate-y-1 cursor-pointer flex items-center gap-2"
+            className="w-8 h-8 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-sm font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] flex items-center justify-center transition-colors cursor-pointer"
           >
-            <span>🏆</span>
-            <span>Ver Resultados de Partida</span>
+            ✕
           </button>
         </div>
-      )}
 
-      {/* Floating Animated Toast */}
-      {toastMessage && (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-[#2b2140] text-white text-xs sm:text-sm font-extrabold py-2 px-5 rounded-full shadow-[0_6px_20px_rgba(0,0,0,0.35)] border-2 border-white/30 animate-[bounce_0.3s_ease-out] whitespace-nowrap">
-          {toastMessage}
-        </div>
-      )}
-
-      {/* Disconnection Grace Period Countdown Modal (only in active unfinished game) */}
-      {desconexionSegundos !== null && pantalla === 'juego' && !estado.terminada && (
-        <OnlineDisconnectModal
-          segundosRestantes={desconexionSegundos}
-          esAnfitrion={onlineService.getRole() === 'host'}
-          onVolverAlMenu={() => {
-            onlineService.cleanUp();
-            setDesconexionSegundos(null);
-            setPantalla('menu');
-          }}
-        />
-      )}
-
-      {/* Abandon Confirmation Modal (-20 ranking penalty) */}
-      {confirmandoAbandono && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.15s_ease-out]">
-          <div className="relative w-full max-w-sm bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col text-center">
-            <div className="text-4xl mb-2">🏳️</div>
-            <h3 className="text-xl font-black text-[#2b2140] mb-2">
-              ¿Abandonar partida?
-            </h3>
-            <p className="text-xs text-[#593922] mb-4 leading-relaxed">
-              Si te rindes o sales al menú ahora, se considerará una retirada y{' '}
-              <strong className="text-[#c92a2a] underline font-black">
-                perderás 20 puntos de ranking
-              </strong>
-              .
+        <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 my-2 text-[#593922] text-xs sm:text-sm">
+          <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm">
+            <h4 className="font-black text-sm text-[#2b2140] flex items-center gap-1.5 mb-1">
+              <span>🎯</span> Objetivo del Juego
+            </h4>
+            <p className="leading-relaxed">
+              Sé el primero en llevar tu ficha hasta cualquier casilla del extremo opuesto del tablero.
+              En partidas de 2 jugadores, cruzas de arriba a abajo o viceversa. En 4 jugadores, cada uno cruza hacia su lado opuesto.
             </p>
+          </div>
 
-            <div className="flex flex-col gap-2">
-              <button
-                onClick={() => setConfirmandoAbandono(false)}
-                className="w-full py-2.5 px-4 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer"
-              >
-                Seguir jugando
-              </button>
+          <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm">
+            <h4 className="font-black text-sm text-[#2b2140] flex items-center gap-1.5 mb-1">
+              <span>🎲</span> En tu turno puedes elegir UNA acción:
+            </h4>
+            <ul className="list-disc list-inside space-y-1 pl-1 leading-relaxed">
+              <li>
+                <strong>Mover tu ficha:</strong> 1 paso ortogonal (arriba, abajo, izquierda, derecha) a una casilla libre.
+              </li>
+              <li>
+                <strong>Colocar un muro:</strong> Pon un muro de 2 casillas de largo (Horizontal o Vertical) entre las intersecciones.
+              </li>
+            </ul>
+          </div>
 
-              <button
-                onClick={() => {
-                  const humano = estado.jugadores.find((p) => p.tipo === 'humano');
-                  if (humano) {
-                    penalizarAbandono(humano.nombre, 20);
-                  }
-                  sounds.playError();
-                  showToast('🏳️ Partida abandonada (-20 puntos en ranking)');
-                  setConfirmandoAbandono(false);
-                  setBloqueadoPorAnimacion(false);
-                  onlineService.cleanUp();
-                  setEstado((s) => ({ ...s, pensandoBot: false }));
-                  setPantalla('menu');
-                }}
-                className="w-full py-2 px-4 rounded-xl font-black text-xs bg-white text-[#c92a2a] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#ffe3e3] active:translate-y-0.5 cursor-pointer"
-              >
-                Abandonar (-20 pts)
-              </button>
-            </div>
+          <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm">
+            <h4 className="font-black text-sm text-[#2b2140] flex items-center gap-1.5 mb-1">
+              <span>🦘</span> Saltos sobre rivales
+            </h4>
+            <p className="leading-relaxed">
+              Si estás frente a un rival y no hay un muro detrás de él, ¡puedes saltar sobre él hacia la casilla posterior! Si hay un muro o el borde detrás, puedes saltar en diagonal a los lados.
+            </p>
+          </div>
+
+          <div className="p-3 bg-[#fff3bf] rounded-2xl border-2 border-[#2b2140] shadow-sm">
+            <h4 className="font-black text-sm text-[#8f4b00] flex items-center gap-1.5 mb-1">
+              <span>⚠️</span> ¡La Regla de Oro de los Muros!
+            </h4>
+            <p className="leading-relaxed text-[#744210]">
+              <strong>NUNCA</strong> puedes encerrar totalmente a un jugador. Siempre debe quedar al menos un camino libre hacia la meta para todos los participantes.
+            </p>
           </div>
         </div>
-      )}
 
-      {/* Historial Panel Overlay */}
-      {mostrarHistorial && (
-        <HistorialPanel
-          acciones={estado.registroAcciones}
-          onCerrar={() => setMostrarHistorial(false)}
-          rondaActual={estado.torneo?.rondaActual}
-          totalRondas={estado.torneo?.totalRondas}
-        />
-      )}
-
-      {/* Modals */}
-      {modalAbierto === 'ranking' && (
-        <RankingModal
-          onCerrar={() => {
-            if (modalPrevioRef.current === 'victoria') {
-              setModalAbierto('victoria');
-              modalPrevioRef.current = null;
-            } else {
-              setModalAbierto(null);
-            }
-          }}
-          usuarioActual={usuarioActual}
-          onAbrirPerfil={() => setModalAbierto('perfil')}
-        />
-      )}
-
-      {modalAbierto === 'logros' && (
-        <LogrosModal onCerrar={() => setModalAbierto(null)} />
-      )}
-
-      {modalAbierto === 'como_jugar' && (
-        <ComoSeJuegaModal onCerrar={() => setModalAbierto(null)} />
-      )}
-
-      {modalAbierto === 'ajustes' && (
-        <AjustesModal
-          ajustes={ajustes}
-          onGuardar={(nuevos) => {
-            setAjustes(nuevos);
-            setEstado((s) => ({
-              ...s,
-              config: {
-                ...s.config,
-                permitirDeshacer: nuevos.permitirDeshacer,
-                permitirPistas: nuevos.permitirPistas,
-              },
-            }));
-          }}
-          onCerrar={() => setModalAbierto(null)}
-        />
-      )}
-
-      {modalAbierto === 'victoria' && (
-        <VictoryModal
-          estado={estado}
-          desgloses={desgloses}
-          nuevosLogros={nuevosLogros}
-          subidasNivel={subidasNivel}
-          onRevancha={revancha}
-          onVerTablero={() => setModalAbierto(null)}
-          onIrAlMenu={() => {
-            setModalAbierto(null);
-            onlineService.cleanUp();
-            setPantalla('menu');
-          }}
-          onVerRanking={() => {
-            modalPrevioRef.current = 'victoria';
-            setModalAbierto('ranking');
-          }}
-        />
-      )}
-
-      {modalAbierto === 'torneo' && estado.torneo && (
-        <TorneoModal
-          estado={estado}
-          torneo={estado.torneo}
-          onSiguienteRonda={handleSiguienteRondaTorneo}
-          onFinalizarTorneo={() => {
-            setModalAbierto(null);
-            setPantalla('menu');
-          }}
-          onVerTablero={() => setModalAbierto(null)}
-        />
-      )}
-
-      {modalAbierto === 'perfil' && (
-        <PerfilModal
-          usuarioActual={usuarioActual}
-          onLoginSuccess={(user) => {
-            setUsuarioActual(user);
-            showToast(`👋 ¡Bienvenido, ${user.nombre}!`);
-          }}
-          onLogout={() => {
-            setUsuarioActual(null);
-            showToast('Sesión cerrada');
-          }}
-          onAbrirAdmin={() => setModalAbierto('admin')}
-          onCerrar={() => setModalAbierto(null)}
-        />
-      )}
-
-      {modalAbierto === 'admin' && (
-        <AdminPanelModal
-          onCerrar={() => setModalAbierto(null)}
-          onShowToast={showToast}
-          usuarioActual={usuarioActual}
-          onUsuarioActualizado={(u) => {
-            setUsuarioActual(u);
-            if (!u) {
-              showToast('Tu cuenta ha sido eliminada. Sesión cerrada.');
-            } else if (u.rol === 'admin') {
-              showToast('👑 Ahora eres Administrador');
-            }
-          }}
-        />
-      )}
+        <div className="pt-3 border-t-2 border-[#2b2140]/15">
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onCerrar();
+            }}
+            className="w-full py-2.5 rounded-xl font-black text-sm bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] active:translate-y-0.5 cursor-pointer"
+          >
+            ¡Entendido, a jugar! 🚀
+          </button>
+        </div>
+      </div>
     </div>
   );
+};
+
+// =========================================================================
+// 3. LOGROS MODAL
+// =========================================================================
+interface LogrosModalProps {
+  onCerrar: () => void;
 }
+
+export const LogrosModal: React.FC<LogrosModalProps> = ({ onCerrar }) => {
+  const ranking = useMemo(() => cargarRanking(), []);
+
+  const misLogros = useMemo(() => {
+    const set = new Set<string>();
+    Object.values(ranking).forEach((entry) => {
+      if (entry.logros && Array.isArray(entry.logros)) {
+        entry.logros.forEach((l) => set.add(l));
+      }
+    });
+    return set;
+  }, [ranking]);
+
+  const totalLogros = LOGROS_LISTA.length;
+  const desbloqueados = misLogros.size;
+  const progresoPct = Math.round((desbloqueados / totalLogros) * 100);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+      <div className="relative w-full max-w-lg bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 sm:p-6 shadow-[0_10px_0_#2b2140,0_20px_30px_rgba(0,0,0,0.3)] flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">🎖️</span>
+            <div>
+              <h3 className="text-lg sm:text-xl font-black text-[#2b2140] leading-none">
+                Logros y Medallas
+              </h3>
+              <span className="text-[11px] font-bold text-[#86542d]">
+                {desbloqueados} de {totalLogros} completados ({progresoPct}%)
+              </span>
+            </div>
+          </div>
+
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onCerrar();
+            }}
+            className="w-8 h-8 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-sm font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] flex items-center justify-center transition-colors cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Progress Bar */}
+        <div className="w-full bg-[#f1f3f5] h-3.5 rounded-full border-2 border-[#2b2140] my-2 overflow-hidden shadow-inner">
+          <div
+            className="h-full bg-gradient-to-r from-[#ffd43b] to-[#51cf66] transition-all duration-500"
+            style={{ width: `${progresoPct}%` }}
+          />
+        </div>
+
+        {/* Achievements Grid */}
+        <div className="flex-1 overflow-y-auto pr-1 grid grid-cols-1 sm:grid-cols-2 gap-2.5 my-2">
+          {LOGROS_LISTA.map((logro) => {
+            const conseguido = misLogros.has(logro.id);
+            return (
+              <div
+                key={logro.id}
+                className={`p-3 rounded-2xl border-2 border-[#2b2140] flex items-center gap-3 transition-all ${
+                  conseguido
+                    ? 'bg-white shadow-[0_3px_0_#2b2140]'
+                    : 'bg-[#f1f3f5]/70 opacity-60 grayscale shadow-none'
+                }`}
+              >
+                <div
+                  className={`w-11 h-11 rounded-2xl border-2 border-[#2b2140] flex items-center justify-center text-xl flex-shrink-0 ${
+                    conseguido ? 'bg-[#ffd43b] shadow-sm' : 'bg-[#dee2e6]'
+                  }`}
+                >
+                  {conseguido ? logro.icono : '🔒'}
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <span className="font-extrabold text-xs sm:text-sm text-[#2b2140] block truncate">
+                    {logro.titulo}
+                  </span>
+                  <span className="text-[11px] text-[#86542d] font-medium block leading-tight">
+                    {logro.descripcion}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="pt-3 border-t-2 border-[#2b2140]/15">
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onCerrar();
+            }}
+            className="w-full py-2.5 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer"
+          >
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// =========================================================================
+// 4. RANKING MODAL (PROTECTED - NO DESTRUCTIVE RESET)
+// =========================================================================
+interface RankingModalProps {
+  onCerrar: () => void;
+  usuarioActual?: UserAccount | null;
+  onAbrirPerfil?: () => void;
+}
+
+type TabType = 'global' | 'local' | 'este_mes' | 'mes_pasado';
+
+interface DisplayRankEntry {
+  nombre: string;
+  puntosTotales: number;
+  partidas: number;
+  victorias: number;
+  elo: number;
+  avatarColor: string;
+  avatarHat: RankEntry['avatarHat'];
+}
+
+export const RankingModal: React.FC<RankingModalProps> = ({
+  onCerrar,
+  usuarioActual,
+  onAbrirPerfil,
+}) => {
+  const [tab, setTab] = useState<TabType>('global');
+  const [rankingData, setRankingData] = useState<Record<string, RankEntry>>(() => cargarRanking());
+  const [localRankingData, setLocalRankingData] = useState<Record<string, RankEntry>>(() => cargarRankingLocal());
+  const [historial, setHistorial] = useState(() => cargarHistorial());
+  const [mensajeToast, setMensajeToast] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setMensajeToast(msg);
+    setTimeout(() => setMensajeToast(null), 3000);
+  };
+
+  const entries: DisplayRankEntry[] = useMemo(() => {
+    if (tab === 'global') {
+      const list = Object.values(rankingData).map((r) => ({
+        nombre: r.nombre,
+        puntosTotales: r.puntosTotales,
+        partidas: r.partidas,
+        victorias: r.victorias,
+        elo: r.elo || 1000,
+        avatarColor: r.avatarColor || '#ff6b6b',
+        avatarHat: r.avatarHat || 'corona',
+      }));
+
+      list.sort((a, b) => {
+        if (b.puntosTotales !== a.puntosTotales) return b.puntosTotales - a.puntosTotales;
+        if (b.elo !== a.elo) return b.elo - a.elo;
+        return b.partidas - a.partidas;
+      });
+      return list;
+    }
+
+    if (tab === 'local') {
+      const list = Object.values(localRankingData).map((r) => ({
+        nombre: r.nombre,
+        puntosTotales: r.puntosTotales,
+        partidas: r.partidas,
+        victorias: r.victorias,
+        elo: r.elo || 1000,
+        avatarColor: r.avatarColor || '#ff6b6b',
+        avatarHat: r.avatarHat || 'corona',
+      }));
+
+      list.sort((a, b) => {
+        if (b.puntosTotales !== a.puntosTotales) return b.puntosTotales - a.puntosTotales;
+        if (b.elo !== a.elo) return b.elo - a.elo;
+        return b.partidas - a.partidas;
+      });
+      return list;
+    }
+
+    // Filtros de fecha para Este Mes y Mes Pasado
+    const now = new Date();
+    const curYear = now.getFullYear();
+    const curMonth = now.getMonth();
+
+    const prevYear = curMonth === 0 ? curYear - 1 : curYear;
+    const prevMonth = curMonth === 0 ? 11 : curMonth - 1;
+
+    const filteredMatches = historial.filter((m) => {
+      const d = new Date(m.fecha);
+      if (isNaN(d.getTime())) return false;
+      if (tab === 'este_mes') {
+        return d.getFullYear() === curYear && d.getMonth() === curMonth;
+      }
+      if (tab === 'mes_pasado') {
+        return d.getFullYear() === prevYear && d.getMonth() === prevMonth;
+      }
+      return true;
+    });
+
+    const playerAgg = new Map<
+      string,
+      { puntos: number; partidas: number; victorias: number; color: string }
+    >();
+
+    for (const match of filteredMatches) {
+      for (const pj of match.puntosPorJugador) {
+        if (!pj.esHumano) continue;
+        const key = pj.nombre.trim();
+        const current = playerAgg.get(key) || {
+          puntos: 0,
+          partidas: 0,
+          victorias: 0,
+          color: pj.color,
+        };
+        current.puntos += pj.puntos;
+        current.partidas += 1;
+        if (pj.puesto === 1) {
+          current.victorias += 1;
+        }
+        playerAgg.set(key, current);
+      }
+    }
+
+    const list: DisplayRankEntry[] = [];
+    playerAgg.forEach((val, name) => {
+      const globalRec = rankingData[name.toLowerCase()] || localRankingData[name.toLowerCase()];
+      list.push({
+        nombre: name,
+        puntosTotales: val.puntos,
+        partidas: val.partidas,
+        victorias: val.victorias,
+        elo: globalRec?.elo || 1000,
+        avatarColor: val.color || '#ff6b6b',
+        avatarHat: globalRec?.avatarHat || 'corona',
+      });
+    });
+
+    list.sort((a, b) => b.puntosTotales - a.puntosTotales);
+    return list;
+  }, [tab, rankingData, localRankingData, historial]);
+
+  const [sincronizando, setSincronizando] = useState(false);
+
+  const refrescarRanking = async (forzar: boolean = false) => {
+    setSincronizando(true);
+    try {
+      await sincronizarConNube(forzar);
+      setRankingData(cargarRanking());
+      setLocalRankingData(cargarRankingLocal());
+      setHistorial(cargarHistorial());
+      if (forzar) {
+        showToast('🔄 Ranking sincronizado con la nube');
+      }
+    } catch {
+      showToast('⚠️ No se pudo sincronizar');
+    } finally {
+      setSincronizando(false);
+    }
+  };
+
+  const handleBorrarRankingLocal = () => {
+    sounds.playClick();
+    if (
+      window.confirm(
+        '⚠️ ¿Estás seguro de que deseas borrar tu ranking local?\n\nEsta acción borrará únicamente los récords guardados en este navegador. NO afectará al ranking global.'
+      )
+    ) {
+      borrarRankingLocal();
+      setLocalRankingData({});
+      showToast('🧹 Tu ranking local ha sido borrado');
+    }
+  };
+
+  useEffect(() => {
+    refrescarRanking(false);
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+      <div className="relative w-full max-w-lg bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 sm:p-6 shadow-[0_10px_0_#2b2140,0_20px_30px_rgba(0,0,0,0.3)] flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">🏆</span>
+            <div>
+              <h3 className="text-lg sm:text-xl font-black text-[#2b2140] leading-none">
+                Salón de la Fama
+              </h3>
+              <span className="text-[11px] font-bold text-[#2b8a3e]">
+                {tab === 'local' ? '📍 Ranking Local en este Dispositivo' : '🛡️ Clasificaciones y Récords'}
+              </span>
+            </div>
+          </div>
+
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onCerrar();
+            }}
+            className="w-8 h-8 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-sm font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] flex items-center justify-center transition-colors cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Tab Filters: Local, Global, Este Mes, Mes Pasado */}
+        <div className="grid grid-cols-4 gap-1 p-1 bg-[#ede4d0] rounded-2xl border-2 border-[#2b2140] my-2">
+          {[
+            { id: 'global', label: '🌍 Global' },
+            { id: 'local', label: '📍 Local' },
+            { id: 'este_mes', label: '📅 Este Mes' },
+            { id: 'mes_pasado', label: '⏮️ Mes Pasado' },
+          ].map((t) => (
+            <button
+              key={t.id}
+              onClick={() => {
+                sounds.playClick();
+                setTab(t.id as TabType);
+              }}
+              className={`py-1.5 rounded-xl font-black text-[11px] sm:text-xs transition-all cursor-pointer whitespace-nowrap ${
+                tab === t.id
+                  ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-sm'
+                  : 'text-[#86542d] hover:text-[#2b2140]'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Guest Warning Banner if not logged in (for Global and Monthly tabs) */}
+        {!usuarioActual && tab !== 'local' && (
+          <div className="p-2.5 bg-[#fff3bf] rounded-2xl border-2 border-[#2b2140] mb-2 flex items-center justify-between gap-2 shadow-sm text-xs animate-[fadeIn_0.2s_ease-out]">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-xl shrink-0">ℹ️</span>
+              <div className="text-[11px] font-bold text-[#8f4b00] leading-tight">
+                Estás jugando como <strong>Invitado</strong>. Para clasificar en el Ranking Global y mensual, debes iniciar sesión. Tus partidas se guardan en la pestaña <strong>Local</strong>.
+              </div>
+            </div>
+            {onAbrirPerfil && (
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  onAbrirPerfil();
+                }}
+                className="py-1 px-2.5 rounded-xl bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] font-black text-xs shrink-0 shadow-sm hover:bg-[#fcc419] cursor-pointer whitespace-nowrap"
+              >
+                👤 Entrar
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Local Tab Special Notice & Wipe Button */}
+        {tab === 'local' && (
+          <div className="p-2.5 bg-[#e7f5ff] rounded-2xl border-2 border-[#2b2140] mb-2 flex items-center justify-between gap-2 shadow-sm text-xs">
+            <div className="text-[11px] font-bold text-[#1864ab] leading-tight">
+              <span>Récords de partidas guardados solo en este navegador.</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleBorrarRankingLocal}
+              className="py-1 px-2.5 rounded-xl bg-[#ffe3e3] text-[#c92a2a] border border-[#ff8787] font-black text-[11px] hover:bg-[#ffc9c9] cursor-pointer shrink-0"
+              title="Borrar ranking local de este navegador"
+            >
+              🗑️ Borrar mi Ranking Local
+            </button>
+          </div>
+        )}
+
+        {/* Ranking List */}
+        <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-2 my-1">
+          {entries.length === 0 ? (
+            <div className="p-8 text-center text-[#86542d] font-bold text-sm bg-white rounded-2xl border-2 border-dashed border-[#2b2140]/30 my-4">
+              <span className="text-3xl block mb-2">🏁</span>
+              {tab === 'mes_pasado'
+                ? 'Aún no hay registros del mes pasado en este historial.'
+                : 'Aún no hay partidas registradas en esta categoría. ¡Juega una partida para inaugurar el ranking!'}
+            </div>
+          ) : (
+            entries.map((entry, index) => {
+              const lvl = obtenerNivelYTitulo(entry.puntosTotales);
+              const medal =
+                index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}º`;
+              const winRate =
+                entry.partidas > 0 ? Math.round((entry.victorias / entry.partidas) * 100) : 0;
+
+              return (
+                <div
+                  key={entry.nombre}
+                  className={`p-2.5 sm:p-3 rounded-2xl border-2 border-[#2b2140] flex items-center gap-3 transition-all ${
+                    index === 0
+                      ? 'bg-gradient-to-r from-[#fff9db] to-white shadow-[0_3px_0_#2b2140]'
+                      : 'bg-white shadow-sm'
+                  }`}
+                >
+                  <div className="w-8 text-center font-black text-base sm:text-lg text-[#2b2140] flex-shrink-0">
+                    {medal}
+                  </div>
+
+                  <CartoonCharacter
+                    color={entry.avatarColor}
+                    hat={entry.avatarHat}
+                    size={38}
+                    showShadow={false}
+                  />
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-extrabold text-xs sm:text-sm text-[#2b2140] truncate">
+                        {entry.nombre}
+                      </span>
+                      <span className="text-[10px] bg-[#fff3bf] text-[#8f4b00] font-black px-1.5 py-0.2 rounded border border-[#2b2140]/30 flex items-center gap-0.5">
+                        <span>{lvl.icono}</span>
+                        <span>{lvl.titulo}</span>
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 text-[11px] text-[#86542d] font-semibold mt-0.5">
+                      <span>Elo: {entry.elo}</span>
+                      <span>•</span>
+                      <span>
+                        {entry.victorias}V / {entry.partidas}P ({winRate}%)
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="text-right flex-shrink-0">
+                    <div className="text-sm sm:text-base font-black text-[#2b2140]">
+                      {entry.puntosTotales}{' '}
+                      <span className="text-[10px] font-normal text-[#86542d]">pts</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Bottom Actions: Solo refrescar y cerrar */}
+        <div className="pt-3 mt-2 border-t-2 border-[#2b2140]/15 flex items-center justify-between gap-2 text-xs">
+          <button
+            onClick={() => {
+              sounds.playClick();
+              refrescarRanking(true);
+            }}
+            disabled={sincronizando}
+            className="py-1.5 px-3.5 rounded-xl font-black bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#fff9db] active:translate-y-0.5 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <span className={sincronizando ? 'animate-spin' : ''}>🔄</span>
+            <span>{sincronizando ? 'Sincronizando...' : 'Actualizar Ranking'}</span>
+          </button>
+
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onCerrar();
+            }}
+            className="py-1.5 px-4 rounded-xl font-black bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer"
+          >
+            Cerrar
+          </button>
+        </div>
+
+        {mensajeToast && (
+          <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-[#2b2140] text-white text-xs font-bold py-1.5 px-4 rounded-full shadow-lg border border-white/20 animate-[slideUp_0.2s_ease-out]">
+            {mensajeToast}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/// =========================================================================
+// 5. TORNEO MODAL
+// =========================================================================
+interface TorneoModalProps {
+  estado: GameState;
+  torneo: TorneoState;
+  onSiguienteRonda: () => void;
+  onFinalizarTorneo: () => void;
+  onVerTablero: () => void;
+}
+
+export const TorneoModal: React.FC<TorneoModalProps> = ({
+  estado,
+  torneo,
+  onSiguienteRonda,
+  onFinalizarTorneo,
+  onVerTablero,
+}) => {
+  const esFinal = torneo.terminado || torneo.rondaActual >= torneo.totalRondas;
+
+  const standings = [...estado.jugadores].sort((a, b) => {
+    const ptsA = torneo.puntosAcumulados[a.id] || 0;
+    const ptsB = torneo.puntosAcumulados[b.id] || 0;
+    if (ptsB !== ptsA) return ptsB - ptsA;
+    const vicA = torneo.victoriasAcumuladas[a.id] || 0;
+    const vicB = torneo.victoriasAcumuladas[b.id] || 0;
+    return vicB - vicA;
+  });
+
+  const granCampeon = standings[0];
+  const ganadorRonda =
+    estado.ganador !== null && estado.ganador >= 0
+      ? estado.jugadores[estado.ganador]
+      : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+      <div className="relative w-full max-w-md bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 sm:p-6 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col text-center max-h-[92vh]">
+        <div className="text-4xl mb-1">{esFinal ? '👑' : '🏁'}</div>
+
+        <h3 className="text-xl sm:text-2xl font-black text-[#2b2140] mb-0.5">
+          {esFinal
+            ? '¡Gran Final del Torneo!'
+            : `Torneo: Ronda ${torneo.rondaActual} de ${torneo.totalRondas}`}
+        </h3>
+
+        <p className="text-xs text-[#593922] font-semibold mb-3">
+          {esFinal
+            ? `¡${granCampeon.nombre} se corona como campeón absoluto!`
+            : ganadorRonda
+            ? `¡${ganadorRonda.nombre} ha ganado la ronda ${torneo.rondaActual}!`
+            : `Ronda finalizada.`}
+        </p>
+
+        {/* Clasificación de la tabla */}
+        <div className="bg-white rounded-2xl border-2 border-[#2b2140] p-3 shadow-inner my-2 flex flex-col gap-2 max-h-56 overflow-y-auto">
+          <span className="text-[11px] font-black uppercase tracking-wider text-[#593922] text-left block">
+            Tabla de Puntuación Acumulada
+          </span>
+          {standings.map((p, idx) => {
+            const pts = torneo.puntosAcumulados[p.id] || 0;
+            const vic = torneo.victoriasAcumuladas[p.id] || 0;
+            return (
+              <div
+                key={p.id}
+                className={`p-2 rounded-xl border-2 border-[#2b2140] flex items-center justify-between gap-2 ${
+                  idx === 0 ? 'bg-[#fff9db] font-extrabold' : 'bg-[#f8f9fa]'
+                }`}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-sm font-black w-5">{idx === 0 ? '🥇' : `${idx + 1}º`}</span>
+                  <CartoonCharacter color={p.color} hat={p.hat} size={30} showShadow={false} />
+                  <span className="text-xs font-bold text-[#2b2140] truncate">{p.nombre}</span>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <span className="text-xs font-black text-[#2b2140] block">{pts} pts</span>
+                  <span className="text-[10px] text-[#86542d] font-semibold block">{vic} vic</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="pt-3 mt-2 border-t-2 border-[#2b2140]/15 flex flex-col gap-2">
+          {!esFinal ? (
+            <button
+              onClick={() => {
+                sounds.playClick();
+                onSiguienteRonda();
+              }}
+              className="w-full py-3 rounded-2xl font-black text-sm sm:text-base bg-[#51cf66] text-[#134e20] border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140] hover:bg-[#40c057] active:translate-y-1 cursor-pointer"
+            >
+              ▶ Siguiente Ronda ({torneo.rondaActual + 1} de {torneo.totalRondas})
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                sounds.playClick();
+                onFinalizarTorneo();
+              }}
+              className="w-full py-3 rounded-2xl font-black text-sm sm:text-base bg-[#ffd43b] text-[#5c3c00] border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140] hover:bg-[#fcc419] active:translate-y-1 cursor-pointer"
+            >
+              🏆 Concluir Torneo y Volver al Menú
+            </button>
+          )}
+
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onVerTablero();
+            }}
+            className="w-full py-2 rounded-xl font-bold text-xs bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#f8f9fa] active:translate-y-0.5 cursor-pointer"
+          >
+            👀 Ver Tablero
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// =========================================================================
+// 6. VICTORY MODAL
+// =========================================================================
+interface VictoryModalProps {
+  estado: GameState;
+  desgloses: Map<number, ScoreBreakdown>;
+  nuevosLogros: Map<string, AchievementDef[]>;
+  subidasNivel: Map<string, { anterior: LevelInfo; nuevo: LevelInfo }>;
+  onRevancha: () => void;
+  onVerTablero: () => void;
+  onIrAlMenu: () => void;
+  onVerRanking: () => void;
+}
+
+export const VictoryModal: React.FC<VictoryModalProps> = ({
+  estado,
+  desgloses,
+  nuevosLogros,
+  subidasNivel,
+  onRevancha,
+  onVerTablero,
+  onIrAlMenu,
+  onVerRanking,
+}) => {
+  const ganador =
+    estado.ganador !== null && estado.ganador >= 0
+      ? estado.jugadores[estado.ganador]
+      : estado.jugadores[0];
+
+  const [selectedPlayerId, setSelectedPlayerId] = useState<number>(ganador.id);
+
+  const jugadorSeleccionado =
+    estado.jugadores.find((p) => p.id === selectedPlayerId) || ganador;
+  const jugadorDesglose = desgloses.get(selectedPlayerId) || {
+    resultado: 100,
+    ahorrador: 0,
+    rapidez: 0,
+    saltador: 0,
+    muroMaestro: 0,
+    remontada: 0,
+    racha: 0,
+    partidaLimpia: 0,
+    penalizaciones: {
+      pistas: 0,
+      deshacer: 0,
+      murosInvalidos: 0,
+      tiempoAgotado: 0,
+      abandonar: 0,
+      total: 0,
+    },
+    multiplicador: 1,
+    total: 100,
+  };
+
+  const misNuevosLogros = nuevosLogros.get(jugadorSeleccionado.nombre.trim().toLowerCase()) || [];
+  const miSubidaNivel = subidasNivel.get(jugadorSeleccionado.nombre.trim().toLowerCase());
+
+  const [segundosRestantes, setSegundosRestantes] = useState(30);
+
+  React.useEffect(() => {
+    const timer = setInterval(() => {
+      setSegundosRestantes((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          onIrAlMenu();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [onIrAlMenu]);
+
+  React.useEffect(() => {
+    confetti({
+      particleCount: 70,
+      spread: 70,
+      origin: { y: 0.6 },
+    });
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+      <div className="relative w-full max-w-sm bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col text-center max-h-[92vh] overflow-y-auto">
+        <div className="text-4xl mb-1 animate-bounce">🏆</div>
+
+        <h3 className="text-2xl font-black text-[#2b2140] mb-0.5">¡Partida Finalizada!</h3>
+        <p className="text-xs text-[#593922] font-semibold mb-2">
+          ¡<strong className="text-[#2b2140]">{ganador.nombre}</strong> ha ganado la carrera!
+        </p>
+
+        {/* 30s Decision Countdown Bar */}
+        <div className="w-full bg-[#f1f3f5] rounded-xl border border-[#2b2140] p-1.5 mb-2">
+          <div className="flex items-center justify-between text-[11px] font-black text-[#593922] mb-1">
+            <span>⏱️ Decisión automática en:</span>
+            <span className={`font-mono-num font-black ${segundosRestantes <= 5 ? 'text-[#c92a2a] animate-pulse' : 'text-[#2b2140]'}`}>
+              {segundosRestantes}s
+            </span>
+          </div>
+          <div className="w-full bg-[#dee2e6] h-2 rounded-full overflow-hidden">
+            <div
+              className={`h-full transition-all duration-1000 ease-linear ${
+                segundosRestantes <= 5 ? 'bg-[#ff6b6b]' : segundosRestantes <= 10 ? 'bg-[#ffd43b]' : 'bg-[#51cf66]'
+              }`}
+              style={{ width: `${(segundosRestantes / 30) * 100}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Player selector pills for breakdown if multiple players */}
+        <div className="flex items-center justify-center gap-1.5 mb-2 overflow-x-auto p-1 bg-[#ede4d0] rounded-xl border-2 border-[#2b2140]">
+          {estado.jugadores.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => {
+                sounds.playClick();
+                setSelectedPlayerId(p.id);
+              }}
+              className={`py-1 px-2.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1 ${
+                selectedPlayerId === p.id
+                  ? 'bg-white text-[#2b2140] border border-[#2b2140] shadow-sm'
+                  : 'text-[#86542d] hover:text-[#2b2140]'
+              }`}
+            >
+              <span>{p.id === ganador.id ? '👑' : '👤'}</span>
+              <span>{p.nombre}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="flex justify-center my-1">
+          <CartoonCharacter color={jugadorSeleccionado.color} hat={jugadorSeleccionado.hat} size={60} />
+        </div>
+
+        {/* Desglose de puntos */}
+        <div className="bg-white rounded-2xl border-2 border-[#2b2140] p-3 shadow-inner my-2 text-xs flex flex-col gap-1 text-left">
+          <span className="text-[10px] font-black uppercase text-[#86542d] mb-0.5 block">
+            Puntuación de {jugadorSeleccionado.nombre}
+          </span>
+          <div className="flex justify-between text-[#86542d] font-semibold">
+            <span>Resultado base:</span>
+            <span className="font-mono-num font-bold">+{jugadorDesglose.resultado}</span>
+          </div>
+          {jugadorDesglose.ahorrador > 0 && (
+            <div className="flex justify-between text-[#86542d] font-semibold">
+              <span>Muros guardados:</span>
+              <span className="font-mono-num font-bold">+{jugadorDesglose.ahorrador}</span>
+            </div>
+          )}
+          {jugadorDesglose.racha > 0 && (
+            <div className="flex justify-between text-[#d9480f] font-bold">
+              <span>🔥 Bono de racha:</span>
+              <span className="font-mono-num">+{jugadorDesglose.racha}</span>
+            </div>
+          )}
+          {jugadorDesglose.saltador > 0 && (
+            <div className="flex justify-between text-[#86542d] font-semibold">
+              <span>Saltos sobre rivales:</span>
+              <span className="font-mono-num font-bold">+{jugadorDesglose.saltador}</span>
+            </div>
+          )}
+          {jugadorDesglose.penalizaciones.total > 0 && (
+            <div className="flex justify-between text-[#c92a2a] font-semibold">
+              <span>Penalizaciones:</span>
+              <span className="font-mono-num">-{jugadorDesglose.penalizaciones.total}</span>
+            </div>
+          )}
+          <div className="pt-1.5 mt-1 border-t-2 border-[#2b2140]/10 flex justify-between font-black text-sm text-[#2b2140]">
+            <span>Total obtenido:</span>
+            <span className="font-mono-num text-[#2b8a3e]">+{jugadorDesglose.total} pts</span>
+          </div>
+        </div>
+
+
+        {miSubidaNivel && (
+          <div className="p-2 bg-[#d3f9d8] rounded-xl border-2 border-[#2b2140] text-xs font-black text-[#134e20] mb-2 flex items-center justify-center gap-1.5 animate-pulse">
+            <span>🌟</span> ¡Subiste a Nivel {miSubidaNivel.nuevo.nivel}: {miSubidaNivel.nuevo.titulo}!
+          </div>
+        )}
+
+        {misNuevosLogros.length > 0 && (
+          <div className="p-2 bg-[#fff3bf] rounded-xl border-2 border-[#2b2140] text-xs font-black text-[#8f4b00] mb-2 flex items-center justify-center gap-1.5">
+            <span>🎖️</span> ¡Nuevo logro desbloqueado: {misNuevosLogros[0].titulo}!
+          </div>
+        )}
+
+        <div className="pt-2 flex flex-col gap-2">
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onRevancha();
+            }}
+            className="w-full py-2.5 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer"
+          >
+            🔄 Jugar Revancha
+          </button>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => {
+                sounds.playClick();
+                onVerTablero();
+              }}
+              className="py-2 rounded-xl font-bold text-xs bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#f8f9fa] active:translate-y-0.5 cursor-pointer"
+            >
+              👀 Ver Tablero
+            </button>
+            <button
+              onClick={() => {
+                sounds.playClick();
+                onVerRanking();
+              }}
+              className="py-2 rounded-xl font-bold text-xs bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#fcc419] active:translate-y-0.5 cursor-pointer"
+            >
+              🏆 Ver Ranking
+            </button>
+          </div>
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onIrAlMenu();
+            }}
+            className="w-full py-2 rounded-xl font-bold text-xs bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#f1f3f5] active:translate-y-0.5 cursor-pointer"
+          >
+            🏠 Volver al Menú
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+// =========================================================================
+// 7. ONLINE DISCONNECT MODAL (10 SECONDS GRACE PERIOD & ABANDONMENT VICTORY)
+// =========================================================================
+interface OnlineDisconnectModalProps {
+  segundosRestantes: number;
+  esAnfitrion: boolean;
+  onVolverAlMenu: () => void;
+}
+
+export const OnlineDisconnectModal: React.FC<OnlineDisconnectModalProps> = ({
+  segundosRestantes,
+  esAnfitrion,
+  onVolverAlMenu,
+}) => {
+  const tiempoTerminado = segundosRestantes <= 0;
+  const progresoPct = Math.max(0, Math.min(100, (segundosRestantes / 10) * 100));
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+      <div className="relative w-full max-w-sm bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col text-center">
+        <div className="text-4xl mb-2 animate-bounce">
+          {tiempoTerminado ? '🏆' : '⏳'}
+        </div>
+
+        <h3 className="text-xl font-black text-[#2b2140] mb-1">
+          {tiempoTerminado
+            ? '¡Victoria por abandono!'
+            : '⚠️ Esperando reconexión del rival...'}
+        </h3>
+
+        <p className="text-xs text-[#593922] mb-3 leading-relaxed">
+          {tiempoTerminado
+            ? 'El rival no ha regresado en 10 segundos. Has ganado la partida automáticamente (+100 pts).'
+            : 'Un jugador se ha desconectado o cerrado la pestaña. Tiene 10 segundos para volver o perderá la partida por abandono.'}
+        </p>
+
+        {!tiempoTerminado && (
+          <div className="mb-4">
+            <div className="text-3xl font-black text-[#c92a2a] font-mono-num animate-pulse">
+              {segundosRestantes}s
+            </div>
+            <div className="w-full bg-[#f1f3f5] h-3.5 rounded-full border-2 border-[#2b2140] mt-2 overflow-hidden">
+              <div
+                className="h-full bg-[#ff922b] transition-all duration-1000 ease-linear"
+                style={{ width: `${progresoPct}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="flex flex-col gap-2 mt-2">
+          {tiempoTerminado ? (
+            <button
+              onClick={onVolverAlMenu}
+              className="w-full py-2.5 px-4 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer"
+            >
+              🎉 Reclamar Victoria y Volver al Menú
+            </button>
+          ) : (
+            <button
+              onClick={onVolverAlMenu}
+              className="w-full py-2 px-3 rounded-xl font-bold text-xs bg-white text-[#c92a2a] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#ffe3e3] active:translate-y-0.5 cursor-pointer"
+            >
+              Salir al Menú ahora
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// =========================================================================
+// 8. PERFIL Y CUENTA DE USUARIO MODAL
+// =========================================================================
+interface PerfilModalProps {
+  usuarioActual: UserAccount | null;
+  onLoginSuccess: (usuario: UserAccount) => void;
+  onLogout: () => void;
+  onAbrirAdmin: () => void;
+  onCerrar: () => void;
+}
+
+export const PerfilModal: React.FC<PerfilModalProps> = ({
+  usuarioActual,
+  onLoginSuccess,
+  onLogout,
+  onAbrirAdmin,
+  onCerrar,
+}) => {
+  const [tab, setTab] = useState<'login' | 'registro'>('login');
+  const [nombre, setNombre] = useState('');
+  const [clave, setClave] = useState('');
+  const [color, setColor] = useState('#ff6b6b');
+  const [hat, setHat] = useState<HatType>('corona');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [cargando, setCargando] = useState(false);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    sounds.playClick();
+    setErrorMsg(null);
+    setCargando(true);
+    try {
+      const res = await iniciarSesionAsync(nombre, clave);
+      if (res.ok && res.user) {
+        onLoginSuccess(res.user);
+        onCerrar();
+      } else {
+        sounds.playError();
+        setErrorMsg(res.error || 'Credenciales inválidas');
+      }
+    } catch {
+      setErrorMsg('Error de conexión al verificar perfil');
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  const handleRegistro = async (e: React.FormEvent) => {
+    e.preventDefault();
+    sounds.playClick();
+    setErrorMsg(null);
+    setCargando(true);
+    try {
+      const res = await registrarUsuarioAsync(nombre, clave, color, hat);
+      if (res.ok && res.user) {
+        onLoginSuccess(res.user);
+        onCerrar();
+      } else {
+        sounds.playError();
+        setErrorMsg(res.error || 'No se pudo crear la cuenta');
+      }
+    } catch {
+      setErrorMsg('Error al sincronizar con la nube');
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+      <div className="relative w-full max-w-sm bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col max-h-[92vh] overflow-y-auto">
+        <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
+          <h3 className="text-xl font-black text-[#2b2140] flex items-center gap-2">
+            <span>👤</span> {usuarioActual ? 'Mi Perfil' : 'Perfil y Cuenta'}
+          </h3>
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onCerrar();
+            }}
+            className="w-8 h-8 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-sm font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] flex items-center justify-center cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* If logged in: Show User Dashboard */}
+        {usuarioActual ? (
+          <div className="flex flex-col gap-3 py-1">
+            <div className="flex items-center gap-3 p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm">
+              <CartoonCharacter
+                color={usuarioActual.avatarColor}
+                hat={usuarioActual.avatarHat}
+                size={54}
+                showShadow={false}
+              />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="font-black text-base text-[#2b2140] truncate">
+                    {usuarioActual.nombre}
+                  </span>
+                  {usuarioActual.rol === 'admin' && (
+                    <span className="text-[9px] bg-[#ffd43b] text-[#5c3c00] font-black px-1.5 py-0.5 rounded border border-[#2b2140]">
+                      👑 ADMIN
+                    </span>
+                  )}
+                  <span className="text-[10px] bg-[#f1f3f5] text-[#495057] font-extrabold px-1.5 py-0.5 rounded border border-[#2b2140]/30 shadow-xs">
+                    ID: {usuarioActual.id}
+                  </span>
+                </div>
+                <span className="text-xs font-bold text-[#86542d] block">
+                  {obtenerNivelYTitulo(usuarioActual.puntos).titulo}
+                </span>
+                <span className="text-xs font-black text-[#2b8a3e] block">
+                  {usuarioActual.puntos} puntos acumulados
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-center">
+              <div className="p-2.5 bg-white rounded-xl border-2 border-[#2b2140]">
+                <span className="text-[11px] font-bold text-[#86542d] block">Victorias</span>
+                <span className="text-lg font-black text-[#2b2140]">
+                  {usuarioActual.victorias} / {usuarioActual.partidas}
+                </span>
+              </div>
+              <div className="p-2.5 bg-white rounded-xl border-2 border-[#2b2140]">
+                <span className="text-[11px] font-bold text-[#86542d] block">Puntos Elo</span>
+                <span className="text-lg font-black text-[#2b2140]">{usuarioActual.elo}</span>
+              </div>
+            </div>
+
+            {usuarioActual.rol === 'admin' && (
+              <button
+                onClick={() => {
+                  sounds.playClick();
+                  onAbrirAdmin();
+                }}
+                className="w-full py-2.5 rounded-xl font-black text-xs bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <span>⚙️</span>
+                <span>Panel de Administración Secreto</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => {
+                sounds.playClick();
+                cerrarSesion();
+                onLogout();
+                onCerrar();
+              }}
+              className="w-full py-2 rounded-xl font-bold text-xs bg-white text-[#c92a2a] border-2 border-[#2b2140] hover:bg-[#ffe3e3] cursor-pointer"
+            >
+              Cerrar Sesión
+            </button>
+
+            {usuarioActual.id !== 'admin' && (
+              <div className="pt-2 border-t border-[#2b2140]/15">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    sounds.playClick();
+                    if (
+                      window.confirm(
+                        '⚠️ ¿CONFIRMAS que deseas darte de baja de Muros Locos?\n\nTu perfil se borrará permanentemente de la base de datos en la nube y serás eliminado del Ranking Global. Esta acción es irreversible.'
+                      )
+                    ) {
+                      setCargando(true);
+                      await darDeBajaUsuarioAsync(usuarioActual.id);
+                      onLogout();
+                      onCerrar();
+                    }
+                  }}
+                  className="w-full py-1.5 px-3 rounded-xl font-bold text-[11px] bg-[#fff5f5] text-[#c92a2a] border border-[#ffc9c9] hover:bg-[#ffe3e3] cursor-pointer flex items-center justify-center gap-1"
+                >
+                  <span>🗑️</span>
+                  <span>Darme de baja (Eliminar mi cuenta y datos)</span>
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+          /* If not logged in: Login or Register */
+          <div className="flex flex-col gap-3 py-1">
+            <div className="grid grid-cols-2 p-1 bg-[#ede4d0] rounded-xl border-2 border-[#2b2140]">
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setTab('login');
+                  setErrorMsg(null);
+                }}
+                className={`py-1.5 rounded-lg font-black text-xs transition-all cursor-pointer ${
+                  tab === 'login'
+                    ? 'bg-white text-[#2b2140] border border-[#2b2140] shadow-sm'
+                    : 'text-[#86542d]'
+                }`}
+              >
+                Iniciar Sesión
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setTab('registro');
+                  setErrorMsg(null);
+                }}
+                className={`py-1.5 rounded-lg font-black text-xs transition-all cursor-pointer ${
+                  tab === 'registro'
+                    ? 'bg-[#51cf66] text-[#134e20] border border-[#2b2140] shadow-sm'
+                    : 'text-[#86542d]'
+                }`}
+              >
+                Crear Perfil
+              </button>
+            </div>
+
+            <form onSubmit={tab === 'login' ? handleLogin : handleRegistro} className="flex flex-col gap-2.5">
+              <div>
+                <label className="text-xs font-bold text-[#86542d] block mb-0.5">Nombre de usuario (3-15 letras/números):</label>
+                <input
+                  type="text"
+                  minLength={3}
+                  maxLength={15}
+                  required
+                  value={nombre}
+                  onChange={(e) => setNombre(e.target.value)}
+                  placeholder="Tu nombre (3-15 caracteres)"
+                  className="w-full text-xs font-bold text-[#2b2140] bg-white border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-[#ffd43b]"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-[#86542d] block mb-0.5">Clave / Contraseña:</label>
+                <input
+                  type="password"
+                  required
+                  value={clave}
+                  onChange={(e) => setClave(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full text-xs font-bold text-[#2b2140] bg-white border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-[#ffd43b]"
+                />
+              </div>
+
+              {tab === 'registro' && (
+                <div>
+                  <label className="text-xs font-bold text-[#86542d] block mb-1">Color y Sombrero:</label>
+                  <div className="grid grid-cols-4 gap-1">
+                    {[
+                      { id: 'corona', icon: '👑', color: '#ff6b6b' },
+                      { id: 'pompon', icon: '❄️', color: '#4dabf7' },
+                      { id: 'antena', icon: '⚡', color: '#ffd43b' },
+                      { id: 'brote', icon: '🌱', color: '#51cf66' },
+                    ].map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          sounds.playClick();
+                          setHat(item.id as HatType);
+                          setColor(item.color);
+                        }}
+                        className={`py-1 rounded-xl text-base border-2 border-[#2b2140] cursor-pointer ${
+                          hat === item.id ? 'bg-[#ffd43b] shadow-sm' : 'bg-white'
+                        }`}
+                      >
+                        {item.icon}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {errorMsg && (
+                <div className="p-2 bg-[#ffe3e3] text-[#c92a2a] text-xs font-bold rounded-xl border border-[#2b2140] text-center">
+                  ⚠️ {errorMsg}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={cargando}
+                className="w-full py-2.5 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer mt-1 disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {cargando && <span className="animate-spin">⏳</span>}
+                <span>
+                  {cargando
+                    ? 'Sincronizando con la nube...'
+                    : tab === 'login'
+                    ? 'Entrar a mi Cuenta'
+                    : 'Registrar y Guardar'}
+                </span>
+              </button>
+            </form>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// =========================================================================
+// 9. PANEL DE ADMINISTRADOR SECRETO MODAL
+// =========================================================================
+interface AdminPanelModalProps {
+  onCerrar: () => void;
+  onShowToast: (msg: string) => void;
+  usuarioActual?: UserAccount | null;
+  onUsuarioActualizado?: (usuario: UserAccount | null) => void;
+}
+
+export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
+  onCerrar,
+  onShowToast,
+  usuarioActual,
+  onUsuarioActualizado,
+}) => {
+  const [autenticado, setAutenticado] = useState<boolean>(() => {
+    return Boolean(usuarioActual && (usuarioActual.rol === 'admin' || usuarioActual.id === 'admin'));
+  });
+  const [claveInput, setClaveInput] = useState('');
+  const [cuentas, setCuentas] = useState<Record<string, UserAccount>>(() => cargarCuentas());
+  const [filtro, setFiltro] = useState('');
+  const [editandoId, setEditandoId] = useState<string | null>(null);
+  const [sincronizando, setSincronizando] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+  const [kvActivo, setKvActivo] = useState(() => estaKvConectado());
+
+  // Edit fields
+  const [editNombre, setEditNombre] = useState('');
+  const [editClave, setEditClave] = useState('');
+  const [editRol, setEditRol] = useState<'jugador' | 'admin'>('jugador');
+  const [editPuntos, setEditPuntos] = useState<number>(0);
+  const [editVictorias, setEditVictorias] = useState<number>(0);
+
+  const sincronizar = async (forzar: boolean = false) => {
+    setSincronizando(true);
+    try {
+      const res = await sincronizarConNube(forzar);
+      setKvActivo(res.kvConectado);
+      const accs = cargarCuentas();
+      setCuentas(accs);
+      if (usuarioActual && accs[usuarioActual.id]) {
+        onUsuarioActualizado?.(accs[usuarioActual.id]);
+      }
+      if (forzar) {
+        onShowToast(res.kvConectado ? '🟢 Sincronizado con Cloudflare KV' : '🟡 Datos locales actualizados');
+      }
+    } catch {
+      onShowToast('⚠️ Error al contactar la API');
+    } finally {
+      setSincronizando(false);
+    }
+  };
+
+  useEffect(() => {
+    sincronizar(false);
+  }, []);
+
+  const handleAdminLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    sounds.playClick();
+    const adminAcc = cuentas['admin'];
+    if (adminAcc && claveInput.trim() === adminAcc.clave) {
+      setAutenticado(true);
+      onShowToast('👑 Modo Administrador concedido');
+    } else {
+      sounds.playError();
+      onShowToast('❌ Clave de administrador incorrecta');
+    }
+  };
+
+  const iniciarEdicion = (acc: UserAccount) => {
+    sounds.playClick();
+    setEditandoId(acc.id);
+    setEditNombre(acc.nombre);
+    setEditClave(acc.clave);
+    setEditRol(acc.rol || 'jugador');
+    setEditPuntos(acc.puntos);
+    setEditVictorias(acc.victorias);
+  };
+
+  const guardarEdicion = async (id: string) => {
+    sounds.playClick();
+    const nombreLimpio = editNombre.trim();
+    if (nombreLimpio.length < 3 || nombreLimpio.length > 15) {
+      onShowToast('⚠️ El nombre debe tener entre 3 y 15 letras');
+      return;
+    }
+
+    setGuardando(true);
+    onShowToast('⏳ Guardando cambios en la base de datos...');
+    try {
+      const ok = await adminActualizarUsuarioAsync(id, {
+        nombre: nombreLimpio,
+        clave: editClave.trim(),
+        rol: editRol,
+        puntos: editPuntos,
+        victorias: editVictorias,
+      });
+      if (ok) {
+        const actualizadas = cargarCuentas();
+        setCuentas(actualizadas);
+        setEditandoId(null);
+        if (usuarioActual && usuarioActual.id === id) {
+          onUsuarioActualizado?.(actualizadas[id] || null);
+        }
+        onShowToast(`✅ Perfil "${nombreLimpio}" actualizado con éxito`);
+      } else {
+        onShowToast('⚠️ No se pudo actualizar el perfil (nombre duplicado o reservado)');
+      }
+    } catch {
+      onShowToast('❌ Error de conexión al guardar cambios');
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  const handleEliminar = async (id: string, nombre: string) => {
+    sounds.playClick();
+    if (window.confirm(`¿Seguro que deseas eliminar el usuario "${nombre}"? Esta acción borrará también su puntuación en el ranking global.`)) {
+      setGuardando(true);
+      onShowToast('⏳ Eliminando usuario de la base de datos...');
+      try {
+        await adminEliminarUsuarioAsync(id);
+        const actualizadas = cargarCuentas();
+        setCuentas(actualizadas);
+        if (usuarioActual && usuarioActual.id === id) {
+          onUsuarioActualizado?.(null);
+          onCerrar();
+        }
+        onShowToast(`🗑️ Perfil "${nombre}" eliminado definitivamente`);
+      } catch {
+        onShowToast('❌ Error al eliminar el usuario');
+      } finally {
+        setGuardando(false);
+      }
+    }
+  };
+
+  const handleExportBackup = () => {
+    sounds.playClick();
+    const json = exportarDatosJSON();
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `muros_locos_backup_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    onShowToast('💾 Respaldo oficial descargado');
+  };
+
+  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    sounds.playClick();
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const content = ev.target?.result as string;
+      const ok = importarDatosJSON(content);
+      if (ok) {
+        setCuentas(cargarCuentas());
+        onShowToast('✅ Base de datos restaurada');
+      } else {
+        onShowToast('❌ Archivo de respaldo inválido');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const cuentasFiltradas = Object.values(cuentas).filter((acc) =>
+    acc.nombre.toLowerCase().includes(filtro.toLowerCase())
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/65 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+      <div className="relative w-full max-w-lg bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col max-h-[92vh]">
+        <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
+          <h3 className="text-xl font-black text-[#2b2140] flex items-center gap-2">
+            <span>🛡️</span> Panel de Control y Administración
+          </h3>
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onCerrar();
+            }}
+            className="w-8 h-8 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-sm font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] flex items-center justify-center cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+
+        {!autenticado ? (
+          <form onSubmit={handleAdminLogin} className="flex flex-col gap-3 my-4">
+            <p className="text-xs text-[#593922] font-semibold leading-relaxed">
+              Introduce la clave secreta de administración para gestionar perfiles, otorgar permisos de administrador, modificar el ranking y realizar respaldos:
+            </p>
+            <input
+              type="password"
+              required
+              value={claveInput}
+              onChange={(e) => setClaveInput(e.target.value)}
+              placeholder="Clave maestra (por defecto: muros2026)"
+              className="w-full text-center text-sm font-black tracking-widest text-[#2b2140] bg-white border-2 border-[#2b2140] rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-[#ffd43b]"
+            />
+            <button
+              type="submit"
+              className="w-full py-2.5 rounded-xl font-black text-sm bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer"
+            >
+              🔓 Desbloquear Panel de Administrador
+            </button>
+          </form>
+        ) : (
+          <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 my-1">
+            {/* Cloud Status Banner */}
+            <div className={`p-2.5 rounded-2xl border-2 border-[#2b2140] flex items-center justify-between gap-2 text-xs font-bold ${
+              kvActivo ? 'bg-[#d3f9d8] text-[#134e20]' : 'bg-[#fff3bf] text-[#8f4b00]'
+            }`}>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span>{kvActivo ? '🟢' : '🟡'}</span>
+                <span className="truncate">
+                  {kvActivo ? 'Cloudflare KV Activo (Nube Global)' : 'Modo Local (KV no vinculado en Cloudflare)'}
+                </span>
+              </div>
+              <button
+                onClick={() => sincronizar(true)}
+                disabled={sincronizando}
+                className="py-1 px-2.5 rounded-lg bg-white border border-[#2b2140] text-[11px] font-black text-[#2b2140] shadow-sm hover:bg-[#f1f3f5] cursor-pointer flex items-center gap-1 shrink-0"
+              >
+                <span className={sincronizando ? 'animate-spin' : ''}>🔄</span>
+                <span>{sincronizando ? 'Sincronizando...' : 'Sincronizar'}</span>
+              </button>
+            </div>
+
+            {/* User Search Bar */}
+            <div className="flex items-center justify-between gap-2">
+              <input
+                type="text"
+                placeholder="🔍 Buscar jugador..."
+                value={filtro}
+                onChange={(e) => setFiltro(e.target.value)}
+                className="w-full text-xs font-bold bg-white border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none"
+              />
+              <span className="text-xs font-bold text-[#86542d] whitespace-nowrap">
+                {cuentasFiltradas.length} perfiles
+              </span>
+            </div>
+
+            {/* User Accounts List */}
+            <div className="flex flex-col gap-2">
+              {cuentasFiltradas.map((acc) => {
+                const isEditing = editandoId === acc.id;
+                const isSupreme = acc.id === 'admin';
+
+                return (
+                  <div
+                    key={acc.id}
+                    className="p-3 rounded-2xl border-2 border-[#2b2140] bg-white shadow-sm flex flex-col gap-2"
+                  >
+                    {!isEditing ? (
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <CartoonCharacter
+                            color={acc.avatarColor}
+                            hat={acc.avatarHat}
+                            size={34}
+                            showShadow={false}
+                          />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-black text-xs sm:text-sm text-[#2b2140] truncate">
+                                {acc.nombre}
+                              </span>
+                              {acc.rol === 'admin' && (
+                                <span className="text-[9px] bg-[#ffd43b] text-[#5c3c00] font-black px-1 rounded border border-[#2b2140]">
+                                  ADMIN
+                                </span>
+                              )}
+                              <span className="text-[10px] bg-[#f1f3f5] text-[#495057] font-extrabold px-1.5 py-0.2 rounded border border-[#2b2140]/25">
+                                ID: {acc.id}
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-[#86542d] font-semibold block truncate">
+                              Clave: {acc.clave} • {acc.puntos} pts • {acc.victorias} vic
+                            </span>
+                          </div>
+                        </div>
+
+                        {isSupreme ? (
+                          <span className="text-[10px] font-black bg-[#ffd43b]/60 text-[#5c3c00] px-2.5 py-1 rounded-xl border border-[#2b2140] whitespace-nowrap shadow-sm">
+                            👑 Supremo (Intocable)
+                          </span>
+                        ) : (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={() => iniciarEdicion(acc)}
+                              className="p-1.5 rounded-lg border border-[#2b2140] bg-[#fff9db] text-xs hover:bg-[#fff3bf] cursor-pointer"
+                              title="Editar usuario o rol de administrador"
+                            >
+                              ✏️
+                            </button>
+                            <button
+                              onClick={() => handleEliminar(acc.id, acc.nombre)}
+                              className="p-1.5 rounded-lg border border-[#2b2140] bg-[#ffe3e3] text-xs hover:bg-[#ffc9c9] cursor-pointer"
+                              title="Eliminar usuario"
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      /* Formulario de Edición con Asignación de Rol */
+                      <div className="flex flex-col gap-2 pt-1 border-t border-[#2b2140]/10">
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <label className="font-bold text-[#86542d] block">Nombre (3-15 chars):</label>
+                            <input
+                              type="text"
+                              minLength={3}
+                              maxLength={15}
+                              value={editNombre}
+                              onChange={(e) => setEditNombre(e.target.value)}
+                              className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
+                            />
+                          </div>
+                          <div>
+                            <label className="font-bold text-[#86542d] block">Clave:</label>
+                            <input
+                              type="text"
+                              value={editClave}
+                              onChange={(e) => setEditClave(e.target.value)}
+                              className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <label className="font-bold text-[#86542d] block">Puntos Ranking:</label>
+                            <input
+                              type="number"
+                              value={editPuntos}
+                              onChange={(e) => setEditPuntos(Number(e.target.value))}
+                              className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
+                            />
+                          </div>
+                          <div>
+                            <label className="font-bold text-[#86542d] block">Victorias:</label>
+                            <input
+                              type="number"
+                              value={editVictorias}
+                              onChange={(e) => setEditVictorias(Number(e.target.value))}
+                              className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="text-xs">
+                          <label className="font-bold text-[#86542d] block">Rol del Usuario:</label>
+                          <select
+                            value={editRol}
+                            onChange={(e) => setEditRol(e.target.value as 'jugador' | 'admin')}
+                            className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs"
+                          >
+                            <option value="jugador">🎮 Jugador Normal</option>
+                            <option value="admin">👑 Administrador (Acceso al Panel)</option>
+                          </select>
+                        </div>
+
+                        <div className="flex justify-end gap-2 mt-1">
+                          <button
+                            onClick={() => setEditandoId(null)}
+                            className="px-2.5 py-1 rounded bg-[#f1f3f5] border border-[#2b2140] text-xs font-bold cursor-pointer"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            onClick={() => guardarEdicion(acc.id)}
+                            className="px-3 py-1 rounded bg-[#51cf66] text-[#134e20] border border-[#2b2140] text-xs font-black cursor-pointer shadow-sm"
+                          >
+                            Guardar Cambios
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Danger Zone: Reset Global Ranking */}
+            <div className="p-3 bg-[#fff5f5] rounded-2xl border-2 border-[#ffc9c9] shadow-sm flex flex-col gap-2 mt-2">
+              <span className="font-black text-xs text-[#c92a2a] flex items-center gap-1.5">
+                <span>⚠️</span> Zona de Peligro: Reiniciar Ranking Global
+              </span>
+              <p className="text-[11px] text-[#e03131] font-medium leading-relaxed">
+                Pone a 0 los puntos, partidas y victorias de todos los jugadores en la base de datos global.
+              </p>
+              <button
+                onClick={async () => {
+                  sounds.playClick();
+                  if (
+                    window.confirm(
+                      '⚠️ ¿CONFIRMAS que deseas reiniciar TODO el ranking a cero?\n\nEsta acción borrará todas las puntuaciones acumuladas y todos empezarán desde 0.'
+                    )
+                  ) {
+                    onShowToast('⏳ Reiniciando ranking en la nube...');
+                    await adminResetearRankingAsync();
+                    setCuentas(cargarCuentas());
+                    onShowToast('🧹 Todo el ranking ha sido reiniciado a cero con éxito');
+                  }
+                }}
+                className="w-full py-2 px-3 rounded-xl font-black text-xs bg-[#ffe3e3] text-[#c92a2a] border-2 border-[#ffa8a8] hover:bg-[#ffc9c9] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+              >
+                <span>🧹</span>
+                <span>Reiniciar Todo el Ranking a Cero</span>
+              </button>
+            </div>
+
+            {/* Exclusive Backup Section: Accessible ONLY to Admin */}
+            <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-2 mt-1">
+              <span className="font-black text-xs text-[#2b2140] flex items-center gap-1.5">
+                <span>📦</span> Respaldo y Copia de Seguridad (Solo Administrador)
+              </span>
+              <p className="text-[11px] text-[#86542d] font-medium leading-relaxed">
+                Descarga una copia completa del ranking y los perfiles, o restaura datos desde un respaldo JSON.
+              </p>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <button
+                  onClick={handleExportBackup}
+                  className="py-1.5 px-3 rounded-xl font-bold bg-[#f8f9fa] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#e9ecef] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-1"
+                >
+                  📥 Descargar Copia
+                </button>
+                <label className="py-1.5 px-3 rounded-xl font-bold bg-[#f8f9fa] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#e9ecef] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-1">
+                  📤 Cargar Copia
+                  <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
