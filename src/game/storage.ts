@@ -83,6 +83,7 @@ function safeSet(key: string, val: string): boolean {
 }
 
 const STORAGE_KEY_RANKING = 'muros_locos_ranking_v1';
+const STORAGE_KEY_RANKING_LOCAL = 'muros_locos_ranking_local_v1';
 const STORAGE_KEY_HISTORY = 'muros_locos_historial_v1';
 const STORAGE_KEY_SETTINGS = 'muros_locos_settings_v1';
 
@@ -284,6 +285,32 @@ export function guardarRanking(ranking: Record<string, RankEntry>) {
   } catch {}
 }
 
+export function cargarRankingLocal(): Record<string, RankEntry> {
+  const raw = safeGet(STORAGE_KEY_RANKING_LOCAL);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const normalized: Record<string, RankEntry> = {};
+    for (const [key, val] of Object.entries(parsed)) {
+      if (val && typeof val === 'object') {
+        normalized[key] = normalizarRankEntry(val as Partial<RankEntry>, key);
+      }
+    }
+    return normalized;
+  } catch {
+    return {};
+  }
+}
+
+export function guardarRankingLocal(ranking: Record<string, RankEntry>) {
+  safeSet(STORAGE_KEY_RANKING_LOCAL, JSON.stringify(ranking));
+}
+
+export function borrarRankingLocal() {
+  safeSet(STORAGE_KEY_RANKING_LOCAL, JSON.stringify({}));
+}
+
 export function cargarHistorial(): MatchResultRecord[] {
   const raw = safeGet(STORAGE_KEY_HISTORY);
   if (!raw) return [];
@@ -312,6 +339,7 @@ export function actualizarDespuesDePartida(
   puntosGanadosPorJugador: Map<string, number>;
 } {
   const ranking = cargarRanking();
+  const rankingLocal = cargarRankingLocal();
   const historial = cargarHistorial();
   const nuevosLogrosMap = new Map<string, AchievementDef[]>();
   const subidasNivelMap = new Map<string, { anterior: LevelInfo; nuevo: LevelInfo }>();
@@ -360,16 +388,53 @@ export function actualizarDespuesDePartida(
       esHumano: j.tipo === 'humano',
     });
 
-    // Solo humanos con perfil registrado acumulan ranking global
     if (j.tipo !== 'humano') continue;
 
-    const cuentas = cargarCuentas();
     const cleanJName = j.nombre.trim().toLowerCase();
+
+    // Actualizar ranking local (para todas las partidas jugadas en este navegador, invitados o registrados)
+    const lKey = cleanJName;
+    const lEntry = rankingLocal[lKey]
+      ? normalizarRankEntry(rankingLocal[lKey], j.nombre)
+      : normalizarRankEntry(
+          {
+            nombre: j.nombre,
+            avatarColor: j.color,
+            avatarHat: j.hat,
+            elo: 1000,
+          },
+          j.nombre
+        );
+
+    lEntry.partidas++;
+    lEntry.murosColocados += j.estadisticas.murosColocados;
+    lEntry.saltos += j.estadisticas.saltos;
+    lEntry.puntosTotales += puntos;
+    lEntry.fechaUltimaPartida = new Date().toISOString();
+    if (puntos > lEntry.mejorPartida) lEntry.mejorPartida = puntos;
+    if (esGanador) {
+      lEntry.victorias++;
+      lEntry.rachaActual++;
+      lEntry.elo = Math.round(lEntry.elo + 25);
+      if (lEntry.rachaActual > lEntry.mejorRacha) lEntry.mejorRacha = lEntry.rachaActual;
+      if (j.estadisticas.acciones < lEntry.partidaMasRapida) lEntry.partidaMasRapida = j.estadisticas.acciones;
+    } else if (estado.ganador === -1) {
+      lEntry.empates++;
+      lEntry.rachaActual = 0;
+    } else {
+      lEntry.derrotas++;
+      lEntry.rachaActual = 0;
+      lEntry.elo = Math.max(100, Math.round(lEntry.elo - 15));
+    }
+    rankingLocal[lKey] = lEntry;
+
+    // Solo humanos con perfil registrado acumulan ranking global
+    const cuentas = cargarCuentas();
     const matchingAcc = Object.values(cuentas).find(
       (acc) => acc.nombre.trim().toLowerCase() === cleanJName
     );
 
-    // Si el jugador no tiene cuenta registrada, NO entra en el ranking
+    // Si el jugador no tiene cuenta registrada, NO entra en el ranking global
     if (!matchingAcc) continue;
 
     const key = cleanJName;
@@ -484,6 +549,7 @@ export function actualizarDespuesDePartida(
     }
   }
 
+  guardarRankingLocal(rankingLocal);
   guardarRanking(ranking);
   historial.push(matchRecord);
   guardarHistorial(historial);
@@ -941,6 +1007,13 @@ export async function adminEliminarUsuarioAsync(id: string): Promise<boolean> {
     console.error('Error eliminando en la nube:', err);
   }
   return true;
+}
+
+export async function darDeBajaUsuarioAsync(id: string): Promise<boolean> {
+  if (id === 'admin') return false; // Supreme admin is untouchable
+  const ok = await adminEliminarUsuarioAsync(id);
+  cerrarSesion();
+  return ok;
 }
 
 export async function adminResetearRankingAsync(): Promise<boolean> {

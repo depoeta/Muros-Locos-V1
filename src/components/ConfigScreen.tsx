@@ -49,6 +49,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
   const [segundosPorTurno, setSegundosPorTurno] = useState<number>(30);
   const [esTorneo, setEsTorneo] = useState<boolean>(esTorneoInicial);
   const [totalRondasTorneo, setTotalRondasTorneo] = useState<number>(3);
+  const [avisoInvitadoVisible, setAvisoInvitadoVisible] = useState<boolean>(true);
 
   const updateJugador = (idx: number, patch: Partial<(typeof jugadores)[0]>) => {
     setJugadores((prev) => {
@@ -114,6 +115,29 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
 
       {/* Main Settings Body */}
       <div className="w-full flex-1 flex flex-col gap-3 py-1">
+        {/* Guest Warning Notice (dismissable) */}
+        {!usuarioActual && avisoInvitadoVisible && (
+          <div className="w-full p-2.5 bg-[#fff3bf] rounded-2xl border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] flex items-center justify-between gap-2 text-xs animate-[fadeIn_0.2s_ease-out]">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-xl shrink-0">ℹ️</span>
+              <div className="text-[11px] font-bold text-[#8f4b00] leading-tight">
+                <strong>Modo Invitado:</strong> Tus partidas se guardarán en tu <u>Ranking Local</u> de este navegador. Para competir en el Ranking Global, inicia sesión con un perfil.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                sounds.playClick();
+                setAvisoInvitadoVisible(false);
+              }}
+              className="w-6 h-6 rounded-full bg-white border border-[#2b2140] text-xs font-black text-[#2b2140] hover:bg-[#ffe3e3] shrink-0 flex items-center justify-center cursor-pointer"
+              title="Quitar aviso"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* Game Mode Pill: Partida Rápida vs Torneo */}
         <div className="flex flex-col items-center gap-1">
           <span className="text-xs font-extrabold uppercase tracking-wider text-[#593922]">

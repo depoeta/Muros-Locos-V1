@@ -95,6 +95,7 @@ export default function App() {
 
   const startTimeRef = useRef<number>(Date.now());
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const modalPrevioRef = useRef<string | null>(null);
 
   // Global exception safety
   useEffect(() => {
@@ -1053,6 +1054,22 @@ export default function App() {
         </div>
       )}
 
+      {/* Floating button to reopen VictoryModal if user clicked Ver Tablero */}
+      {pantalla === 'juego' && estado.terminada && modalAbierto === null && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 animate-bounce">
+          <button
+            onClick={() => {
+              sounds.playClick();
+              setModalAbierto('victoria');
+            }}
+            className="py-2.5 px-5 rounded-2xl bg-[#ffd43b] text-[#5c3c00] border-3 border-[#2b2140] font-black text-xs sm:text-sm shadow-[0_6px_0_#2b2140] hover:bg-[#fcc419] active:translate-y-1 cursor-pointer flex items-center gap-2"
+          >
+            <span>🏆</span>
+            <span>Ver Resultados de Partida</span>
+          </button>
+        </div>
+      )}
+
       {/* Floating Animated Toast */}
       {toastMessage && (
         <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-[#2b2140] text-white text-xs sm:text-sm font-extrabold py-2 px-5 rounded-full shadow-[0_6px_20px_rgba(0,0,0,0.35)] border-2 border-white/30 animate-[bounce_0.3s_ease-out] whitespace-nowrap">
@@ -1132,7 +1149,18 @@ export default function App() {
 
       {/* Modals */}
       {modalAbierto === 'ranking' && (
-        <RankingModal onCerrar={() => setModalAbierto(null)} />
+        <RankingModal
+          onCerrar={() => {
+            if (modalPrevioRef.current === 'victoria') {
+              setModalAbierto('victoria');
+              modalPrevioRef.current = null;
+            } else {
+              setModalAbierto(null);
+            }
+          }}
+          usuarioActual={usuarioActual}
+          onAbrirPerfil={() => setModalAbierto('perfil')}
+        />
       )}
 
       {modalAbierto === 'logros' && (
@@ -1174,7 +1202,10 @@ export default function App() {
             onlineService.cleanUp();
             setPantalla('menu');
           }}
-          onVerRanking={() => setModalAbierto('ranking')}
+          onVerRanking={() => {
+            modalPrevioRef.current = 'victoria';
+            setModalAbierto('ranking');
+          }}
         />
       )}
 

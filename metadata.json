@@ -2,5 +2,5 @@
   "name": "Muros Locos",
   "description": "Muros Locos: juego de estrategia por turnos para 2 o 4 jugadores. Bloquea a tus rivales y llega primero a la meta.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE"]
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

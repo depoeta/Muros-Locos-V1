@@ -27,10 +27,13 @@ import {
   adminEliminarUsuarioAsync,
   adminResetearRanking,
   adminResetearRankingAsync,
+  borrarRankingLocal,
   cargarCuentas,
   cargarHistorial,
   cargarRanking,
+  cargarRankingLocal,
   cerrarSesion,
+  darDeBajaUsuarioAsync,
   estaKvConectado,
   exportarDatosJSON,
   guardarCuentas,
@@ -396,9 +399,11 @@ export const LogrosModal: React.FC<LogrosModalProps> = ({ onCerrar }) => {
 // =========================================================================
 interface RankingModalProps {
   onCerrar: () => void;
+  usuarioActual?: UserAccount | null;
+  onAbrirPerfil?: () => void;
 }
 
-type TabType = 'global' | '2p' | '4p' | 'semana';
+type TabType = 'global' | 'local' | 'este_mes' | 'mes_pasado';
 
 interface DisplayRankEntry {
   nombre: string;
@@ -410,9 +415,14 @@ interface DisplayRankEntry {
   avatarHat: RankEntry['avatarHat'];
 }
 
-export const RankingModal: React.FC<RankingModalProps> = ({ onCerrar }) => {
+export const RankingModal: React.FC<RankingModalProps> = ({
+  onCerrar,
+  usuarioActual,
+  onAbrirPerfil,
+}) => {
   const [tab, setTab] = useState<TabType>('global');
   const [rankingData, setRankingData] = useState<Record<string, RankEntry>>(() => cargarRanking());
+  const [localRankingData, setLocalRankingData] = useState<Record<string, RankEntry>>(() => cargarRankingLocal());
   const [historial, setHistorial] = useState(() => cargarHistorial());
   const [mensajeToast, setMensajeToast] = useState<string | null>(null);
 
@@ -441,11 +451,42 @@ export const RankingModal: React.FC<RankingModalProps> = ({ onCerrar }) => {
       return list;
     }
 
-    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    if (tab === 'local') {
+      const list = Object.values(localRankingData).map((r) => ({
+        nombre: r.nombre,
+        puntosTotales: r.puntosTotales,
+        partidas: r.partidas,
+        victorias: r.victorias,
+        elo: r.elo || 1000,
+        avatarColor: r.avatarColor || '#ff6b6b',
+        avatarHat: r.avatarHat || 'corona',
+      }));
+
+      list.sort((a, b) => {
+        if (b.puntosTotales !== a.puntosTotales) return b.puntosTotales - a.puntosTotales;
+        if (b.elo !== a.elo) return b.elo - a.elo;
+        return b.partidas - a.partidas;
+      });
+      return list;
+    }
+
+    // Filtros de fecha para Este Mes y Mes Pasado
+    const now = new Date();
+    const curYear = now.getFullYear();
+    const curMonth = now.getMonth();
+
+    const prevYear = curMonth === 0 ? curYear - 1 : curYear;
+    const prevMonth = curMonth === 0 ? 11 : curMonth - 1;
+
     const filteredMatches = historial.filter((m) => {
-      if (tab === '2p') return m.numJugadores === 2;
-      if (tab === '4p') return m.numJugadores === 4;
-      if (tab === 'semana') return new Date(m.fecha).getTime() >= sevenDaysAgo;
+      const d = new Date(m.fecha);
+      if (isNaN(d.getTime())) return false;
+      if (tab === 'este_mes') {
+        return d.getFullYear() === curYear && d.getMonth() === curMonth;
+      }
+      if (tab === 'mes_pasado') {
+        return d.getFullYear() === prevYear && d.getMonth() === prevMonth;
+      }
       return true;
     });
 
@@ -475,7 +516,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({ onCerrar }) => {
 
     const list: DisplayRankEntry[] = [];
     playerAgg.forEach((val, name) => {
-      const globalRec = rankingData[name.toLowerCase()];
+      const globalRec = rankingData[name.toLowerCase()] || localRankingData[name.toLowerCase()];
       list.push({
         nombre: name,
         puntosTotales: val.puntos,
@@ -489,7 +530,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({ onCerrar }) => {
 
     list.sort((a, b) => b.puntosTotales - a.puntosTotales);
     return list;
-  }, [tab, rankingData, historial]);
+  }, [tab, rankingData, localRankingData, historial]);
 
   const [sincronizando, setSincronizando] = useState(false);
 
@@ -498,6 +539,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({ onCerrar }) => {
     try {
       await sincronizarConNube(forzar);
       setRankingData(cargarRanking());
+      setLocalRankingData(cargarRankingLocal());
       setHistorial(cargarHistorial());
       if (forzar) {
         showToast('🔄 Ranking sincronizado con la nube');
@@ -506,6 +548,19 @@ export const RankingModal: React.FC<RankingModalProps> = ({ onCerrar }) => {
       showToast('⚠️ No se pudo sincronizar');
     } finally {
       setSincronizando(false);
+    }
+  };
+
+  const handleBorrarRankingLocal = () => {
+    sounds.playClick();
+    if (
+      window.confirm(
+        '⚠️ ¿Estás seguro de que deseas borrar tu ranking local?\n\nEsta acción borrará únicamente los récords guardados en este navegador. NO afectará al ranking global.'
+      )
+    ) {
+      borrarRankingLocal();
+      setLocalRankingData({});
+      showToast('🧹 Tu ranking local ha sido borrado');
     }
   };
 
@@ -524,7 +579,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({ onCerrar }) => {
                 Salón de la Fama
               </h3>
               <span className="text-[11px] font-bold text-[#2b8a3e]">
-                🛡️ Ranking Permanente y Seguro
+                {tab === 'local' ? '📍 Ranking Local en este Dispositivo' : '🛡️ Clasificaciones y Récords'}
               </span>
             </div>
           </div>
@@ -540,13 +595,13 @@ export const RankingModal: React.FC<RankingModalProps> = ({ onCerrar }) => {
           </button>
         </div>
 
-        {/* Tab Filters */}
+        {/* Tab Filters: Local, Global, Este Mes, Mes Pasado */}
         <div className="grid grid-cols-4 gap-1 p-1 bg-[#ede4d0] rounded-2xl border-2 border-[#2b2140] my-2">
           {[
-            { id: 'global', label: 'Global' },
-            { id: '2p', label: '2 Jugadores' },
-            { id: '4p', label: '4 Jugadores' },
-            { id: 'semana', label: 'Semanal' },
+            { id: 'global', label: '🌍 Global' },
+            { id: 'local', label: '📍 Local' },
+            { id: 'este_mes', label: '📅 Este Mes' },
+            { id: 'mes_pasado', label: '⏮️ Mes Pasado' },
           ].map((t) => (
             <button
               key={t.id}
@@ -554,7 +609,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({ onCerrar }) => {
                 sounds.playClick();
                 setTab(t.id as TabType);
               }}
-              className={`py-1.5 rounded-xl font-black text-xs transition-all cursor-pointer ${
+              className={`py-1.5 rounded-xl font-black text-[11px] sm:text-xs transition-all cursor-pointer whitespace-nowrap ${
                 tab === t.id
                   ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-sm'
                   : 'text-[#86542d] hover:text-[#2b2140]'
@@ -565,12 +620,55 @@ export const RankingModal: React.FC<RankingModalProps> = ({ onCerrar }) => {
           ))}
         </div>
 
+        {/* Guest Warning Banner if not logged in (for Global and Monthly tabs) */}
+        {!usuarioActual && tab !== 'local' && (
+          <div className="p-2.5 bg-[#fff3bf] rounded-2xl border-2 border-[#2b2140] mb-2 flex items-center justify-between gap-2 shadow-sm text-xs animate-[fadeIn_0.2s_ease-out]">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-xl shrink-0">ℹ️</span>
+              <div className="text-[11px] font-bold text-[#8f4b00] leading-tight">
+                Estás jugando como <strong>Invitado</strong>. Para clasificar en el Ranking Global y mensual, debes iniciar sesión. Tus partidas se guardan en la pestaña <strong>Local</strong>.
+              </div>
+            </div>
+            {onAbrirPerfil && (
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  onAbrirPerfil();
+                }}
+                className="py-1 px-2.5 rounded-xl bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] font-black text-xs shrink-0 shadow-sm hover:bg-[#fcc419] cursor-pointer whitespace-nowrap"
+              >
+                👤 Entrar
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Local Tab Special Notice & Wipe Button */}
+        {tab === 'local' && (
+          <div className="p-2.5 bg-[#e7f5ff] rounded-2xl border-2 border-[#2b2140] mb-2 flex items-center justify-between gap-2 shadow-sm text-xs">
+            <div className="text-[11px] font-bold text-[#1864ab] leading-tight">
+              <span>Récords de partidas guardados solo en este navegador.</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleBorrarRankingLocal}
+              className="py-1 px-2.5 rounded-xl bg-[#ffe3e3] text-[#c92a2a] border border-[#ff8787] font-black text-[11px] hover:bg-[#ffc9c9] cursor-pointer shrink-0"
+              title="Borrar ranking local de este navegador"
+            >
+              🗑️ Borrar mi Ranking Local
+            </button>
+          </div>
+        )}
+
         {/* Ranking List */}
-        <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-2 my-2">
+        <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-2 my-1">
           {entries.length === 0 ? (
             <div className="p-8 text-center text-[#86542d] font-bold text-sm bg-white rounded-2xl border-2 border-dashed border-[#2b2140]/30 my-4">
               <span className="text-3xl block mb-2">🏁</span>
-              Aún no hay partidas registradas en esta categoría. ¡Juega una partida para inaugurar el ranking!
+              {tab === 'mes_pasado'
+                ? 'Aún no hay registros del mes pasado en este historial.'
+                : 'Aún no hay partidas registradas en esta categoría. ¡Juega una partida para inaugurar el ranking!'}
             </div>
           ) : (
             entries.map((entry, index) => {
@@ -601,7 +699,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({ onCerrar }) => {
                   />
 
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-extrabold text-xs sm:text-sm text-[#2b2140] truncate">
                         {entry.nombre}
                       </span>
@@ -845,6 +943,22 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
   const misNuevosLogros = nuevosLogros.get(jugadorSeleccionado.nombre.trim().toLowerCase()) || [];
   const miSubidaNivel = subidasNivel.get(jugadorSeleccionado.nombre.trim().toLowerCase());
 
+  const [segundosRestantes, setSegundosRestantes] = useState(30);
+
+  React.useEffect(() => {
+    const timer = setInterval(() => {
+      setSegundosRestantes((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          onIrAlMenu();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [onIrAlMenu]);
+
   React.useEffect(() => {
     confetti({
       particleCount: 70,
@@ -862,6 +976,24 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
         <p className="text-xs text-[#593922] font-semibold mb-2">
           ¡<strong className="text-[#2b2140]">{ganador.nombre}</strong> ha ganado la carrera!
         </p>
+
+        {/* 30s Decision Countdown Bar */}
+        <div className="w-full bg-[#f1f3f5] rounded-xl border border-[#2b2140] p-1.5 mb-2">
+          <div className="flex items-center justify-between text-[11px] font-black text-[#593922] mb-1">
+            <span>⏱️ Decisión automática en:</span>
+            <span className={`font-mono-num font-black ${segundosRestantes <= 5 ? 'text-[#c92a2a] animate-pulse' : 'text-[#2b2140]'}`}>
+              {segundosRestantes}s
+            </span>
+          </div>
+          <div className="w-full bg-[#dee2e6] h-2 rounded-full overflow-hidden">
+            <div
+              className={`h-full transition-all duration-1000 ease-linear ${
+                segundosRestantes <= 5 ? 'bg-[#ff6b6b]' : segundosRestantes <= 10 ? 'bg-[#ffd43b]' : 'bg-[#51cf66]'
+              }`}
+              style={{ width: `${(segundosRestantes / 30) * 100}%` }}
+            />
+          </div>
+        </div>
 
         {/* Player selector pills for breakdown if multiple players */}
         <div className="flex items-center justify-center gap-1.5 mb-2 overflow-x-auto p-1 bg-[#ede4d0] rounded-xl border-2 border-[#2b2140]">
@@ -1214,6 +1346,31 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
             >
               Cerrar Sesión
             </button>
+
+            {usuarioActual.id !== 'admin' && (
+              <div className="pt-2 border-t border-[#2b2140]/15">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    sounds.playClick();
+                    if (
+                      window.confirm(
+                        '⚠️ ¿CONFIRMAS que deseas darte de baja de Muros Locos?\n\nTu perfil se borrará permanentemente de la base de datos en la nube y serás eliminado del Ranking Global. Esta acción es irreversible.'
+                      )
+                    ) {
+                      setCargando(true);
+                      await darDeBajaUsuarioAsync(usuarioActual.id);
+                      onLogout();
+                      onCerrar();
+                    }
+                  }}
+                  className="w-full py-1.5 px-3 rounded-xl font-bold text-[11px] bg-[#fff5f5] text-[#c92a2a] border border-[#ffc9c9] hover:bg-[#ffe3e3] cursor-pointer flex items-center justify-center gap-1"
+                >
+                  <span>🗑️</span>
+                  <span>Darme de baja (Eliminar mi cuenta y datos)</span>
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           /* If not logged in: Login or Register */
