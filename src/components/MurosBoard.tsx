@@ -54,16 +54,21 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
     return esMeta(jugadorActivo, r, c);
   };
 
-  // Check goal coloring for cell
+  // Check goal coloring for cell matching the player whose target it is
   const getGoalInfo = (r: number, c: number) => {
+    const p0 = estado.jugadores[0];
+    const p1 = estado.jugadores[1];
+    const p2 = estado.jugadores[2];
+    const p3 = estado.jugadores[3];
+
     if (estado.n === 2) {
-      if (r === 0) return { color: '#ff6b6b', player: 'J1', symbol: '👑' };
-      if (r === 8) return { color: '#4dabf7', player: 'J2', symbol: '❄️' };
+      if (r === 0) return { color: p0?.color || '#ff6b6b', player: p0?.nombre || 'J1', symbol: '🏁' };
+      if (r === 8) return { color: p1?.color || '#4dabf7', player: p1?.nombre || 'J2', symbol: '🏁' };
     } else {
-      if (r === 0) return { color: '#ff6b6b', player: 'J1', symbol: '👑' };
-      if (c === 8) return { color: '#4dabf7', player: 'J2', symbol: '❄️' };
-      if (r === 8) return { color: '#ffd43b', player: 'J3', symbol: '⚡' };
-      if (c === 0) return { color: '#51cf66', player: 'J4', symbol: '🌱' };
+      if (r === 0) return { color: p0?.color || '#ff6b6b', player: p0?.nombre || 'J1', symbol: '🏁' };
+      if (c === 8) return { color: p1?.color || '#4dabf7', player: p1?.nombre || 'J2', symbol: '🏁' };
+      if (r === 8) return { color: p2?.color || '#ffd43b', player: p2?.nombre || 'J3', symbol: '🏁' };
+      if (c === 0) return { color: p3?.color || '#51cf66', player: p3?.nombre || 'J4', symbol: '🏁' };
     }
     return null;
   };

@@ -153,6 +153,13 @@ export function cargarRanking(): Record<string, RankEntry> {
 
 export function guardarRanking(ranking: Record<string, RankEntry>) {
   safeSet(STORAGE_KEY_RANKING, JSON.stringify(ranking));
+  try {
+    fetch('/api/ranking', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ranking),
+    }).catch(() => {});
+  } catch {}
 }
 
 export function cargarHistorial(): MatchResultRecord[] {
@@ -478,6 +485,13 @@ export function cargarCuentas(): Record<string, UserAccount> {
 
 export function guardarCuentas(cuentas: Record<string, UserAccount>) {
   safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(cuentas));
+  try {
+    fetch('/api/cuentas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cuentas),
+    }).catch(() => {});
+  } catch {}
 }
 
 export function obtenerUsuarioActual(): UserAccount | null {
@@ -546,12 +560,19 @@ export function registrarUsuario(
 
   const cuentas = cargarCuentas();
   const search = cleanName.toLowerCase();
-  const existe = Object.values(cuentas).some(
-    (acc) => acc.nombre.trim().toLowerCase() === search || acc.id.toLowerCase() === search
-  );
+
+  if (search === 'admin' || search === 'administrador') {
+    return { ok: false, error: 'Ese nombre está reservado para la administración.' };
+  }
+
+  const ranking = cargarRanking();
+  const existe =
+    Object.values(cuentas).some(
+      (acc) => acc.nombre.trim().toLowerCase() === search || acc.id.toLowerCase() === search
+    ) || Boolean(ranking[search]);
 
   if (existe) {
-    return { ok: false, error: 'Ese nombre de usuario ya está registrado. Inicia sesión.' };
+    return { ok: false, error: 'Ese nombre de usuario ya está registrado. Por favor elige otro o inicia sesión.' };
   }
 
   const id = `user_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
@@ -575,7 +596,6 @@ export function registrarUsuario(
   guardarUsuarioActual(newUser);
 
   // Sync to ranking
-  const ranking = cargarRanking();
   ranking[cleanName.toLowerCase()] = normalizarRankEntry(
     {
       nombre: cleanName,
@@ -601,8 +621,19 @@ export function adminActualizarUsuario(
   id: string,
   patch: Partial<UserAccount>
 ): boolean {
+  if (id === 'admin') return false; // El usuario supremo es intocable
   const cuentas = cargarCuentas();
-  if (!cuentas[id]) return false;
+  if (!cuentas[id] || cuentas[id].rol === 'admin') return false;
+
+  // Prevent duplicate names when editing
+  if (patch.nombre) {
+    const cleanNew = patch.nombre.trim();
+    if (cleanNew.toLowerCase() === 'admin') return false;
+    const isTaken = Object.values(cuentas).some(
+      (acc) => acc.id !== id && acc.nombre.trim().toLowerCase() === cleanNew.toLowerCase()
+    );
+    if (isTaken) return false;
+  }
 
   const current = cuentas[id];
   const oldName = current.nombre.trim().toLowerCase();
@@ -637,9 +668,9 @@ export function adminActualizarUsuario(
 }
 
 export function adminEliminarUsuario(id: string): boolean {
-  if (id === 'admin') return false; // protect admin account
+  if (id === 'admin') return false; // Usuario supremo intocable
   const cuentas = cargarCuentas();
-  if (!cuentas[id]) return false;
+  if (!cuentas[id] || cuentas[id].rol === 'admin') return false;
 
   const name = cuentas[id].nombre.trim().toLowerCase();
   delete cuentas[id];

@@ -166,7 +166,7 @@ export default function App() {
         });
         sounds.playTurn();
         if (syncedState.terminada && syncedState.ganador !== null) {
-          concluirPartida(syncedState);
+          setTimeout(() => concluirPartida(syncedState), 50);
         }
       },
       onClientAction: (jugadorId, accion, payload) => {
@@ -175,11 +175,13 @@ export default function App() {
           if (current.terminada || current.turnoActual !== jugadorId) return current;
 
           const next = structuredClone(current);
+          let huboGanador = false;
+
           if (accion === 'mover' && payload.destino) {
             const res = aplicarMovimiento(next, payload.destino);
             sounds.playMove();
             if (res.ganador) {
-              concluirPartida(next);
+              huboGanador = true;
             } else {
               sounds.playTurn();
             }
@@ -195,6 +197,11 @@ export default function App() {
           }
 
           onlineService.syncGameStateFromHost(next);
+
+          if (huboGanador) {
+            setTimeout(() => concluirPartida(next), 50);
+          }
+
           return next;
         });
       },
@@ -287,6 +294,19 @@ export default function App() {
       setModalAbierto('victoria');
     }
   };
+
+  // Watchdog: Ensure victory modal is ALWAYS shown if match finishes in online or local
+  useEffect(() => {
+    if (
+      pantalla === 'juego' &&
+      estado.terminada &&
+      estado.ganador !== null &&
+      modalAbierto !== 'victoria' &&
+      modalAbierto !== 'torneo'
+    ) {
+      concluirPartida(estado);
+    }
+  }, [pantalla, estado.terminada, estado.ganador, modalAbierto]);
 
   // Keyboard navigation & shortcuts
   useEffect(() => {
@@ -981,8 +1001,8 @@ export default function App() {
         </div>
       )}
 
-      {/* Disconnection Grace Period Countdown Modal */}
-      {desconexionSegundos !== null && (
+      {/* Disconnection Grace Period Countdown Modal (only in active unfinished game) */}
+      {desconexionSegundos !== null && pantalla === 'juego' && !estado.terminada && (
         <OnlineDisconnectModal
           segundosRestantes={desconexionSegundos}
           esAnfitrion={onlineService.getRole() === 'host'}

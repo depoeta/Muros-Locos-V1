@@ -46,6 +46,8 @@ export interface MatchConfig {
   jugadores: {
     nombre: string;
     tipo: PlayerType;
+    color?: string;
+    hat?: HatType;
   }[];
   empiezaAlAzar: boolean;
   permitirDeshacer: boolean;

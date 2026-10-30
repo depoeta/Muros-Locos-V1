@@ -76,6 +76,7 @@ class OnlineManager {
   private reconnectInterval: ReturnType<typeof setInterval> | null = null;
   private countdownInterval: ReturnType<typeof setInterval> | null = null;
   private currentGameState: GameState | null = null;
+  private isIntentionalExit: boolean = false;
 
   public setCallbacks(cb: OnlineEventCallback) {
     this.callbacks = { ...this.callbacks, ...cb };
@@ -200,8 +201,13 @@ class OnlineManager {
           }
         }
 
-        // Check if host went quiet
-        if (now - this.hostLastSeen > 5500) {
+        // Check if host went quiet (only in active unfinished game and not intentional exit)
+        if (
+          !this.isIntentionalExit &&
+          this.currentGameState &&
+          !this.currentGameState.terminada &&
+          now - this.hostLastSeen > 5500
+        ) {
           this.startHostDisconnectGracePeriod(formatRoomPeerId(this.roomCode));
         }
       }
@@ -224,6 +230,7 @@ class OnlineManager {
     maxPlayers: 2 | 4 = 2
   ): Promise<string> {
     this.cleanUp();
+    this.isIntentionalExit = false;
     this.role = 'host';
     this.roomCode = code.toUpperCase();
     this.maxPlayers = maxPlayers;
@@ -286,11 +293,13 @@ class OnlineManager {
         this.connections.delete(conn.peer);
         this.lastSeenMap.delete(conn.peer);
 
+        if (this.isIntentionalExit || !this.role) return;
+
         // If game is in progress and not finished: start 10s abandonment countdown
         if (this.currentGameState && !this.currentGameState.terminada) {
           this.startPeerDisconnectGracePeriod();
         } else {
-          // In lobby: remove immediately to free room slot
+          // In lobby or game already finished: remove to free room slot immediately
           const prevCount = this.lobbyPlayers.length;
           this.lobbyPlayers = this.lobbyPlayers.filter((p) => p.peerId !== conn.peer);
           this.lobbyPlayers.forEach((p, idx) => { p.id = idx; });
@@ -420,6 +429,7 @@ class OnlineManager {
     hat: HatType
   ): Promise<void> {
     this.cleanUp();
+    this.isIntentionalExit = false;
     this.role = 'client';
     this.roomCode = code.toUpperCase().trim();
     this.myName = playerName.trim() || 'Invitado';
@@ -531,6 +541,14 @@ class OnlineManager {
     });
 
     this.hostConnection.on('close', () => {
+      if (
+        this.isIntentionalExit ||
+        !this.role ||
+        !this.currentGameState ||
+        this.currentGameState.terminada
+      ) {
+        return;
+      }
       this.startHostDisconnectGracePeriod(hostPeerId);
     });
 
@@ -687,6 +705,9 @@ class OnlineManager {
       clearInterval(this.reconnectInterval);
       this.reconnectInterval = null;
     }
+    if (this.callbacks.onHostDisconnected) {
+      this.callbacks.onHostDisconnected(null as unknown as number);
+    }
   }
 
   // ===================== ACTION DISPATCH =====================
@@ -729,8 +750,13 @@ class OnlineManager {
   }
 
   public cleanUp() {
+    this.isIntentionalExit = true;
     this.stopHeartbeat();
     this.stopReconnectGracePeriod();
+    this.currentGameState = null;
+    try {
+      localStorage.removeItem('muros_active_session');
+    } catch {}
 
     for (const conn of this.connections.values()) {
       try {

@@ -1262,19 +1262,6 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                 {tab === 'login' ? 'Entrar a mi Cuenta' : 'Registrar y Guardar'}
               </button>
             </form>
-
-            <div className="pt-2 border-t border-[#2b2140]/10 text-center">
-              <button
-                type="button"
-                onClick={() => {
-                  sounds.playClick();
-                  onAbrirAdmin();
-                }}
-                className="text-[11px] text-[#86542d] hover:text-[#2b2140] underline font-bold cursor-pointer"
-              >
-                🔒 Acceso de Administrador Secreto
-              </button>
-            </div>
           </div>
         )}
       </div>
@@ -1439,24 +1426,28 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onSh
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => iniciarEdicion(acc)}
-                            className="p-1.5 rounded-lg border border-[#2b2140] bg-[#fff9db] text-xs hover:bg-[#fff3bf] cursor-pointer"
-                            title="Editar"
-                          >
-                            ✏️
-                          </button>
-                          {acc.id !== 'admin' && (
+                        {acc.id === 'admin' || acc.rol === 'admin' ? (
+                          <span className="text-[10px] font-black bg-[#ffd43b]/50 text-[#5c3c00] px-2.5 py-1 rounded-xl border border-[#2b2140] whitespace-nowrap shadow-sm">
+                            👑 Supremo (Intocable)
+                          </span>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => iniciarEdicion(acc)}
+                              className="p-1.5 rounded-lg border border-[#2b2140] bg-[#fff9db] text-xs hover:bg-[#fff3bf] cursor-pointer"
+                              title="Editar clave o datos"
+                            >
+                              ✏️
+                            </button>
                             <button
                               onClick={() => handleEliminar(acc.id, acc.nombre)}
                               className="p-1.5 rounded-lg border border-[#2b2140] bg-[#ffe3e3] text-xs hover:bg-[#ffc9c9] cursor-pointer"
-                              title="Eliminar"
+                              title="Eliminar usuario"
                             >
                               🗑️
                             </button>
-                          )}
-                        </div>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       /* Formulario de Edición */
