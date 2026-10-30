@@ -253,6 +253,10 @@ export default function App() {
           setEstado((s) => (s.reaccionActiva?.ts ? { ...s, reaccionActiva: null } : s));
         }, 2500);
       },
+      onRematchRequested: (jugadorId) => {
+        sounds.playAchievement();
+        showToast('⚔️ ¡El rival ha solicitado la revancha! Pulsa Revancha para aceptar');
+      },
       onHostDisconnected: (sec) => {
         setDesconexionSegundos(sec);
       },
@@ -682,7 +686,16 @@ export default function App() {
   const iniciarNuevaPartida = (config: MatchConfig) => {
     setBloqueadoPorAnimacion(false);
     startTimeRef.current = Date.now();
-    const nueva = inicializarPartida(config);
+    const cfg: MatchConfig = { ...config };
+    if (usuarioActual && cfg.jugadores && cfg.jugadores.length > 0) {
+      cfg.jugadores[0] = {
+        ...cfg.jugadores[0],
+        nombre: usuarioActual.nombre,
+        color: usuarioActual.avatarColor,
+        hat: usuarioActual.avatarHat as any,
+      };
+    }
+    const nueva = inicializarPartida(cfg);
     setEstado(nueva);
     setPantalla('juego');
     setModalAbierto(null);
@@ -736,7 +749,12 @@ export default function App() {
   const revancha = () => {
     setBloqueadoPorAnimacion(false);
     if (estado.modoOnline) {
-      handleIniciarPartidaOnline(estado.n);
+      if (estado.esAnfitrion) {
+        handleIniciarPartidaOnline(estado.n);
+      } else {
+        onlineService.sendRematchRequest();
+        showToast('⚔️ Solicitud de revancha enviada al anfitrión...');
+      }
     } else {
       iniciarNuevaPartida(estado.config);
     }
@@ -830,6 +848,7 @@ export default function App() {
         <MenuScreen
           usuarioActual={usuarioActual}
           onAbrirPerfil={() => setModalAbierto('perfil')}
+          onAbrirAdmin={() => setModalAbierto('admin')}
           onIniciarPartida={() => {
             setEsModoTorneoConfig(false);
             setPantalla('config');
@@ -859,6 +878,7 @@ export default function App() {
         <ConfigScreen
           ajustes={ajustes}
           esTorneoInicial={esModoTorneoConfig}
+          usuarioActual={usuarioActual}
           onIniciar={iniciarNuevaPartida}
           onVolver={() => setPantalla('menu')}
         />
@@ -975,6 +995,7 @@ export default function App() {
             estado={estado}
             modoDaltonico={ajustes.modoDaltonico}
             animacionesReducidas={ajustes.animacionesReducidas}
+            temaTablero={ajustes.temaTablero}
             onMover={handleMover}
             onPonerMuro={handlePonerMuro}
             onRotarMuro={() =>
@@ -1190,6 +1211,15 @@ export default function App() {
         <AdminPanelModal
           onCerrar={() => setModalAbierto(null)}
           onShowToast={showToast}
+          usuarioActual={usuarioActual}
+          onUsuarioActualizado={(u) => {
+            setUsuarioActual(u);
+            if (!u) {
+              showToast('Tu cuenta ha sido eliminada. Sesión cerrada.');
+            } else if (u.rol === 'admin') {
+              showToast('👑 Ahora eres Administrador');
+            }
+          }}
         />
       )}
     </div>

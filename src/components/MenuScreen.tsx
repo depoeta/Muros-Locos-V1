@@ -12,6 +12,7 @@ import { UserAccount } from '../types/murosLocos';
 interface MenuScreenProps {
   usuarioActual: UserAccount | null;
   onAbrirPerfil: () => void;
+  onAbrirAdmin?: () => void;
   onIniciarPartida: () => void;
   onIniciarTorneo: () => void;
   onAbrirOnline: () => void;
@@ -24,6 +25,7 @@ interface MenuScreenProps {
 export const MenuScreen: React.FC<MenuScreenProps> = ({
   usuarioActual,
   onAbrirPerfil,
+  onAbrirAdmin,
   onIniciarPartida,
   onIniciarTorneo,
   onAbrirOnline,
@@ -55,11 +57,26 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
           <span className="font-black text-xs text-[#2b2140] tracking-wide">MUROS LOCOS</span>
         </div>
 
-        <button
-          onClick={() => {
-            sounds.playClick();
-            onAbrirPerfil();
-          }}
+        <div className="flex items-center gap-2">
+          {usuarioActual && (usuarioActual.rol === 'admin' || usuarioActual.id === 'admin') && onAbrirAdmin && (
+            <button
+              onClick={() => {
+                sounds.playClick();
+                onAbrirAdmin();
+              }}
+              className="py-1 px-2.5 rounded-2xl bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] font-black text-xs cursor-pointer flex items-center gap-1 active:translate-y-0.5"
+              title="Panel de Administrador"
+            >
+              <span>👑</span>
+              <span className="hidden sm:inline">Panel Admin</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onAbrirPerfil();
+            }}
           className="py-1 px-3 rounded-2xl bg-white border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fff9db] hover:-translate-y-0.5 active:translate-y-1 active:shadow-none transition-all cursor-pointer flex items-center gap-2 group"
           title="Gestionar perfil de usuario o iniciar sesión"
         >
@@ -95,6 +112,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
           )}
         </button>
       </div>
+    </div>
 
       {/* Cartoon Top Header / Title */}
       <div className="flex flex-col items-center mt-2 sm:mt-4">

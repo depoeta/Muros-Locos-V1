@@ -47,6 +47,7 @@ export type OnlineEventCallback = {
     payload: { destino?: Coord; orientacion?: WallOrientation; r?: number; c?: number }
   ) => void;
   onReaction?: (jugadorId: number, emoji: string) => void;
+  onRematchRequested?: (jugadorId: number) => void;
   onHostDisconnected?: (secondsRemaining: number) => void;
   onHostReconnected?: () => void;
   onError?: (errorMsg: string) => void;
@@ -372,6 +373,10 @@ class OnlineManager {
       this.broadcast(msg);
       if (this.callbacks.onReaction) {
         this.callbacks.onReaction(msg.jugadorId, msg.emoji);
+      }
+    } else if (msg.type === 'REMATCH_REQUEST') {
+      if (this.callbacks.onRematchRequested) {
+        this.callbacks.onRematchRequested(msg.jugadorId);
       }
     }
   }
@@ -746,6 +751,15 @@ class OnlineManager {
     }
     if (this.callbacks.onReaction) {
       this.callbacks.onReaction(this.myPlayerId, emoji);
+    }
+  }
+
+  public sendRematchRequest() {
+    if (this.role === 'client' && this.hostConnection && this.hostConnection.open) {
+      this.hostConnection.send({
+        type: 'REMATCH_REQUEST',
+        jugadorId: this.myPlayerId,
+      });
     }
   }
 

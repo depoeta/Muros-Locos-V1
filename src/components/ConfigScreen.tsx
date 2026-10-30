@@ -5,12 +5,13 @@
 
 import React, { useState } from 'react';
 import { sounds } from '../audio/murosAudio';
-import { AppSettings, MatchConfig, PlayerType } from '../types/murosLocos';
+import { AppSettings, MatchConfig, PlayerType, UserAccount } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
 
 interface ConfigScreenProps {
   ajustes?: AppSettings;
   esTorneoInicial?: boolean;
+  usuarioActual?: UserAccount | null;
   onIniciar: (config: MatchConfig) => void;
   onVolver: () => void;
 }
@@ -18,14 +19,20 @@ interface ConfigScreenProps {
 export const ConfigScreen: React.FC<ConfigScreenProps> = ({
   ajustes,
   esTorneoInicial = false,
+  usuarioActual,
   onIniciar,
   onVolver,
 }) => {
   const [numJugadores, setNumJugadores] = useState<2 | 4>(2);
   const [jugadores, setJugadores] = useState<
     { nombre: string; tipo: PlayerType; color: string; hat: 'corona' | 'pompon' | 'antena' | 'brote' }[]
-  >([
-    { nombre: 'Tú', tipo: 'humano', color: '#ff6b6b', hat: 'corona' },
+  >(() => [
+    {
+      nombre: usuarioActual?.nombre || 'Tú',
+      tipo: 'humano',
+      color: usuarioActual?.avatarColor || '#ff6b6b',
+      hat: (usuarioActual?.avatarHat as any) || 'corona',
+    },
     { nombre: 'Bot Normal', tipo: 'bot_normal', color: '#4dabf7', hat: 'pompon' },
     { nombre: 'Bot Fácil', tipo: 'bot_facil', color: '#ffd43b', hat: 'antena' },
     { nombre: 'Bot Difícil', tipo: 'bot_dificil', color: '#51cf66', hat: 'brote' },
@@ -59,15 +66,17 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
     const seenNames = new Set<string>();
 
     const sanitized = activeList.map((j, i) => {
-      let nom = j.nombre.trim();
+      let nom = (i === 0 && usuarioActual) ? usuarioActual.nombre : j.nombre.trim();
       if (!nom) nom = `Jugador ${i + 1}`;
       if (seenNames.has(nom.toLowerCase())) {
         nom = `${nom} (2)`;
       }
       seenNames.add(nom.toLowerCase());
       return {
-        nombre: nom.slice(0, 12),
+        nombre: nom.slice(0, 15),
         tipo: j.tipo,
+        color: (i === 0 && usuarioActual) ? usuarioActual.avatarColor : j.color,
+        hat: (i === 0 && usuarioActual) ? (usuarioActual.avatarHat as any) : j.hat,
       };
     });
 

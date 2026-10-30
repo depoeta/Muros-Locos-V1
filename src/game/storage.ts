@@ -137,39 +137,22 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
       const cloudData = await res.json();
       if (cloudData && typeof cloudData === 'object' && !Array.isArray(cloudData)) {
         const local = cargarRanking();
-        const merged: Record<string, RankEntry> = { ...local };
-        for (const [key, val] of Object.entries(cloudData)) {
-          if (val && typeof val === 'object') {
-            const cEntry = normalizarRankEntry(val as Partial<RankEntry>, key);
-            const lEntry = merged[key];
-            if (!lEntry) {
-              merged[key] = cEntry;
-            } else {
-              merged[key] = {
-                ...lEntry,
-                puntosTotales: Math.max(lEntry.puntosTotales, cEntry.puntosTotales),
-                partidas: Math.max(lEntry.partidas, cEntry.partidas),
-                victorias: Math.max(lEntry.victorias, cEntry.victorias),
-                elo: Math.max(lEntry.elo, cEntry.elo),
-                murosColocados: Math.max(lEntry.murosColocados, cEntry.murosColocados),
-                saltos: Math.max(lEntry.saltos, cEntry.saltos),
-                rachaActual: Math.max(lEntry.rachaActual, cEntry.rachaActual),
-                mejorRacha: Math.max(lEntry.mejorRacha, cEntry.mejorRacha),
-                avatarColor: lEntry.avatarColor || cEntry.avatarColor,
-                avatarHat: lEntry.avatarHat || cEntry.avatarHat,
-              };
-            }
+        if (anyKvActive) {
+          // Si KV está vacío inicialmente y local tenía entradas, inicializarlo una sola vez si no es forzado
+          if (Object.keys(cloudData).length === 0 && Object.keys(local).length > 0 && !forzar) {
+            fetch(getApiBaseUrl('/api/ranking'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(local),
+            }).catch(() => {});
+          } else {
+            // Cloudflare KV es la fuente autoritativa: adoptar su estado exactamente
+            safeSet(STORAGE_KEY_RANKING, JSON.stringify(cloudData));
           }
-        }
-        safeSet(STORAGE_KEY_RANKING, JSON.stringify(merged));
-
-        // Subir si local tenía datos más nuevos
-        if (Object.keys(merged).length > Object.keys(cloudData).length) {
-          fetch(getApiBaseUrl('/api/ranking'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(merged),
-          }).catch(() => {});
+        } else {
+          // Modo local sin KV
+          const merged: Record<string, RankEntry> = { ...local, ...cloudData };
+          safeSet(STORAGE_KEY_RANKING, JSON.stringify(merged));
         }
       }
     }
@@ -191,18 +174,24 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
       const cloudAccounts = await res.json();
       if (cloudAccounts && typeof cloudAccounts === 'object' && !Array.isArray(cloudAccounts)) {
         const local = cargarCuentas();
-        const merged: Record<string, UserAccount> = { ...cloudAccounts, ...local };
-        if (!merged['admin']) {
-          merged['admin'] = local['admin'];
-        }
-        safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(merged));
-
-        if (Object.keys(merged).length > Object.keys(cloudAccounts).length) {
-          fetch(getApiBaseUrl('/api/cuentas'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(merged),
-          }).catch(() => {});
+        if (anyKvActive) {
+          if (Object.keys(cloudAccounts).length === 0 && Object.keys(local).length > 1 && !forzar) {
+            fetch(getApiBaseUrl('/api/cuentas'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(local),
+            }).catch(() => {});
+          } else {
+            const finalAccounts = { ...cloudAccounts };
+            if (!finalAccounts['admin']) {
+              finalAccounts['admin'] = local['admin'];
+            }
+            safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(finalAccounts));
+          }
+        } else {
+          const merged: Record<string, UserAccount> = { ...cloudAccounts, ...local };
+          if (!merged['admin']) merged['admin'] = local['admin'];
+          safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(merged));
         }
       }
     }
@@ -371,20 +360,29 @@ export function actualizarDespuesDePartida(
       esHumano: j.tipo === 'humano',
     });
 
-    // Only humans accumulate persistent ranking points, Elo and achievements
+    // Solo humanos con perfil registrado acumulan ranking global
     if (j.tipo !== 'humano') continue;
 
-    const key = j.nombre.trim().toLowerCase();
+    const cuentas = cargarCuentas();
+    const cleanJName = j.nombre.trim().toLowerCase();
+    const matchingAcc = Object.values(cuentas).find(
+      (acc) => acc.nombre.trim().toLowerCase() === cleanJName
+    );
+
+    // Si el jugador no tiene cuenta registrada, NO entra en el ranking
+    if (!matchingAcc) continue;
+
+    const key = cleanJName;
     const entry = ranking[key]
       ? normalizarRankEntry(ranking[key], j.nombre)
       : normalizarRankEntry(
           {
-            nombre: j.nombre,
-            avatarColor: j.color,
-            avatarHat: j.hat,
-            elo: 1000,
+            nombre: matchingAcc.nombre,
+            avatarColor: matchingAcc.avatarColor || j.color,
+            avatarHat: matchingAcc.avatarHat || j.hat,
+            elo: matchingAcc.elo || 1000,
           },
-          j.nombre
+          matchingAcc.nombre
         );
 
     const prevLevel = obtenerNivelYTitulo(entry.puntosTotales);
@@ -472,23 +470,17 @@ export function actualizarDespuesDePartida(
 
     ranking[key] = entry;
 
-    // Sync with UserAccount if one exists with matching name
-    const cuentas = cargarCuentas();
-    const matchingAcc = Object.values(cuentas).find(
-      (acc) => acc.nombre.trim().toLowerCase() === key
-    );
-    if (matchingAcc) {
-      matchingAcc.puntos = entry.puntosTotales;
-      matchingAcc.partidas = entry.partidas;
-      matchingAcc.victorias = entry.victorias;
-      matchingAcc.elo = entry.elo;
-      matchingAcc.ultimaConexion = new Date().toISOString();
-      cuentas[matchingAcc.id] = matchingAcc;
-      guardarCuentas(cuentas);
-      const cur = obtenerUsuarioActual();
-      if (cur && cur.id === matchingAcc.id) {
-        guardarUsuarioActual(matchingAcc);
-      }
+    // Sync with UserAccount
+    matchingAcc.puntos = entry.puntosTotales;
+    matchingAcc.partidas = entry.partidas;
+    matchingAcc.victorias = entry.victorias;
+    matchingAcc.elo = entry.elo;
+    matchingAcc.ultimaConexion = new Date().toISOString();
+    cuentas[matchingAcc.id] = matchingAcc;
+    guardarCuentas(cuentas);
+    const cur = obtenerUsuarioActual();
+    if (cur && cur.id === matchingAcc.id) {
+      guardarUsuarioActual(matchingAcc);
     }
   }
 
@@ -897,6 +889,80 @@ export function adminResetearRanking(): boolean {
     }
   }
   guardarCuentas(cuentas);
+  return true;
+}
+
+export async function adminActualizarUsuarioAsync(
+  id: string,
+  patch: Partial<UserAccount>
+): Promise<boolean> {
+  const ok = adminActualizarUsuario(id, patch);
+  if (!ok) return false;
+  const cuentas = cargarCuentas();
+  const ranking = cargarRanking();
+  try {
+    await Promise.all([
+      fetch(getApiBaseUrl('/api/cuentas'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cuentas),
+      }),
+      fetch(getApiBaseUrl('/api/ranking'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ranking),
+      }),
+    ]);
+  } catch (err) {
+    console.error('Error actualizando en la nube:', err);
+  }
+  return true;
+}
+
+export async function adminEliminarUsuarioAsync(id: string): Promise<boolean> {
+  const ok = adminEliminarUsuario(id);
+  if (!ok) return false;
+  const cuentas = cargarCuentas();
+  const ranking = cargarRanking();
+  try {
+    await Promise.all([
+      fetch(getApiBaseUrl('/api/cuentas'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cuentas),
+      }),
+      fetch(getApiBaseUrl('/api/ranking'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ranking),
+      }),
+    ]);
+  } catch (err) {
+    console.error('Error eliminando en la nube:', err);
+  }
+  return true;
+}
+
+export async function adminResetearRankingAsync(): Promise<boolean> {
+  adminResetearRanking();
+  const ranking = cargarRanking();
+  const cuentas = cargarCuentas();
+  try {
+    await Promise.all([
+      fetch(getApiBaseUrl('/api/ranking'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ranking),
+      }),
+      fetch(getApiBaseUrl('/api/cuentas'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cuentas),
+      }),
+    ]);
+  } catch (err) {
+    console.error('Error reseteando en la nube:', err);
+  }
   return true;
 }
 

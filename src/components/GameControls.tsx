@@ -48,6 +48,13 @@ export const PlayerCards: React.FC<PlayerCardsProps> = ({ estado, mostrarDistanc
                 </div>
               )}
 
+              {/* Floating Reaction Bubble */}
+              {estado.reaccionActiva && estado.reaccionActiva.jugadorId === jugador.id && (
+                <div className="absolute -top-7 left-4 z-30 text-2xl animate-bounce bg-white rounded-full px-1.5 py-0.5 border-2 border-[#2b2140] shadow-[0_4px_10px_rgba(0,0,0,0.3)]">
+                  {estado.reaccionActiva.emoji}
+                </div>
+              )}
+
               {isWinner && (
                 <div className="absolute -top-2 left-2 text-xl filter drop-shadow">
                   👑

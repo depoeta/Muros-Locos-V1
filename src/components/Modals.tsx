@@ -9,6 +9,7 @@ import { sounds } from '../audio/murosAudio';
 import {
   AchievementDef,
   AppSettings,
+  BoardTheme,
   GameState,
   HatType,
   LevelInfo,
@@ -21,8 +22,11 @@ import {
 import { CartoonCharacter } from './CartoonCharacter';
 import {
   adminActualizarUsuario,
+  adminActualizarUsuarioAsync,
   adminEliminarUsuario,
+  adminEliminarUsuarioAsync,
   adminResetearRanking,
+  adminResetearRankingAsync,
   cargarCuentas,
   cargarHistorial,
   cargarRanking,
@@ -134,6 +138,49 @@ export const AjustesModal: React.FC<AjustesModalProps> = ({
               </div>
             );
           })}
+          {/* Selector de Tema del Tablero */}
+          <div className="p-3 rounded-2xl border-2 border-[#2b2140] bg-white flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">🎨</span>
+              <div>
+                <span className="font-extrabold text-xs sm:text-sm text-[#2b2140] block">
+                  Tema Visual del Tablero
+                </span>
+                <span className="text-[11px] font-medium text-[#86542d] block leading-tight">
+                  Estilo de madera, neón futurista, hielo ártico o lava volcánica
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              {[
+                { id: 'madera' as BoardTheme, label: '🪵 Madera Clásica', border: 'border-[#86542d]', bg: 'bg-[#ffec99]' },
+                { id: 'neon' as BoardTheme, label: '⚡ Neón Cyber', border: 'border-[#0c8599]', bg: 'bg-[#c5f6fa]' },
+                { id: 'hielo' as BoardTheme, label: '❄️ Hielo Ártico', border: 'border-[#1971c2]', bg: 'bg-[#d0ebff]' },
+                { id: 'lava' as BoardTheme, label: '🌋 Volcán Lava', border: 'border-[#c92a2a]', bg: 'bg-[#ffe3e3]' },
+              ].map((theme) => {
+                const isSelected = (localAjustes.temaTablero || 'madera') === theme.id;
+                return (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    onClick={() => {
+                      sounds.playClick();
+                      setLocalAjustes((prev) => ({ ...prev, temaTablero: theme.id }));
+                    }}
+                    className={`p-2 rounded-xl border-2 text-xs font-black cursor-pointer transition-all flex items-center justify-center gap-1.5 ${theme.border} ${
+                      isSelected
+                        ? `${theme.bg} shadow-[0_2px_0_#2b2140] scale-[1.02]`
+                        : 'bg-white opacity-70 hover:opacity-100 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>{theme.label}</span>
+                    {isSelected && <span className="text-xs">✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
         <div className="pt-3 border-t-2 border-[#2b2140]/15 flex items-center justify-end gap-2">
@@ -1294,15 +1341,25 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
 interface AdminPanelModalProps {
   onCerrar: () => void;
   onShowToast: (msg: string) => void;
+  usuarioActual?: UserAccount | null;
+  onUsuarioActualizado?: (usuario: UserAccount | null) => void;
 }
 
-export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onShowToast }) => {
-  const [autenticado, setAutenticado] = useState(false);
+export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
+  onCerrar,
+  onShowToast,
+  usuarioActual,
+  onUsuarioActualizado,
+}) => {
+  const [autenticado, setAutenticado] = useState<boolean>(() => {
+    return Boolean(usuarioActual && (usuarioActual.rol === 'admin' || usuarioActual.id === 'admin'));
+  });
   const [claveInput, setClaveInput] = useState('');
   const [cuentas, setCuentas] = useState<Record<string, UserAccount>>(() => cargarCuentas());
   const [filtro, setFiltro] = useState('');
   const [editandoId, setEditandoId] = useState<string | null>(null);
   const [sincronizando, setSincronizando] = useState(false);
+  const [guardando, setGuardando] = useState(false);
   const [kvActivo, setKvActivo] = useState(() => estaKvConectado());
 
   // Edit fields
@@ -1317,7 +1374,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onSh
     try {
       const res = await sincronizarConNube(forzar);
       setKvActivo(res.kvConectado);
-      setCuentas(cargarCuentas());
+      const accs = cargarCuentas();
+      setCuentas(accs);
+      if (usuarioActual && accs[usuarioActual.id]) {
+        onUsuarioActualizado?.(accs[usuarioActual.id]);
+      }
       if (forzar) {
         onShowToast(res.kvConectado ? '🟢 Sincronizado con Cloudflare KV' : '🟡 Datos locales actualizados');
       }
@@ -1355,30 +1416,61 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onSh
     setEditVictorias(acc.victorias);
   };
 
-  const guardarEdicion = (id: string) => {
+  const guardarEdicion = async (id: string) => {
     sounds.playClick();
-    const ok = adminActualizarUsuario(id, {
-      nombre: editNombre,
-      clave: editClave,
-      rol: editRol,
-      puntos: editPuntos,
-      victorias: editVictorias,
-    });
-    if (ok) {
-      setCuentas(cargarCuentas());
-      setEditandoId(null);
-      onShowToast(`✅ Perfil "${editNombre}" actualizado con éxito`);
-    } else {
-      onShowToast('⚠️ No se pudo actualizar el perfil (nombre duplicado o reservado)');
+    const nombreLimpio = editNombre.trim();
+    if (nombreLimpio.length < 3 || nombreLimpio.length > 15) {
+      onShowToast('⚠️ El nombre debe tener entre 3 y 15 letras');
+      return;
+    }
+
+    setGuardando(true);
+    onShowToast('⏳ Guardando cambios en la base de datos...');
+    try {
+      const ok = await adminActualizarUsuarioAsync(id, {
+        nombre: nombreLimpio,
+        clave: editClave.trim(),
+        rol: editRol,
+        puntos: editPuntos,
+        victorias: editVictorias,
+      });
+      if (ok) {
+        const actualizadas = cargarCuentas();
+        setCuentas(actualizadas);
+        setEditandoId(null);
+        if (usuarioActual && usuarioActual.id === id) {
+          onUsuarioActualizado?.(actualizadas[id] || null);
+        }
+        onShowToast(`✅ Perfil "${nombreLimpio}" actualizado con éxito`);
+      } else {
+        onShowToast('⚠️ No se pudo actualizar el perfil (nombre duplicado o reservado)');
+      }
+    } catch {
+      onShowToast('❌ Error de conexión al guardar cambios');
+    } finally {
+      setGuardando(false);
     }
   };
 
-  const handleEliminar = (id: string, nombre: string) => {
+  const handleEliminar = async (id: string, nombre: string) => {
     sounds.playClick();
-    if (window.confirm(`¿Seguro que deseas eliminar el usuario "${nombre}"? Esta acción borrará también su puntuación en el ranking.`)) {
-      adminEliminarUsuario(id);
-      setCuentas(cargarCuentas());
-      onShowToast(`🗑️ Perfil "${nombre}" eliminado`);
+    if (window.confirm(`¿Seguro que deseas eliminar el usuario "${nombre}"? Esta acción borrará también su puntuación en el ranking global.`)) {
+      setGuardando(true);
+      onShowToast('⏳ Eliminando usuario de la base de datos...');
+      try {
+        await adminEliminarUsuarioAsync(id);
+        const actualizadas = cargarCuentas();
+        setCuentas(actualizadas);
+        if (usuarioActual && usuarioActual.id === id) {
+          onUsuarioActualizado?.(null);
+          onCerrar();
+        }
+        onShowToast(`🗑️ Perfil "${nombre}" eliminado definitivamente`);
+      } catch {
+        onShowToast('❌ Error al eliminar el usuario');
+      } finally {
+        setGuardando(false);
+      }
     }
   };
 
@@ -1643,16 +1735,17 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onSh
                 Pone a 0 los puntos, partidas y victorias de todos los jugadores en la base de datos global.
               </p>
               <button
-                onClick={() => {
+                onClick={async () => {
                   sounds.playClick();
                   if (
                     window.confirm(
                       '⚠️ ¿CONFIRMAS que deseas reiniciar TODO el ranking a cero?\n\nEsta acción borrará todas las puntuaciones acumuladas y todos empezarán desde 0.'
                     )
                   ) {
-                    adminResetearRanking();
-                    sincronizar(true);
-                    onShowToast('🧹 Todo el ranking ha sido reiniciado a cero');
+                    onShowToast('⏳ Reiniciando ranking en la nube...');
+                    await adminResetearRankingAsync();
+                    setCuentas(cargarCuentas());
+                    onShowToast('🧹 Todo el ranking ha sido reiniciado a cero con éxito');
                   }
                 }}
                 className="w-full py-2 px-3 rounded-xl font-black text-xs bg-[#ffe3e3] text-[#c92a2a] border-2 border-[#ffa8a8] hover:bg-[#ffc9c9] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"

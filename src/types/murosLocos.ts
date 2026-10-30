@@ -128,6 +128,8 @@ export type OnlineMessage =
   | { type: 'PLAYER_ACTION'; jugadorId: number; accion: 'mover' | 'muro' | 'pasar'; payload: any }
   | { type: 'STATE_SYNC'; state: GameState }
   | { type: 'REACTION'; jugadorId: number; emoji: string }
+  | { type: 'REMATCH_REQUEST'; jugadorId: number }
+  | { type: 'REMATCH_ACCEPT'; state: GameState }
   | { type: 'PING' }
   | { type: 'PONG' }
   | { type: 'HOST_DISCONNECT_WARNING'; tiempoRestante: number }
@@ -237,6 +239,8 @@ export interface AchievementDef {
   icono: string;
 }
 
+export type BoardTheme = 'madera' | 'neon' | 'hielo' | 'lava';
+
 export interface AppSettings {
   sonido: boolean;
   animacionesReducidas: boolean;
@@ -244,6 +248,7 @@ export interface AppSettings {
   permitirDeshacer: boolean;
   permitirPistas: boolean;
   modoDaltonico: boolean;
+  temaTablero?: BoardTheme;
 }
 
 export interface LevelInfo {

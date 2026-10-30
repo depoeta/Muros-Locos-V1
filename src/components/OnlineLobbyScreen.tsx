@@ -241,16 +241,37 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
               <CartoonCharacter color={color} hat={hat} size={54} showShadow={false} />
 
               <div className="flex-1">
-                <label className="text-[11px] font-bold text-[#86542d] block mb-0.5">
-                  Nombre en partida:
-                </label>
+                <div className="flex items-center justify-between mb-0.5">
+                  <label className="text-[11px] font-bold text-[#86542d] block">
+                    Nombre en partida:
+                  </label>
+                  {usuarioActual ? (
+                    <span className="text-[10px] bg-[#d3f9d8] text-[#134e20] font-black px-1.5 py-0.5 rounded border border-[#2b2140]">
+                      ⭐ Perfil Oficial
+                    </span>
+                  ) : (
+                    <span className="text-[10px] bg-[#fff3bf] text-[#8f4b00] font-extrabold px-1.5 py-0.5 rounded border border-[#2b2140]">
+                      Invitado (sin ranking)
+                    </span>
+                  )}
+                </div>
                 <input
                   type="text"
-                  maxLength={12}
-                  value={nombre}
-                  onChange={(e) => setNombre(e.target.value)}
+                  maxLength={15}
+                  value={usuarioActual ? usuarioActual.nombre : nombre}
+                  onChange={(e) => {
+                    if (!usuarioActual) {
+                      setNombre(e.target.value);
+                    }
+                  }}
+                  readOnly={Boolean(usuarioActual)}
                   placeholder="Tu nombre"
-                  className="w-full text-sm font-extrabold text-[#2b2140] bg-[#f8f9fa] border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-[#ffd43b]"
+                  className={`w-full text-sm font-extrabold text-[#2b2140] border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none ${
+                    usuarioActual
+                      ? 'bg-[#edf2ff] cursor-not-allowed select-none'
+                      : 'bg-[#f8f9fa] focus:ring-2 focus:ring-[#ffd43b]'
+                  }`}
+                  title={usuarioActual ? 'Tu nombre proviene de tu perfil iniciado' : undefined}
                 />
               </div>
             </div>

@@ -13,13 +13,14 @@ import {
   WALL_GRID_SIZE,
 } from '../game/murosLocosEngine';
 import { sounds } from '../audio/murosAudio';
-import { Coord, GameState, WallOrientation } from '../types/murosLocos';
+import { BoardTheme, Coord, GameState, WallOrientation } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
 
 interface MurosBoardProps {
   estado: GameState;
   modoDaltonico: boolean;
   animacionesReducidas?: boolean;
+  temaTablero?: BoardTheme;
   onMover: (destino: Coord) => void;
   onPonerMuro: (orientacion: WallOrientation, r: number, c: number) => void;
   onRotarMuro: () => void;
@@ -27,16 +28,65 @@ interface MurosBoardProps {
   bloqueadoPorAnimacion: boolean;
 }
 
+const THEMES: Record<BoardTheme, {
+  frameBg: string;
+  frameStyle: React.CSSProperties;
+  cornerDot: string;
+  innerBg: string;
+  tileEven: string;
+  tileOdd: string;
+  tileBorder: string;
+}> = {
+  madera: {
+    frameBg: 'bg-[#b07d4b]',
+    frameStyle: { backgroundImage: 'radial-gradient(circle at 50% 20%, #c4915c 0%, #a46d3b 100%)' },
+    cornerDot: 'bg-[#f6cf8a]',
+    innerBg: 'bg-[#593922]',
+    tileEven: 'bg-[#fffae8]',
+    tileOdd: 'bg-[#faeccb]',
+    tileBorder: 'border-[#2b2140]/15',
+  },
+  neon: {
+    frameBg: 'bg-[#0b1329]',
+    frameStyle: { backgroundImage: 'radial-gradient(circle at 50% 20%, #1e1b4b 0%, #030712 100%)', boxShadow: '0 0 25px rgba(6,182,212,0.35)' },
+    cornerDot: 'bg-[#06b6d4]',
+    innerBg: 'bg-[#030712]',
+    tileEven: 'bg-[#0f172a]',
+    tileOdd: 'bg-[#1e293b]',
+    tileBorder: 'border-[#06b6d4]/25',
+  },
+  hielo: {
+    frameBg: 'bg-[#74c0fc]',
+    frameStyle: { backgroundImage: 'radial-gradient(circle at 50% 20%, #a5d8ff 0%, #4dabf7 100%)', boxShadow: '0 0 20px rgba(116,192,252,0.4)' },
+    cornerDot: 'bg-[#e7f5ff]',
+    innerBg: 'bg-[#1864ab]',
+    tileEven: 'bg-[#f8f9fa]',
+    tileOdd: 'bg-[#e7f5ff]',
+    tileBorder: 'border-[#1971c2]/20',
+  },
+  lava: {
+    frameBg: 'bg-[#491212]',
+    frameStyle: { backgroundImage: 'radial-gradient(circle at 50% 20%, #7f1d1d 0%, #1f0404 100%)', boxShadow: '0 0 25px rgba(239,68,68,0.4)' },
+    cornerDot: 'bg-[#f59e0b]',
+    innerBg: 'bg-[#180505]',
+    tileEven: 'bg-[#261010]',
+    tileOdd: 'bg-[#381515]',
+    tileBorder: 'border-[#ef4444]/25',
+  },
+};
+
 export const MurosBoard: React.FC<MurosBoardProps> = ({
   estado,
   modoDaltonico,
   animacionesReducidas = false,
+  temaTablero = 'madera',
   onMover,
   onPonerMuro,
   onRotarMuro,
   onInvalidWallAttempt,
   bloqueadoPorAnimacion,
 }) => {
+  const currentTheme = THEMES[temaTablero] || THEMES.madera;
   const boardRef = useRef<HTMLDivElement>(null);
   const [hoveredIntersection, setHoveredIntersection] = useState<Coord | null>(null);
   const [ghostValidity, setGhostValidity] = useState<'ok' | 'fuera' | 'solape' | 'bloquea'>('ok');
@@ -157,24 +207,21 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
         </div>
       )}
 
-      {/* Outer Wooden Board Frame */}
+      {/* Outer Themed Board Frame */}
       <div
-        className="relative w-full aspect-square rounded-3xl p-3 sm:p-4 bg-[#b07d4b] border-4 border-[#2b2140] shadow-[0_10px_0_#2b2140,0_18px_25px_rgba(0,0,0,0.35)] select-none transition-transform"
-        style={{
-          backgroundImage:
-            'radial-gradient(circle at 50% 20%, #c4915c 0%, #a46d3b 100%)',
-        }}
+        className={`relative w-full aspect-square rounded-3xl p-3 sm:p-4 ${currentTheme.frameBg} border-4 border-[#2b2140] shadow-[0_10px_0_#2b2140,0_18px_25px_rgba(0,0,0,0.35)] select-none transition-all duration-300`}
+        style={currentTheme.frameStyle}
       >
-        {/* Subtle decorative frame corner inlays */}
-        <div className="absolute top-2 left-2 w-3 h-3 rounded-full bg-[#f6cf8a] border-2 border-[#2b2140]" />
-        <div className="absolute top-2 right-2 w-3 h-3 rounded-full bg-[#f6cf8a] border-2 border-[#2b2140]" />
-        <div className="absolute bottom-2 left-2 w-3 h-3 rounded-full bg-[#f6cf8a] border-2 border-[#2b2140]" />
-        <div className="absolute bottom-2 right-2 w-3 h-3 rounded-full bg-[#f6cf8a] border-2 border-[#2b2140]" />
+        {/* Decorative frame corner inlays */}
+        <div className={`absolute top-2 left-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} border-2 border-[#2b2140]`} />
+        <div className={`absolute top-2 right-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} border-2 border-[#2b2140]`} />
+        <div className={`absolute bottom-2 left-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} border-2 border-[#2b2140]`} />
+        <div className={`absolute bottom-2 right-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} border-2 border-[#2b2140]`} />
 
         {/* Inner Playing Surface (9x9 grid) */}
         <div
           ref={boardRef}
-          className="relative w-full h-full rounded-2xl bg-[#593922] border-3 border-[#2b2140] overflow-hidden grid grid-cols-9 grid-rows-9 gap-[6px] p-[6px]"
+          className={`relative w-full h-full rounded-2xl ${currentTheme.innerBg} border-3 border-[#2b2140] overflow-hidden grid grid-cols-9 grid-rows-9 gap-[6px] p-[6px] transition-colors duration-300`}
           style={{ touchAction: 'manipulation' }}
         >
           {/* Render 9x9 Cells (Static board background) */}
@@ -187,10 +234,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
               const isHint = estado.caminoPista?.some((pt) => pt.r === r && pt.c === c);
               const hasPlayer = estado.jugadores.some((p) => p.r === r && p.c === c);
 
-              let tileBg = isEven ? 'bg-[#fffae8]' : 'bg-[#faeccb]';
-              if (goalInfo) {
-                tileBg = 'bg-[#fff5dc]';
-              }
+              let tileBg = isEven ? currentTheme.tileEven : currentTheme.tileOdd;
 
               return (
                 <div
@@ -200,13 +244,17 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                       onMover({ r, c });
                     }
                   }}
-                  className={`relative rounded-lg flex items-center justify-center transition-all ${tileBg} border-2 border-[#2b2140]/15 ${
+                  className={`relative rounded-lg flex items-center justify-center transition-all ${tileBg} border-2 ${currentTheme.tileBorder} ${
                     isLegalMove && !bloqueadoPorAnimacion && esTurnoHumano
-                      ? 'cursor-pointer hover:brightness-105 active:scale-95'
+                      ? 'cursor-pointer hover:brightness-110 active:scale-95'
                       : ''
                   }`}
                   style={{
-                    backgroundColor: goalInfo ? `${goalInfo.color}25` : undefined,
+                    backgroundColor: isLegalMove
+                      ? `${jugadorActivo.color}25`
+                      : goalInfo
+                      ? `${goalInfo.color}25`
+                      : undefined,
                   }}
                 >
                   {/* Goal strip indicator accent edge */}
