@@ -9,7 +9,6 @@ import {
   Coord,
   GameState,
   HatType,
-  MatchConfig,
   OnlineMessage,
   OnlinePlayerInfo,
   WallOrientation,
@@ -39,6 +38,7 @@ export function formatRoomPeerId(code: string): string {
 
 export type OnlineEventCallback = {
   onLobbyUpdate?: (players: OnlinePlayerInfo[], maxPlayers: 2 | 4) => void;
+  onLobbyFull?: (maxPlayers: 2 | 4) => void;
   onGameStart?: (initialState: GameState) => void;
   onStateSync?: (state: GameState) => void;
   onClientAction?: (
@@ -66,6 +66,13 @@ class OnlineManager {
   private myHat: HatType = 'corona';
   private lobbyPlayers: OnlinePlayerInfo[] = [];
   private callbacks: OnlineEventCallback = {};
+
+  // Heartbeat & keep-alive
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private lastSeenMap: Map<string, number> = new Map();
+  private hostLastSeen: number = Date.now();
+
+  // Reconnection grace period
   private reconnectInterval: ReturnType<typeof setInterval> | null = null;
   private countdownInterval: ReturnType<typeof setInterval> | null = null;
   private currentGameState: GameState | null = null;
@@ -137,6 +144,77 @@ class OnlineManager {
     }
   }
 
+  // ===================== HEARTBEAT (PING-PONG) =====================
+  private startHeartbeat() {
+    this.stopHeartbeat();
+    this.hostLastSeen = Date.now();
+
+    this.heartbeatInterval = setInterval(() => {
+      const now = Date.now();
+
+      if (this.role === 'host') {
+        // Host pings all connected clients & purges inactive ones
+        const deadPeers: string[] = [];
+
+        for (const [peerId, conn] of this.connections.entries()) {
+          if (conn.open) {
+            try {
+              conn.send({ type: 'PING' });
+            } catch {
+              deadPeers.push(peerId);
+            }
+          }
+
+          const lastSeen = this.lastSeenMap.get(peerId) || now;
+          if (now - lastSeen > 5000) {
+            deadPeers.push(peerId);
+          }
+        }
+
+        // Clean up dead peers immediately so room becomes available
+        if (deadPeers.length > 0) {
+          deadPeers.forEach((pId) => {
+            const conn = this.connections.get(pId);
+            if (conn) {
+              try { conn.close(); } catch {}
+            }
+            this.connections.delete(pId);
+            this.lastSeenMap.delete(pId);
+          });
+
+          const prevCount = this.lobbyPlayers.length;
+          this.lobbyPlayers = this.lobbyPlayers.filter((p) => p.esAnfitrion || !deadPeers.includes(p.peerId));
+          this.lobbyPlayers.forEach((p, idx) => { p.id = idx; });
+
+          if (this.lobbyPlayers.length !== prevCount) {
+            this.broadcastLobbyUpdate();
+          }
+        }
+      } else if (this.role === 'client') {
+        // Client pings host
+        if (this.hostConnection && this.hostConnection.open) {
+          try {
+            this.hostConnection.send({ type: 'PING' });
+          } catch {
+            // will detect on timeout
+          }
+        }
+
+        // Check if host went quiet
+        if (now - this.hostLastSeen > 5500) {
+          this.startHostDisconnectGracePeriod(formatRoomPeerId(this.roomCode));
+        }
+      }
+    }, 2000);
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+  }
+
   // ===================== HOST CREATION =====================
   public async createRoom(
     code: string,
@@ -173,6 +251,8 @@ class OnlineManager {
           },
         ];
         this.saveActiveSession();
+        this.startHeartbeat();
+
         if (this.callbacks.onLobbyUpdate) {
           this.callbacks.onLobbyUpdate(this.lobbyPlayers, this.maxPlayers);
         }
@@ -185,7 +265,7 @@ class OnlineManager {
 
       this.peer.on('error', (err) => {
         if (this.callbacks.onError) {
-          this.callbacks.onError(`Error al crear sala: ${err.message}`);
+          this.callbacks.onError(`Error en la sala: ${err.message}`);
         }
         reject(err);
       });
@@ -195,6 +275,7 @@ class OnlineManager {
   private handleIncomingClientConnection(conn: DataConnection) {
     const setup = () => {
       this.connections.set(conn.peer, conn);
+      this.lastSeenMap.set(conn.peer, Date.now());
 
       conn.on('data', (raw: unknown) => {
         const msg = raw as OnlineMessage;
@@ -203,11 +284,15 @@ class OnlineManager {
 
       conn.on('close', () => {
         this.connections.delete(conn.peer);
-        this.lobbyPlayers = this.lobbyPlayers.map((p) =>
-          p.peerId === conn.peer ? { ...p, conectado: false } : p
-        );
-        if (this.callbacks.onLobbyUpdate) {
-          this.callbacks.onLobbyUpdate(this.lobbyPlayers, this.maxPlayers);
+        this.lastSeenMap.delete(conn.peer);
+
+        // Remove from lobby to immediately free room slot
+        const prevCount = this.lobbyPlayers.length;
+        this.lobbyPlayers = this.lobbyPlayers.filter((p) => p.peerId !== conn.peer);
+        this.lobbyPlayers.forEach((p, idx) => { p.id = idx; });
+
+        if (this.lobbyPlayers.length !== prevCount) {
+          this.broadcastLobbyUpdate();
         }
       });
     };
@@ -220,7 +305,18 @@ class OnlineManager {
   }
 
   private handleMessageFromClient(conn: DataConnection, msg: OnlineMessage) {
+    this.lastSeenMap.set(conn.peer, Date.now());
+
+    if (msg.type === 'PING') {
+      try { conn.send({ type: 'PONG' }); } catch {}
+      return;
+    }
+    if (msg.type === 'PONG') {
+      return;
+    }
+
     if (msg.type === 'JOIN_REQUEST') {
+      // If room is full, reject
       if (this.lobbyPlayers.length >= this.maxPlayers) {
         conn.send({
           type: 'HOST_DISCONNECT_WARNING',
@@ -240,13 +336,20 @@ class OnlineManager {
         nombre: msg.nombre.trim() || `Jugador ${newId + 1}`,
         color: msg.color || playerColors[newId] || '#4dabf7',
         hat: msg.hat || playerHats[newId] || 'pompon',
-        listo: false,
+        listo: true,
         conectado: true,
         esAnfitrion: false,
       };
 
       this.lobbyPlayers.push(newPlayer);
       this.broadcastLobbyUpdate();
+
+      // AUTO-START INSTANTLY when lobby reaches required capacity!
+      if (this.lobbyPlayers.length >= this.maxPlayers) {
+        if (this.callbacks.onLobbyFull) {
+          this.callbacks.onLobbyFull(this.maxPlayers);
+        }
+      }
     } else if (msg.type === 'PLAYER_ACTION') {
       if (this.callbacks.onClientAction) {
         this.callbacks.onClientAction(msg.jugadorId, msg.accion, msg.payload);
@@ -328,9 +431,9 @@ class OnlineManager {
         if (!isSettled) {
           isSettled = true;
           this.cleanUp();
-          reject(new Error('La sala no respondió a tiempo'));
+          reject(new Error('Sala no disponible'));
         }
-      }, 4500);
+      }, 2500);
 
       this.peer.on('open', () => {
         this.connectToHost(
@@ -339,6 +442,7 @@ class OnlineManager {
             if (!isSettled) {
               isSettled = true;
               clearTimeout(timeoutId);
+              this.startHeartbeat();
               resolve();
             }
           },
@@ -362,7 +466,7 @@ class OnlineManager {
     });
   }
 
-  // Auto-Matchmaking: Tries to join public room, or hosts if empty!
+  // Auto-Matchmaking: Fast join or become host
   public async joinOrHostPublicRoom(
     code: string,
     playerName: string,
@@ -392,6 +496,7 @@ class OnlineManager {
 
     const onOpen = () => {
       this.stopReconnectGracePeriod();
+      this.hostLastSeen = Date.now();
 
       this.hostConnection?.send({
         type: 'JOIN_REQUEST',
@@ -430,6 +535,16 @@ class OnlineManager {
   }
 
   private handleMessageFromHost(msg: OnlineMessage) {
+    this.hostLastSeen = Date.now();
+
+    if (msg.type === 'PING') {
+      try { this.hostConnection?.send({ type: 'PONG' }); } catch {}
+      return;
+    }
+    if (msg.type === 'PONG') {
+      return;
+    }
+
     if (msg.type === 'LOBBY_UPDATE') {
       this.roomCode = msg.roomCode;
       this.maxPlayers = msg.maxJugadores;
@@ -448,16 +563,29 @@ class OnlineManager {
         this.callbacks.onLobbyUpdate(msg.jugadores, msg.maxJugadores);
       }
     } else if (msg.type === 'START_GAME') {
-      this.currentGameState = msg.initialState;
+      // Ensure myPlayerId and client role are correctly applied
+      const clientState: GameState = {
+        ...msg.initialState,
+        miJugadorId: this.myPlayerId,
+        esAnfitrion: false,
+        modoOnline: true,
+      };
+      this.currentGameState = clientState;
       this.saveActiveSession();
       if (this.callbacks.onGameStart) {
-        this.callbacks.onGameStart(msg.initialState);
+        this.callbacks.onGameStart(clientState);
       }
     } else if (msg.type === 'STATE_SYNC') {
-      this.currentGameState = msg.state;
+      const clientState: GameState = {
+        ...msg.state,
+        miJugadorId: this.myPlayerId,
+        esAnfitrion: false,
+        modoOnline: true,
+      };
+      this.currentGameState = clientState;
       this.saveActiveSession();
       if (this.callbacks.onStateSync) {
-        this.callbacks.onStateSync(msg.state);
+        this.callbacks.onStateSync(clientState);
       }
     } else if (msg.type === 'REACTION') {
       if (this.callbacks.onReaction) {
@@ -465,9 +593,15 @@ class OnlineManager {
       }
     } else if (msg.type === 'HOST_RESUMED') {
       this.stopReconnectGracePeriod();
-      this.currentGameState = msg.state;
+      const clientState: GameState = {
+        ...msg.state,
+        miJugadorId: this.myPlayerId,
+        esAnfitrion: false,
+        modoOnline: true,
+      };
+      this.currentGameState = clientState;
       if (this.callbacks.onStateSync) {
-        this.callbacks.onStateSync(msg.state);
+        this.callbacks.onStateSync(clientState);
       }
       if (this.callbacks.onHostReconnected) {
         this.callbacks.onHostReconnected();
@@ -477,6 +611,8 @@ class OnlineManager {
 
   // ===================== GRACE PERIOD ON DISCONNECT =====================
   private startHostDisconnectGracePeriod(hostPeerId: string) {
+    if (this.countdownInterval) return; // already active
+
     let secondsLeft = 45;
 
     if (this.callbacks.onHostDisconnected) {
@@ -508,7 +644,7 @@ class OnlineManager {
           // retry
         }
       }
-    }, 3000);
+    }, 2500);
   }
 
   private stopReconnectGracePeriod() {
@@ -562,7 +698,9 @@ class OnlineManager {
   }
 
   public cleanUp() {
+    this.stopHeartbeat();
     this.stopReconnectGracePeriod();
+
     for (const conn of this.connections.values()) {
       try {
         conn.close();
@@ -571,6 +709,7 @@ class OnlineManager {
       }
     }
     this.connections.clear();
+    this.lastSeenMap.clear();
 
     if (this.hostConnection) {
       try {

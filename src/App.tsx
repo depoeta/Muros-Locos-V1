@@ -124,8 +124,21 @@ export default function App() {
   // Wire Online P2P Callbacks
   useEffect(() => {
     onlineService.setCallbacks({
+      onLobbyFull: (maxPlayers) => {
+        // Auto-start immediately when the other player enters!
+        if (onlineService.getRole() === 'host') {
+          handleIniciarPartidaOnline(maxPlayers);
+        }
+      },
       onGameStart: (initialState) => {
-        setEstado(initialState);
+        const myId = onlineService.getMyPlayerId();
+        const role = onlineService.getRole();
+        setEstado({
+          ...initialState,
+          miJugadorId: myId,
+          esAnfitrion: role === 'host',
+          modoOnline: true,
+        });
         setPantalla('juego');
         setModalAbierto(null);
         setMostrarHistorial(false);
@@ -134,14 +147,15 @@ export default function App() {
         sounds.playTurn();
       },
       onStateSync: (syncedState) => {
+        const myId = onlineService.getMyPlayerId();
+        const role = onlineService.getRole();
         setEstado((prev) => {
-          // Preserve local client identifiers
           return {
             ...syncedState,
-            miJugadorId: prev.miJugadorId,
+            miJugadorId: myId,
+            esAnfitrion: role === 'host',
             modoOnline: true,
-            codigoSala: prev.codigoSala,
-            esAnfitrion: prev.esAnfitrion,
+            codigoSala: prev.codigoSala || onlineService.getRoomCode(),
           };
         });
         sounds.playTurn();

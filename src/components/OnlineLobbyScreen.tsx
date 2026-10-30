@@ -488,26 +488,16 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
             </div>
           </div>
 
-          {/* Start Game Controls */}
-          {isHost ? (
-            <button
-              type="button"
-              disabled={!puedeEmpezar}
-              onClick={() => {
-                sounds.playClick();
-                onIniciarPartidaOnline(maxJugadores);
-              }}
-              className={`w-full py-3.5 rounded-2xl border-3 border-[#2b2140] font-black text-base flex items-center justify-center gap-2 transition-all ${
-                puedeEmpezar
-                  ? 'bg-[#51cf66] text-[#134e20] shadow-[0_6px_0_#2b2140] hover:bg-[#40c057] active:translate-y-1 cursor-pointer animate-pulse'
-                  : 'bg-[#ced4da] text-[#868e96] border-[#adb5bd] cursor-not-allowed shadow-none'
-              }`}
-            >
-              <span>▶ INICIAR PARTIDA ONLINE</span>
-            </button>
+          {/* Status & Instant Start Info */}
+          {jugadoresEnLobby.length >= maxJugadores ? (
+            <div className="p-3.5 bg-[#d3f9d8] text-[#134e20] rounded-2xl border-3 border-[#2b2140] text-sm font-black text-center shadow-[0_4px_0_#2b2140] animate-bounce flex items-center justify-center gap-2">
+              <span>🚀</span>
+              <span>¡Rival conectado! Iniciando partida automáticamente...</span>
+            </div>
           ) : (
-            <div className="p-3 bg-[#e7f5ff] text-[#1864ab] rounded-2xl border-2 border-[#2b2140] text-xs font-bold text-center animate-pulse">
-              Esperando a que el anfitrión inicie la partida... 🎮
+            <div className="p-3 bg-[#e7f5ff] text-[#1864ab] rounded-2xl border-2 border-[#2b2140] text-xs font-bold text-center shadow-sm flex items-center justify-center gap-2 animate-pulse">
+              <span>⏳</span>
+              <span>Esperando a que entre el rival... La partida iniciará automáticamente en cuanto se conecte.</span>
             </div>
           )}
         </div>

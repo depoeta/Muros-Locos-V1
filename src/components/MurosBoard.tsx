@@ -135,6 +135,23 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
 
   return (
     <div className="flex flex-col items-center justify-center w-full max-w-[620px] mx-auto px-2">
+      {/* Online Turn Indicator Banner */}
+      {estado.modoOnline && !estado.terminada && (
+        <div
+          className={`w-full py-1.5 px-3 rounded-2xl border-2 border-[#2b2140] mb-2 font-black text-xs sm:text-sm text-center shadow-[0_3px_0_#2b2140] flex items-center justify-center gap-2 transition-all ${
+            esMiTurnoOnline
+              ? 'bg-[#51cf66] text-[#134e20] animate-pulse'
+              : 'bg-[#fff3bf] text-[#8f4b00]'
+          }`}
+        >
+          <span>
+            {esMiTurnoOnline
+              ? '👉 ¡ES TU TURNO! Mueve tu ficha o pon un muro'
+              : `⏳ Turno de ${jugadorActivo.nombre}... Esperando jugada`}
+          </span>
+        </div>
+      )}
+
       {/* Outer Wooden Board Frame */}
       <div
         className="relative w-full aspect-square rounded-3xl p-3 sm:p-4 bg-[#b07d4b] border-4 border-[#2b2140] shadow-[0_10px_0_#2b2140,0_18px_25px_rgba(0,0,0,0.35)] select-none transition-transform"
