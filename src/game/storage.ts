@@ -86,6 +86,139 @@ const STORAGE_KEY_RANKING = 'muros_locos_ranking_v1';
 const STORAGE_KEY_HISTORY = 'muros_locos_historial_v1';
 const STORAGE_KEY_SETTINGS = 'muros_locos_settings_v1';
 
+let cloudKvConnected: boolean = false;
+let lastCloudSyncTime: number = 0;
+
+export function estaKvConectado(): boolean {
+  return cloudKvConnected;
+}
+
+export function getApiBaseUrl(endpoint: string): string {
+  if (typeof window !== 'undefined') {
+    const clean = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
+    const path = window.location.pathname;
+    if (path.includes('/app/muro')) {
+      return `/app/muro/${clean}`;
+    }
+    return `/${clean}`;
+  }
+  return endpoint;
+}
+
+export async function sincronizarConNube(forzar: boolean = false): Promise<{
+  ok: boolean;
+  kvConectado: boolean;
+  rankingCount: number;
+  cuentasCount: number;
+}> {
+  const now = Date.now();
+  if (!forzar && now - lastCloudSyncTime < 3000) {
+    return {
+      ok: true,
+      kvConectado: cloudKvConnected,
+      rankingCount: Object.keys(cargarRanking()).length,
+      cuentasCount: Object.keys(cargarCuentas()).length,
+    };
+  }
+  lastCloudSyncTime = now;
+  let anyKvActive = false;
+
+  // 1. Sincronizar Ranking global
+  try {
+    const res = await fetch(getApiBaseUrl('/api/ranking'), {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store',
+    });
+    if (res.ok) {
+      if (res.headers.get('X-KV-Bound') === 'true') {
+        anyKvActive = true;
+      }
+      const cloudData = await res.json();
+      if (cloudData && typeof cloudData === 'object' && !Array.isArray(cloudData)) {
+        const local = cargarRanking();
+        const merged: Record<string, RankEntry> = { ...local };
+        for (const [key, val] of Object.entries(cloudData)) {
+          if (val && typeof val === 'object') {
+            const cEntry = normalizarRankEntry(val as Partial<RankEntry>, key);
+            const lEntry = merged[key];
+            if (!lEntry) {
+              merged[key] = cEntry;
+            } else {
+              merged[key] = {
+                ...lEntry,
+                puntosTotales: Math.max(lEntry.puntosTotales, cEntry.puntosTotales),
+                partidas: Math.max(lEntry.partidas, cEntry.partidas),
+                victorias: Math.max(lEntry.victorias, cEntry.victorias),
+                elo: Math.max(lEntry.elo, cEntry.elo),
+                murosColocados: Math.max(lEntry.murosColocados, cEntry.murosColocados),
+                saltos: Math.max(lEntry.saltos, cEntry.saltos),
+                rachaActual: Math.max(lEntry.rachaActual, cEntry.rachaActual),
+                mejorRacha: Math.max(lEntry.mejorRacha, cEntry.mejorRacha),
+                avatarColor: lEntry.avatarColor || cEntry.avatarColor,
+                avatarHat: lEntry.avatarHat || cEntry.avatarHat,
+              };
+            }
+          }
+        }
+        safeSet(STORAGE_KEY_RANKING, JSON.stringify(merged));
+
+        // Subir si local tenía datos más nuevos
+        if (Object.keys(merged).length > Object.keys(cloudData).length) {
+          fetch(getApiBaseUrl('/api/ranking'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(merged),
+          }).catch(() => {});
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Fallo sincronización ranking:', err);
+  }
+
+  // 2. Sincronizar Cuentas globales
+  try {
+    const res = await fetch(getApiBaseUrl('/api/cuentas'), {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store',
+    });
+    if (res.ok) {
+      if (res.headers.get('X-KV-Bound') === 'true') {
+        anyKvActive = true;
+      }
+      const cloudAccounts = await res.json();
+      if (cloudAccounts && typeof cloudAccounts === 'object' && !Array.isArray(cloudAccounts)) {
+        const local = cargarCuentas();
+        const merged: Record<string, UserAccount> = { ...cloudAccounts, ...local };
+        if (!merged['admin']) {
+          merged['admin'] = local['admin'];
+        }
+        safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(merged));
+
+        if (Object.keys(merged).length > Object.keys(cloudAccounts).length) {
+          fetch(getApiBaseUrl('/api/cuentas'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(merged),
+          }).catch(() => {});
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Fallo sincronización cuentas:', err);
+  }
+
+  cloudKvConnected = anyKvActive;
+  return {
+    ok: true,
+    kvConectado: cloudKvConnected,
+    rankingCount: Object.keys(cargarRanking()).length,
+    cuentasCount: Object.keys(cargarCuentas()).length,
+  };
+}
+
 export function cargarAjustes(): AppSettings {
   const def: AppSettings = {
     sonido: true,
@@ -154,7 +287,7 @@ export function cargarRanking(): Record<string, RankEntry> {
 export function guardarRanking(ranking: Record<string, RankEntry>) {
   safeSet(STORAGE_KEY_RANKING, JSON.stringify(ranking));
   try {
-    fetch('/api/ranking', {
+    fetch(getApiBaseUrl('/api/ranking'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(ranking),
@@ -486,7 +619,7 @@ export function cargarCuentas(): Record<string, UserAccount> {
 export function guardarCuentas(cuentas: Record<string, UserAccount>) {
   safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(cuentas));
   try {
-    fetch('/api/cuentas', {
+    fetch(getApiBaseUrl('/api/cuentas'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cuentas),
@@ -542,6 +675,18 @@ export function iniciarSesion(
   guardarUsuarioActual(entry);
 
   return { ok: true, user: entry };
+}
+
+export async function iniciarSesionAsync(
+  nombre: string,
+  clave: string
+): Promise<{ ok: boolean; error?: string; user?: UserAccount }> {
+  const localAttempt = iniciarSesion(nombre, clave);
+  if (localAttempt.ok) return localAttempt;
+
+  // Si no se encuentra localmente, sincronizamos con la nube Cloudflare KV
+  await sincronizarConNube(true);
+  return iniciarSesion(nombre, clave);
 }
 
 export function registrarUsuario(
@@ -613,6 +758,17 @@ export function registrarUsuario(
   return { ok: true, user: newUser };
 }
 
+export async function registrarUsuarioAsync(
+  nombre: string,
+  clave: string,
+  avatarColor: string,
+  avatarHat: HatType
+): Promise<{ ok: boolean; error?: string; user?: UserAccount }> {
+  // Sincronizar antes con la nube para evitar nombres duplicados globales
+  await sincronizarConNube(true);
+  return registrarUsuario(nombre, clave, avatarColor, avatarHat);
+}
+
 export function cerrarSesion() {
   guardarUsuarioActual(null);
 }
@@ -621,14 +777,14 @@ export function adminActualizarUsuario(
   id: string,
   patch: Partial<UserAccount>
 ): boolean {
-  if (id === 'admin') return false; // El usuario supremo es intocable
+  if (id === 'admin') return false; // El usuario supremo 'admin' es intocable
   const cuentas = cargarCuentas();
-  if (!cuentas[id] || cuentas[id].rol === 'admin') return false;
+  if (!cuentas[id]) return false;
 
   // Prevent duplicate names when editing
   if (patch.nombre) {
     const cleanNew = patch.nombre.trim();
-    if (cleanNew.toLowerCase() === 'admin') return false;
+    if (cleanNew.toLowerCase() === 'admin' || cleanNew.toLowerCase() === 'administrador') return false;
     const isTaken = Object.values(cuentas).some(
       (acc) => acc.id !== id && acc.nombre.trim().toLowerCase() === cleanNew.toLowerCase()
     );
@@ -670,7 +826,7 @@ export function adminActualizarUsuario(
 export function adminEliminarUsuario(id: string): boolean {
   if (id === 'admin') return false; // Usuario supremo intocable
   const cuentas = cargarCuentas();
-  if (!cuentas[id] || cuentas[id].rol === 'admin') return false;
+  if (!cuentas[id]) return false;
 
   const name = cuentas[id].nombre.trim().toLowerCase();
   delete cuentas[id];

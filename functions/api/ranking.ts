@@ -2,56 +2,126 @@
  * Cloudflare Pages Functions: Global Ranking API
  * Route: /api/ranking
  * 
- * Si vinculas un KV Namespace con el nombre 'MUROS_DB' en Cloudflare Pages,
- * este endpoint almacenará el ranking de forma global y permanente en la nube.
+ * Detecta automáticamente cualquier KV vinculado en Cloudflare Pages
+ * (ya sea nombrado MUROS_DB, muros_db, DB, KV o cualquier otro nombre).
  */
 
-interface Env {
-  MUROS_DB?: {
-    get: (key: string) => Promise<string | null>;
-    put: (key: string, value: string) => Promise<void>;
-  };
+interface KVLike {
+  get: (key: string) => Promise<string | null>;
+  put: (key: string, value: string) => Promise<void>;
 }
 
-export const onRequestGet = async (context: { env: Env }) => {
+const CORS_HEADERS = {
+  'Content-Type': 'application/json; charset=utf-8',
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Cache-Control': 'no-store, no-cache, must-revalidate',
+};
+
+function resolveKV(env: Record<string, unknown>): KVLike | null {
+  if (!env || typeof env !== 'object') return null;
+
+  // 1. Nombres comunes explícitos
+  const knownKeys = ['MUROS_DB', 'muros_db', 'DB', 'KV', 'MUROS_DATA', 'DATABASE'];
+  for (const k of knownKeys) {
+    const candidate = env[k] as Partial<KVLike> | undefined;
+    if (candidate && typeof candidate.get === 'function' && typeof candidate.put === 'function') {
+      return candidate as KVLike;
+    }
+  }
+
+  // 2. Búsqueda automática de cualquier binding de tipo KV en el objeto env
+  for (const val of Object.values(env)) {
+    const candidate = val as Partial<KVLike> | undefined;
+    if (candidate && typeof candidate.get === 'function' && typeof candidate.put === 'function') {
+      return candidate as KVLike;
+    }
+  }
+
+  return null;
+}
+
+export const onRequestOptions = async () => {
+  return new Response(null, {
+    status: 204,
+    headers: CORS_HEADERS,
+  });
+};
+
+export const onRequestGet = async (context: { env: Record<string, unknown> }) => {
   const { env } = context;
   try {
-    if (env.MUROS_DB) {
-      const data = await env.MUROS_DB.get('ranking');
+    const kv = resolveKV(env);
+
+    if (kv) {
+      const data = await kv.get('ranking');
       if (data) {
         return new Response(data, {
-          headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+          headers: {
+            ...CORS_HEADERS,
+            'X-KV-Bound': 'true',
+          },
         });
       }
+      return new Response(JSON.stringify({}), {
+        headers: {
+          ...CORS_HEADERS,
+          'X-KV-Bound': 'true',
+        },
+      });
     }
+
+    // Si Cloudflare aún no tiene el KV vinculado en Pages > Settings > Functions
     return new Response(JSON.stringify({}), {
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+      headers: {
+        ...CORS_HEADERS,
+        'X-KV-Bound': 'false',
+        'X-KV-Notice': 'Vincular KV en Cloudflare Pages > Settings > Functions > KV namespace bindings',
+      },
     });
   } catch (err: unknown) {
-    return new Response(JSON.stringify({ error: String(err) }), {
+    return new Response(JSON.stringify({ error: String(err), kv_bound: false }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+      headers: CORS_HEADERS,
     });
   }
 };
 
-export const onRequestPost = async (context: { request: Request; env: Env }) => {
+export const onRequestPost = async (context: { request: Request; env: Record<string, unknown> }) => {
   const { request, env } = context;
   try {
     const body = await request.text();
-    if (env.MUROS_DB) {
-      await env.MUROS_DB.put('ranking', body);
-      return new Response(JSON.stringify({ ok: true, source: 'cloudflare_kv' }), {
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+    const kv = resolveKV(env);
+
+    if (kv) {
+      await kv.put('ranking', body);
+      return new Response(JSON.stringify({ ok: true, source: 'cloudflare_kv', kv_bound: true }), {
+        headers: {
+          ...CORS_HEADERS,
+          'X-KV-Bound': 'true',
+        },
       });
     }
-    return new Response(JSON.stringify({ ok: true, source: 'local' }), {
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-    });
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        source: 'local_fallback',
+        kv_bound: false,
+        warning: 'KV namespace no detectado. Revisa el binding en Cloudflare Pages.',
+      }),
+      {
+        headers: {
+          ...CORS_HEADERS,
+          'X-KV-Bound': 'false',
+        },
+      }
+    );
   } catch (err: unknown) {
-    return new Response(JSON.stringify({ error: String(err) }), {
+    return new Response(JSON.stringify({ error: String(err), kv_bound: false }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+      headers: CORS_HEADERS,
     });
   }
 };

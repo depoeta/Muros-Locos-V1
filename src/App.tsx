@@ -24,6 +24,7 @@ import {
   guardarAjustes,
   obtenerUsuarioActual,
   penalizarAbandono,
+  sincronizarConNube,
 } from './game/storage';
 import { onlineService } from './game/onlineService';
 import { sounds } from './audio/murosAudio';
@@ -117,6 +118,11 @@ export default function App() {
     } catch {
       // ignore
     }
+  }, []);
+
+  // Sincronizar automáticamente con Cloudflare KV al cargar la web
+  useEffect(() => {
+    sincronizarConNube(false).catch(() => {});
   }, []);
 
   const showToast = (msg: string) => {

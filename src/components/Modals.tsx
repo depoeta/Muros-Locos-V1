@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import confetti from 'canvas-confetti';
 import { sounds } from '../audio/murosAudio';
 import {
@@ -26,13 +26,16 @@ import {
   cargarHistorial,
   cargarRanking,
   cerrarSesion,
+  estaKvConectado,
   exportarDatosJSON,
   guardarCuentas,
+  guardarRanking,
   importarDatosJSON,
-  iniciarSesion,
+  iniciarSesionAsync,
   LOGROS_LISTA,
   obtenerNivelYTitulo,
-  registrarUsuario,
+  registrarUsuarioAsync,
+  sincronizarConNube,
 } from '../game/storage';
 
 // =========================================================================
@@ -440,37 +443,27 @@ export const RankingModal: React.FC<RankingModalProps> = ({ onCerrar }) => {
     return list;
   }, [tab, rankingData, historial]);
 
-  const handleExport = () => {
-    sounds.playClick();
-    const json = exportarDatosJSON();
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `muros_locos_backup_${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showToast('💾 Copia de seguridad descargada');
+  const [sincronizando, setSincronizando] = useState(false);
+
+  const refrescarRanking = async (forzar: boolean = false) => {
+    setSincronizando(true);
+    try {
+      await sincronizarConNube(forzar);
+      setRankingData(cargarRanking());
+      setHistorial(cargarHistorial());
+      if (forzar) {
+        showToast('🔄 Ranking sincronizado con la nube');
+      }
+    } catch {
+      showToast('⚠️ No se pudo sincronizar');
+    } finally {
+      setSincronizando(false);
+    }
   };
 
-  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    sounds.playClick();
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const content = ev.target?.result as string;
-      const ok = importarDatosJSON(content);
-      if (ok) {
-        setRankingData(cargarRanking());
-        setHistorial(cargarHistorial());
-        showToast('✅ Datos importados correctamente');
-      } else {
-        showToast('❌ Archivo de respaldo no válido');
-      }
-    };
-    reader.readAsText(file);
-  };
+  useEffect(() => {
+    refrescarRanking(false);
+  }, []);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
@@ -591,21 +584,19 @@ export const RankingModal: React.FC<RankingModalProps> = ({ onCerrar }) => {
           )}
         </div>
 
-        {/* Bottom Actions: Export / Import Backup only */}
+        {/* Bottom Actions: Solo refrescar y cerrar */}
         <div className="pt-3 mt-2 border-t-2 border-[#2b2140]/15 flex items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleExport}
-              className="py-1.5 px-3 rounded-xl font-bold bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#f1f3f5] active:translate-y-0.5 cursor-pointer flex items-center gap-1"
-            >
-              📥 Guardar Respaldo
-            </button>
-
-            <label className="py-1.5 px-3 rounded-xl font-bold bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#f1f3f5] active:translate-y-0.5 cursor-pointer flex items-center gap-1">
-              📤 Cargar Respaldo
-              <input type="file" accept=".json" onChange={handleImport} className="hidden" />
-            </label>
-          </div>
+          <button
+            onClick={() => {
+              sounds.playClick();
+              refrescarRanking(true);
+            }}
+            disabled={sincronizando}
+            className="py-1.5 px-3.5 rounded-xl font-black bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#fff9db] active:translate-y-0.5 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <span className={sincronizando ? 'animate-spin' : ''}>🔄</span>
+            <span>{sincronizando ? 'Sincronizando...' : 'Actualizar Ranking'}</span>
+          </button>
 
           <button
             onClick={() => {
@@ -1043,32 +1034,47 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
   const [color, setColor] = useState('#ff6b6b');
   const [hat, setHat] = useState<HatType>('corona');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [cargando, setCargando] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     sounds.playClick();
     setErrorMsg(null);
-    const res = iniciarSesion(nombre, clave);
-    if (res.ok && res.user) {
-      onLoginSuccess(res.user);
-      onCerrar();
-    } else {
-      sounds.playError();
-      setErrorMsg(res.error || 'Credenciales inválidas');
+    setCargando(true);
+    try {
+      const res = await iniciarSesionAsync(nombre, clave);
+      if (res.ok && res.user) {
+        onLoginSuccess(res.user);
+        onCerrar();
+      } else {
+        sounds.playError();
+        setErrorMsg(res.error || 'Credenciales inválidas');
+      }
+    } catch {
+      setErrorMsg('Error de conexión al verificar perfil');
+    } finally {
+      setCargando(false);
     }
   };
 
-  const handleRegistro = (e: React.FormEvent) => {
+  const handleRegistro = async (e: React.FormEvent) => {
     e.preventDefault();
     sounds.playClick();
     setErrorMsg(null);
-    const res = registrarUsuario(nombre, clave, color, hat);
-    if (res.ok && res.user) {
-      onLoginSuccess(res.user);
-      onCerrar();
-    } else {
-      sounds.playError();
-      setErrorMsg(res.error || 'No se pudo crear la cuenta');
+    setCargando(true);
+    try {
+      const res = await registrarUsuarioAsync(nombre, clave, color, hat);
+      if (res.ok && res.user) {
+        onLoginSuccess(res.user);
+        onCerrar();
+      } else {
+        sounds.playError();
+        setErrorMsg(res.error || 'No se pudo crear la cuenta');
+      }
+    } catch {
+      setErrorMsg('Error al sincronizar con la nube');
+    } finally {
+      setCargando(false);
     }
   };
 
@@ -1257,9 +1263,17 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
 
               <button
                 type="submit"
-                className="w-full py-2.5 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer mt-1"
+                disabled={cargando}
+                className="w-full py-2.5 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer mt-1 disabled:opacity-60 flex items-center justify-center gap-2"
               >
-                {tab === 'login' ? 'Entrar a mi Cuenta' : 'Registrar y Guardar'}
+                {cargando && <span className="animate-spin">⏳</span>}
+                <span>
+                  {cargando
+                    ? 'Sincronizando con la nube...'
+                    : tab === 'login'
+                    ? 'Entrar a mi Cuenta'
+                    : 'Registrar y Guardar'}
+                </span>
               </button>
             </form>
           </div>
@@ -1283,12 +1297,35 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onSh
   const [cuentas, setCuentas] = useState<Record<string, UserAccount>>(() => cargarCuentas());
   const [filtro, setFiltro] = useState('');
   const [editandoId, setEditandoId] = useState<string | null>(null);
+  const [sincronizando, setSincronizando] = useState(false);
+  const [kvActivo, setKvActivo] = useState(() => estaKvConectado());
 
   // Edit fields
   const [editNombre, setEditNombre] = useState('');
   const [editClave, setEditClave] = useState('');
+  const [editRol, setEditRol] = useState<'jugador' | 'admin'>('jugador');
   const [editPuntos, setEditPuntos] = useState<number>(0);
   const [editVictorias, setEditVictorias] = useState<number>(0);
+
+  const sincronizar = async (forzar: boolean = false) => {
+    setSincronizando(true);
+    try {
+      const res = await sincronizarConNube(forzar);
+      setKvActivo(res.kvConectado);
+      setCuentas(cargarCuentas());
+      if (forzar) {
+        onShowToast(res.kvConectado ? '🟢 Sincronizado con Cloudflare KV' : '🟡 Datos locales actualizados');
+      }
+    } catch {
+      onShowToast('⚠️ Error al contactar la API');
+    } finally {
+      setSincronizando(false);
+    }
+  };
+
+  useEffect(() => {
+    sincronizar(false);
+  }, []);
 
   const handleAdminLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1308,30 +1345,67 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onSh
     setEditandoId(acc.id);
     setEditNombre(acc.nombre);
     setEditClave(acc.clave);
+    setEditRol(acc.rol || 'jugador');
     setEditPuntos(acc.puntos);
     setEditVictorias(acc.victorias);
   };
 
   const guardarEdicion = (id: string) => {
     sounds.playClick();
-    adminActualizarUsuario(id, {
+    const ok = adminActualizarUsuario(id, {
       nombre: editNombre,
       clave: editClave,
+      rol: editRol,
       puntos: editPuntos,
       victorias: editVictorias,
     });
-    setCuentas(cargarCuentas());
-    setEditandoId(null);
-    onShowToast(`✅ Perfil ${editNombre} actualizado`);
+    if (ok) {
+      setCuentas(cargarCuentas());
+      setEditandoId(null);
+      onShowToast(`✅ Perfil "${editNombre}" actualizado con éxito`);
+    } else {
+      onShowToast('⚠️ No se pudo actualizar el perfil (nombre duplicado o reservado)');
+    }
   };
 
   const handleEliminar = (id: string, nombre: string) => {
     sounds.playClick();
-    if (window.confirm(`¿Seguro que deseas eliminar a "${nombre}"?`)) {
+    if (window.confirm(`¿Seguro que deseas eliminar el usuario "${nombre}"? Esta acción borrará también su puntuación en el ranking.`)) {
       adminEliminarUsuario(id);
       setCuentas(cargarCuentas());
       onShowToast(`🗑️ Perfil "${nombre}" eliminado`);
     }
+  };
+
+  const handleExportBackup = () => {
+    sounds.playClick();
+    const json = exportarDatosJSON();
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `muros_locos_backup_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    onShowToast('💾 Respaldo oficial descargado');
+  };
+
+  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    sounds.playClick();
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const content = ev.target?.result as string;
+      const ok = importarDatosJSON(content);
+      if (ok) {
+        setCuentas(cargarCuentas());
+        onShowToast('✅ Base de datos restaurada');
+      } else {
+        onShowToast('❌ Archivo de respaldo inválido');
+      }
+    };
+    reader.readAsText(file);
   };
 
   const cuentasFiltradas = Object.values(cuentas).filter((acc) =>
@@ -1359,7 +1433,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onSh
         {!autenticado ? (
           <form onSubmit={handleAdminLogin} className="flex flex-col gap-3 my-4">
             <p className="text-xs text-[#593922] font-semibold leading-relaxed">
-              Introduce la clave secreta de administración para gestionar perfiles, modificar ranking y resetear claves:
+              Introduce la clave secreta de administración para gestionar perfiles, otorgar permisos de administrador, modificar el ranking y realizar respaldos:
             </p>
             <input
               type="password"
@@ -1377,7 +1451,28 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onSh
             </button>
           </form>
         ) : (
-          <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-2.5 my-1">
+          <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 my-1">
+            {/* Cloud Status Banner */}
+            <div className={`p-2.5 rounded-2xl border-2 border-[#2b2140] flex items-center justify-between gap-2 text-xs font-bold ${
+              kvActivo ? 'bg-[#d3f9d8] text-[#134e20]' : 'bg-[#fff3bf] text-[#8f4b00]'
+            }`}>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span>{kvActivo ? '🟢' : '🟡'}</span>
+                <span className="truncate">
+                  {kvActivo ? 'Cloudflare KV Activo (Nube Global)' : 'Modo Local (KV no vinculado en Cloudflare)'}
+                </span>
+              </div>
+              <button
+                onClick={() => sincronizar(true)}
+                disabled={sincronizando}
+                className="py-1 px-2.5 rounded-lg bg-white border border-[#2b2140] text-[11px] font-black text-[#2b2140] shadow-sm hover:bg-[#f1f3f5] cursor-pointer flex items-center gap-1 shrink-0"
+              >
+                <span className={sincronizando ? 'animate-spin' : ''}>🔄</span>
+                <span>{sincronizando ? 'Sincronizando...' : 'Sincronizar'}</span>
+              </button>
+            </div>
+
+            {/* User Search Bar */}
             <div className="flex items-center justify-between gap-2">
               <input
                 type="text"
@@ -1391,9 +1486,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onSh
               </span>
             </div>
 
-            <div className="flex flex-col gap-2 mt-1">
+            {/* User Accounts List */}
+            <div className="flex flex-col gap-2">
               {cuentasFiltradas.map((acc) => {
                 const isEditing = editandoId === acc.id;
+                const isSupreme = acc.id === 'admin';
 
                 return (
                   <div
@@ -1420,22 +1517,22 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onSh
                                 </span>
                               )}
                             </div>
-                            <span className="text-[11px] text-[#86542d] font-semibold block">
+                            <span className="text-[11px] text-[#86542d] font-semibold block truncate">
                               Clave: {acc.clave} • {acc.puntos} pts • {acc.victorias} vic
                             </span>
                           </div>
                         </div>
 
-                        {acc.id === 'admin' || acc.rol === 'admin' ? (
-                          <span className="text-[10px] font-black bg-[#ffd43b]/50 text-[#5c3c00] px-2.5 py-1 rounded-xl border border-[#2b2140] whitespace-nowrap shadow-sm">
+                        {isSupreme ? (
+                          <span className="text-[10px] font-black bg-[#ffd43b]/60 text-[#5c3c00] px-2.5 py-1 rounded-xl border border-[#2b2140] whitespace-nowrap shadow-sm">
                             👑 Supremo (Intocable)
                           </span>
                         ) : (
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-1 shrink-0">
                             <button
                               onClick={() => iniciarEdicion(acc)}
                               className="p-1.5 rounded-lg border border-[#2b2140] bg-[#fff9db] text-xs hover:bg-[#fff3bf] cursor-pointer"
-                              title="Editar clave o datos"
+                              title="Editar usuario o rol de administrador"
                             >
                               ✏️
                             </button>
@@ -1450,7 +1547,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onSh
                         )}
                       </div>
                     ) : (
-                      /* Formulario de Edición */
+                      /* Formulario de Edición con Asignación de Rol */
                       <div className="flex flex-col gap-2 pt-1 border-t border-[#2b2140]/10">
                         <div className="grid grid-cols-2 gap-2 text-xs">
                           <div>
@@ -1494,6 +1591,18 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onSh
                           </div>
                         </div>
 
+                        <div className="text-xs">
+                          <label className="font-bold text-[#86542d] block">Rol del Usuario:</label>
+                          <select
+                            value={editRol}
+                            onChange={(e) => setEditRol(e.target.value as 'jugador' | 'admin')}
+                            className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs"
+                          >
+                            <option value="jugador">🎮 Jugador Normal</option>
+                            <option value="admin">👑 Administrador (Acceso al Panel)</option>
+                          </select>
+                        </div>
+
                         <div className="flex justify-end gap-2 mt-1">
                           <button
                             onClick={() => setEditandoId(null)}
@@ -1513,6 +1622,28 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onSh
                   </div>
                 );
               })}
+            </div>
+
+            {/* Exclusive Backup Section: Accessible ONLY to Admin */}
+            <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-2 mt-2">
+              <span className="font-black text-xs text-[#2b2140] flex items-center gap-1.5">
+                <span>📦</span> Respaldo y Copia de Seguridad (Solo Administrador)
+              </span>
+              <p className="text-[11px] text-[#86542d] font-medium leading-relaxed">
+                Descarga una copia completa del ranking y los perfiles, o restaura datos desde un respaldo JSON.
+              </p>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <button
+                  onClick={handleExportBackup}
+                  className="py-1.5 px-3 rounded-xl font-bold bg-[#f8f9fa] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#e9ecef] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-1"
+                >
+                  📥 Descargar Copia
+                </button>
+                <label className="py-1.5 px-3 rounded-xl font-bold bg-[#f8f9fa] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#e9ecef] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-1">
+                  📤 Cargar Copia
+                  <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
+                </label>
+              </div>
             </div>
           </div>
         )}
