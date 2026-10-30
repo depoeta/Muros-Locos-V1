@@ -25,6 +25,7 @@ import {
   obtenerUsuarioActual,
   penalizarAbandono,
   sincronizarConNube,
+  verificarCambiosUsuario,
 } from './game/storage';
 import { onlineService } from './game/onlineService';
 import { sounds } from './audio/murosAudio';
@@ -124,6 +125,37 @@ export default function App() {
   useEffect(() => {
     sincronizarConNube(false).catch(() => {});
   }, []);
+
+  // Monitorizar cambios en la cuenta del usuario en tiempo real (eliminación, admin, clave, nombre)
+  useEffect(() => {
+    if (!usuarioActual) return;
+
+    const chequearCuenta = async () => {
+      await sincronizarConNube(false).catch(() => {});
+      const res = verificarCambiosUsuario(usuarioActual);
+      if (res.eliminado) {
+        cerrarSesion();
+        setUsuarioActual(null);
+        if (modalAbierto === 'perfil' || modalAbierto === 'admin') {
+          setModalAbierto(null);
+        }
+        showToast(res.mensaje || '⚠️ Tu cuenta ha sido eliminada por el administrador.');
+      } else if (res.cambiado && res.usuarioActualizado) {
+        setUsuarioActual(res.usuarioActualizado);
+        if (res.mensaje) {
+          showToast(res.mensaje);
+        }
+      }
+    };
+
+    const intervalId = setInterval(chequearCuenta, 5000);
+    window.addEventListener('storage', chequearCuenta);
+
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('storage', chequearCuenta);
+    };
+  }, [usuarioActual, modalAbierto]);
 
   const showToast = (msg: string) => {
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);

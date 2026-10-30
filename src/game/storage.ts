@@ -696,8 +696,12 @@ export function registrarUsuario(
   avatarHat: HatType
 ): { ok: boolean; error?: string; user?: UserAccount } {
   const cleanName = nombre.trim();
-  if (cleanName.length < 2) {
-    return { ok: false, error: 'El nombre debe tener al menos 2 caracteres.' };
+  if (cleanName.length < 3 || cleanName.length > 15) {
+    return { ok: false, error: 'El nombre debe tener entre 3 y 15 caracteres.' };
+  }
+  const validChars = /^[a-zA-Z0-9_ñÑáéíóúÁÉÍÓÚ\s]+$/;
+  if (!validChars.test(cleanName)) {
+    return { ok: false, error: 'El nombre solo puede contener letras, números y espacios.' };
   }
   if (clave.trim().length < 3) {
     return { ok: false, error: 'La clave debe tener al menos 3 caracteres.' };
@@ -720,10 +724,11 @@ export function registrarUsuario(
     return { ok: false, error: 'Ese nombre de usuario ya está registrado. Por favor elige otro o inicia sesión.' };
   }
 
-  const id = `user_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  // Generar ID único, limpio y fácil de identificar (ej: ML-782415)
+  const id = `ML-${Math.floor(100000 + Math.random() * 900000)}`;
   const newUser: UserAccount = {
     id,
-    nombre: cleanName.slice(0, 14),
+    nombre: cleanName.slice(0, 15),
     clave: clave.trim(),
     rol: 'jugador',
     avatarColor,
@@ -764,7 +769,6 @@ export async function registrarUsuarioAsync(
   avatarColor: string,
   avatarHat: HatType
 ): Promise<{ ok: boolean; error?: string; user?: UserAccount }> {
-  // Sincronizar antes con la nube para evitar nombres duplicados globales
   await sincronizarConNube(true);
   return registrarUsuario(nombre, clave, avatarColor, avatarHat);
 }
@@ -781,9 +785,12 @@ export function adminActualizarUsuario(
   const cuentas = cargarCuentas();
   if (!cuentas[id]) return false;
 
-  // Prevent duplicate names when editing
+  // Validar nombre si se edita
   if (patch.nombre) {
     const cleanNew = patch.nombre.trim();
+    if (cleanNew.length < 3 || cleanNew.length > 15) return false;
+    const validChars = /^[a-zA-Z0-9_ñÑáéíóúÁÉÍÓÚ\s]+$/;
+    if (!validChars.test(cleanNew)) return false;
     if (cleanNew.toLowerCase() === 'admin' || cleanNew.toLowerCase() === 'administrador') return false;
     const isTaken = Object.values(cuentas).some(
       (acc) => acc.id !== id && acc.nombre.trim().toLowerCase() === cleanNew.toLowerCase()
@@ -800,19 +807,31 @@ export function adminActualizarUsuario(
   const ranking = cargarRanking();
   const newName = (patch.nombre || current.nombre).trim().toLowerCase();
 
-  if (ranking[oldName] && oldName !== newName) {
-    const prevRank = ranking[oldName];
+  // Limpiar cualquier entrada antigua en el ranking
+  if (oldName !== newName) {
     delete ranking[oldName];
-    ranking[newName] = { ...prevRank, nombre: patch.nombre || current.nombre };
+    for (const key of Object.keys(ranking)) {
+      if (ranking[key].nombre.trim().toLowerCase() === oldName) {
+        delete ranking[key];
+      }
+    }
   }
 
-  if (ranking[newName]) {
-    if (patch.puntos !== undefined) ranking[newName].puntosTotales = patch.puntos;
-    if (patch.elo !== undefined) ranking[newName].elo = patch.elo;
-    if (patch.victorias !== undefined) ranking[newName].victorias = patch.victorias;
-    if (patch.avatarColor) ranking[newName].avatarColor = patch.avatarColor;
-    if (patch.avatarHat) ranking[newName].avatarHat = patch.avatarHat;
-  }
+  // Actualizar o crear entrada en el ranking con los datos nuevos
+  const targetName = patch.nombre || current.nombre;
+  const existingRank = ranking[newName] || normalizarRankEntry({ nombre: targetName }, targetName);
+
+  ranking[newName] = {
+    ...existingRank,
+    nombre: targetName,
+    puntosTotales: patch.puntos !== undefined ? patch.puntos : existingRank.puntosTotales,
+    elo: patch.elo !== undefined ? patch.elo : existingRank.elo,
+    victorias: patch.victorias !== undefined ? patch.victorias : existingRank.victorias,
+    partidas: patch.partidas !== undefined ? patch.partidas : existingRank.partidas,
+    avatarColor: patch.avatarColor || current.avatarColor || existingRank.avatarColor,
+    avatarHat: patch.avatarHat || current.avatarHat || existingRank.avatarHat,
+  };
+
   guardarRanking(ranking);
 
   const cur = obtenerUsuarioActual();
@@ -828,15 +847,24 @@ export function adminEliminarUsuario(id: string): boolean {
   const cuentas = cargarCuentas();
   if (!cuentas[id]) return false;
 
-  const name = cuentas[id].nombre.trim().toLowerCase();
+  const targetName = cuentas[id].nombre.trim().toLowerCase();
   delete cuentas[id];
   guardarCuentas(cuentas);
 
+  // Borrar del ranking cualquier rastro del usuario
   const ranking = cargarRanking();
-  if (ranking[name]) {
-    delete ranking[name];
-    guardarRanking(ranking);
+  delete ranking[targetName];
+  delete ranking[id.toLowerCase()];
+  for (const key of Object.keys(ranking)) {
+    if (
+      ranking[key].nombre.trim().toLowerCase() === targetName ||
+      key.toLowerCase() === targetName ||
+      key.toLowerCase() === id.toLowerCase()
+    ) {
+      delete ranking[key];
+    }
   }
+  guardarRanking(ranking);
 
   const cur = obtenerUsuarioActual();
   if (cur && cur.id === id) {
@@ -844,4 +872,92 @@ export function adminEliminarUsuario(id: string): boolean {
   }
 
   return true;
+}
+
+export function adminResetearRanking(): boolean {
+  // Limpia el ranking a cero y resetea puntuaciones acumuladas en las cuentas
+  const rankingVacio: Record<string, RankEntry> = {};
+  safeSet(STORAGE_KEY_RANKING, JSON.stringify(rankingVacio));
+  fetch(getApiBaseUrl('/api/ranking'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(rankingVacio),
+  }).catch(() => {});
+
+  const cuentas = cargarCuentas();
+  for (const [id, acc] of Object.entries(cuentas)) {
+    if (id !== 'admin') {
+      cuentas[id] = {
+        ...acc,
+        puntos: 0,
+        partidas: 0,
+        victorias: 0,
+        elo: 1000,
+      };
+    }
+  }
+  guardarCuentas(cuentas);
+  return true;
+}
+
+export function verificarCambiosUsuario(usuarioActual: UserAccount | null): {
+  cambiado: boolean;
+  eliminado: boolean;
+  usuarioActualizado?: UserAccount;
+  mensaje?: string;
+} {
+  if (!usuarioActual) return { cambiado: false, eliminado: false };
+  const cuentas = cargarCuentas();
+  const cuentaFresca = cuentas[usuarioActual.id];
+
+  // Si la cuenta ya no existe en las cuentas
+  if (!cuentaFresca) {
+    return {
+      cambiado: true,
+      eliminado: true,
+      mensaje: '⚠️ Tu cuenta ha sido eliminada por el administrador. Has sido desconectado.',
+    };
+  }
+
+  // Detectar cambios relevantes
+  if (cuentaFresca.rol !== usuarioActual.rol) {
+    const esAdmin = cuentaFresca.rol === 'admin';
+    return {
+      cambiado: true,
+      eliminado: false,
+      usuarioActualizado: cuentaFresca,
+      mensaje: esAdmin
+        ? '👑 ¡Felicidades! Un administrador te ha otorgado permisos de Administrador.'
+        : 'ℹ️ Tus permisos de Administrador han sido revocados.',
+    };
+  }
+
+  if (cuentaFresca.clave !== usuarioActual.clave) {
+    return {
+      cambiado: true,
+      eliminado: false,
+      usuarioActualizado: cuentaFresca,
+      mensaje: `🔐 Tu clave de acceso fue modificada por el administrador. Nueva clave: "${cuentaFresca.clave}".`,
+    };
+  }
+
+  if (cuentaFresca.nombre !== usuarioActual.nombre) {
+    return {
+      cambiado: true,
+      eliminado: false,
+      usuarioActualizado: cuentaFresca,
+      mensaje: `📢 Tu nombre de usuario fue actualizado a "${cuentaFresca.nombre}".`,
+    };
+  }
+
+  if (cuentaFresca.puntos !== usuarioActual.puntos || cuentaFresca.victorias !== usuarioActual.victorias) {
+    return {
+      cambiado: true,
+      eliminado: false,
+      usuarioActualizado: cuentaFresca,
+      mensaje: `⚡ Tus puntos de ranking fueron actualizados por el administrador (${cuentaFresca.puntos} pts).`,
+    };
+  }
+
+  return { cambiado: false, eliminado: false };
 }

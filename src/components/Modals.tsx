@@ -22,6 +22,7 @@ import { CartoonCharacter } from './CartoonCharacter';
 import {
   adminActualizarUsuario,
   adminEliminarUsuario,
+  adminResetearRanking,
   cargarCuentas,
   cargarHistorial,
   cargarRanking,
@@ -1107,7 +1108,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                 showShadow={false}
               />
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="font-black text-base text-[#2b2140] truncate">
                     {usuarioActual.nombre}
                   </span>
@@ -1116,6 +1117,9 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                       👑 ADMIN
                     </span>
                   )}
+                  <span className="text-[10px] bg-[#f1f3f5] text-[#495057] font-extrabold px-1.5 py-0.5 rounded border border-[#2b2140]/30 shadow-xs">
+                    ID: {usuarioActual.id}
+                  </span>
                 </div>
                 <span className="text-xs font-bold text-[#86542d] block">
                   {obtenerNivelYTitulo(usuarioActual.puntos).titulo}
@@ -1202,14 +1206,15 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
 
             <form onSubmit={tab === 'login' ? handleLogin : handleRegistro} className="flex flex-col gap-2.5">
               <div>
-                <label className="text-xs font-bold text-[#86542d] block mb-0.5">Nombre de usuario:</label>
+                <label className="text-xs font-bold text-[#86542d] block mb-0.5">Nombre de usuario (3-15 letras/números):</label>
                 <input
                   type="text"
-                  maxLength={14}
+                  minLength={3}
+                  maxLength={15}
                   required
                   value={nombre}
                   onChange={(e) => setNombre(e.target.value)}
-                  placeholder="Tu nombre"
+                  placeholder="Tu nombre (3-15 caracteres)"
                   className="w-full text-xs font-bold text-[#2b2140] bg-white border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-[#ffd43b]"
                 />
               </div>
@@ -1507,7 +1512,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onSh
                             showShadow={false}
                           />
                           <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="font-black text-xs sm:text-sm text-[#2b2140] truncate">
                                 {acc.nombre}
                               </span>
@@ -1516,6 +1521,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onSh
                                   ADMIN
                                 </span>
                               )}
+                              <span className="text-[10px] bg-[#f1f3f5] text-[#495057] font-extrabold px-1.5 py-0.2 rounded border border-[#2b2140]/25">
+                                ID: {acc.id}
+                              </span>
                             </div>
                             <span className="text-[11px] text-[#86542d] font-semibold block truncate">
                               Clave: {acc.clave} • {acc.puntos} pts • {acc.victorias} vic
@@ -1551,9 +1559,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onSh
                       <div className="flex flex-col gap-2 pt-1 border-t border-[#2b2140]/10">
                         <div className="grid grid-cols-2 gap-2 text-xs">
                           <div>
-                            <label className="font-bold text-[#86542d] block">Nombre:</label>
+                            <label className="font-bold text-[#86542d] block">Nombre (3-15 chars):</label>
                             <input
                               type="text"
+                              minLength={3}
+                              maxLength={15}
                               value={editNombre}
                               onChange={(e) => setEditNombre(e.target.value)}
                               className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
@@ -1624,8 +1634,36 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onSh
               })}
             </div>
 
+            {/* Danger Zone: Reset Global Ranking */}
+            <div className="p-3 bg-[#fff5f5] rounded-2xl border-2 border-[#ffc9c9] shadow-sm flex flex-col gap-2 mt-2">
+              <span className="font-black text-xs text-[#c92a2a] flex items-center gap-1.5">
+                <span>⚠️</span> Zona de Peligro: Reiniciar Ranking Global
+              </span>
+              <p className="text-[11px] text-[#e03131] font-medium leading-relaxed">
+                Pone a 0 los puntos, partidas y victorias de todos los jugadores en la base de datos global.
+              </p>
+              <button
+                onClick={() => {
+                  sounds.playClick();
+                  if (
+                    window.confirm(
+                      '⚠️ ¿CONFIRMAS que deseas reiniciar TODO el ranking a cero?\n\nEsta acción borrará todas las puntuaciones acumuladas y todos empezarán desde 0.'
+                    )
+                  ) {
+                    adminResetearRanking();
+                    sincronizar(true);
+                    onShowToast('🧹 Todo el ranking ha sido reiniciado a cero');
+                  }
+                }}
+                className="w-full py-2 px-3 rounded-xl font-black text-xs bg-[#ffe3e3] text-[#c92a2a] border-2 border-[#ffa8a8] hover:bg-[#ffc9c9] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+              >
+                <span>🧹</span>
+                <span>Reiniciar Todo el Ranking a Cero</span>
+              </button>
+            </div>
+
             {/* Exclusive Backup Section: Accessible ONLY to Admin */}
-            <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-2 mt-2">
+            <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-2 mt-1">
               <span className="font-black text-xs text-[#2b2140] flex items-center gap-1.5">
                 <span>📦</span> Respaldo y Copia de Seguridad (Solo Administrador)
               </span>
