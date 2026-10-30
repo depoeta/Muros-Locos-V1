@@ -20,7 +20,9 @@ import {
   actualizarDespuesDePartida,
   cargarAjustes,
   cargarRanking,
+  cerrarSesion,
   guardarAjustes,
+  obtenerUsuarioActual,
   penalizarAbandono,
 } from './game/storage';
 import { onlineService } from './game/onlineService';
@@ -34,14 +36,17 @@ import {
   MatchConfig,
   ScoreBreakdown,
   Screen,
+  UserAccount,
   WallOrientation,
 } from './types/murosLocos';
 import { ActionBar, HistorialPanel, PlayerCards } from './components/GameControls';
 import {
+  AdminPanelModal,
   AjustesModal,
   ComoSeJuegaModal,
   LogrosModal,
   OnlineDisconnectModal,
+  PerfilModal,
   RankingModal,
   TorneoModal,
   VictoryModal,
@@ -55,11 +60,12 @@ export default function App() {
   const [pantalla, setPantalla] = useState<Screen>('menu');
   const [esModoTorneoConfig, setEsModoTorneoConfig] = useState<boolean>(false);
   const [modalAbierto, setModalAbierto] = useState<
-    'ranking' | 'logros' | 'como_jugar' | 'ajustes' | 'victoria' | 'torneo' | null
+    'ranking' | 'logros' | 'como_jugar' | 'ajustes' | 'victoria' | 'torneo' | 'perfil' | 'admin' | null
   >(null);
   const [mostrarHistorial, setMostrarHistorial] = useState<boolean>(false);
   const [confirmandoAbandono, setConfirmandoAbandono] = useState<boolean>(false);
   const [desconexionSegundos, setDesconexionSegundos] = useState<number | null>(null);
+  const [usuarioActual, setUsuarioActual] = useState<UserAccount | null>(() => obtenerUsuarioActual());
 
   const [ajustes, setAjustes] = useState<AppSettings>(() => cargarAjustes());
   const [estado, setEstado] = useState<GameState>(() =>
@@ -211,7 +217,20 @@ export default function App() {
         sounds.playAchievement();
       },
       onDisconnectTimeout: () => {
-        showToast('Tiempo de reconexión agotado');
+        setDesconexionSegundos(null);
+        setEstado((current) => {
+          if (!current.modoOnline || current.terminada) return current;
+          const remainingPlayerId = current.miJugadorId !== undefined ? current.miJugadorId : 0;
+          const remainingPlayer = current.jugadores[remainingPlayerId];
+          const next = structuredClone(current);
+          next.terminada = true;
+          next.ganador = remainingPlayerId;
+          next.ultimoMensaje = `🏆 ¡${remainingPlayer?.nombre || 'Jugador'} gana por abandono del rival!`;
+          sounds.playVictory();
+          concluirPartida(next);
+          return next;
+        });
+        showToast('🏆 ¡Victoria por abandono! El rival no regresó en 10 segundos');
       },
       onError: (err) => {
         showToast(err);
@@ -245,6 +264,7 @@ export default function App() {
 
     setNuevosLogros(nuevosLogrosPorJugador);
     setSubidasNivel(subidasNivelPorJugador);
+    setUsuarioActual(obtenerUsuarioActual());
 
     // If tournament mode is active, update tournament state
     if (est.torneo && est.torneo.activo) {
@@ -750,6 +770,8 @@ export default function App() {
       {/* Screen Views */}
       {pantalla === 'menu' && (
         <MenuScreen
+          usuarioActual={usuarioActual}
+          onAbrirPerfil={() => setModalAbierto('perfil')}
           onIniciarPartida={() => {
             setEsModoTorneoConfig(false);
             setPantalla('config');
@@ -768,6 +790,7 @@ export default function App() {
 
       {pantalla === 'online_lobby' && (
         <OnlineLobbyScreen
+          usuarioActual={usuarioActual}
           onIniciarPartidaOnline={handleIniciarPartidaOnline}
           onVolverAlMenu={() => setPantalla('menu')}
           onShowToast={showToast}
@@ -1086,6 +1109,29 @@ export default function App() {
             setPantalla('menu');
           }}
           onVerTablero={() => setModalAbierto(null)}
+        />
+      )}
+
+      {modalAbierto === 'perfil' && (
+        <PerfilModal
+          usuarioActual={usuarioActual}
+          onLoginSuccess={(user) => {
+            setUsuarioActual(user);
+            showToast(`👋 ¡Bienvenido, ${user.nombre}!`);
+          }}
+          onLogout={() => {
+            setUsuarioActual(null);
+            showToast('Sesión cerrada');
+          }}
+          onAbrirAdmin={() => setModalAbierto('admin')}
+          onCerrar={() => setModalAbierto(null)}
+        />
+      )}
+
+      {modalAbierto === 'admin' && (
+        <AdminPanelModal
+          onCerrar={() => setModalAbierto(null)}
+          onShowToast={showToast}
         />
       )}
     </div>

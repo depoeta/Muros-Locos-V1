@@ -11,10 +11,11 @@ import {
   onlineService,
   SALAS_PUBLICAS,
 } from '../game/onlineService';
-import { HatType, OnlinePlayerInfo } from '../types/murosLocos';
+import { HatType, OnlinePlayerInfo, UserAccount } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
 
 interface OnlineLobbyScreenProps {
+  usuarioActual?: UserAccount | null;
   onIniciarPartidaOnline: (maxJugadores: 2 | 4) => void;
   onVolverAlMenu: () => void;
   onShowToast: (msg: string) => void;
@@ -23,14 +24,15 @@ interface OnlineLobbyScreenProps {
 type LobbyTab = 'publicas' | 'crear' | 'unirse' | 'en_sala';
 
 export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
+  usuarioActual,
   onIniciarPartidaOnline,
   onVolverAlMenu,
   onShowToast,
 }) => {
   const [tab, setTab] = useState<LobbyTab>('publicas');
-  const [nombre, setNombre] = useState<string>('Tú');
-  const [color, setColor] = useState<string>('#ff6b6b');
-  const [hat, setHat] = useState<HatType>('corona');
+  const [nombre, setNombre] = useState<string>(() => usuarioActual ? usuarioActual.nombre : 'Tú');
+  const [color, setColor] = useState<string>(() => usuarioActual ? usuarioActual.avatarColor : '#ff6b6b');
+  const [hat, setHat] = useState<HatType>(() => usuarioActual ? usuarioActual.avatarHat : 'corona');
   const [codigoInput, setCodigoInput] = useState<string>('');
   const [roomCode, setRoomCode] = useState<string>('');
   const [maxJugadores, setMaxJugadores] = useState<2 | 4>(2);

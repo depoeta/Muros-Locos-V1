@@ -7,7 +7,11 @@ import React from 'react';
 import { sounds } from '../audio/murosAudio';
 import { CartoonCharacter } from './CartoonCharacter';
 
+import { UserAccount } from '../types/murosLocos';
+
 interface MenuScreenProps {
+  usuarioActual: UserAccount | null;
+  onAbrirPerfil: () => void;
   onIniciarPartida: () => void;
   onIniciarTorneo: () => void;
   onAbrirOnline: () => void;
@@ -18,6 +22,8 @@ interface MenuScreenProps {
 }
 
 export const MenuScreen: React.FC<MenuScreenProps> = ({
+  usuarioActual,
+  onAbrirPerfil,
   onIniciarPartida,
   onIniciarTorneo,
   onAbrirOnline,
@@ -41,9 +47,57 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
   ];
 
   return (
-    <div className="relative w-full h-full flex flex-col items-center justify-between p-4 z-10">
+    <div className="relative w-full h-full flex flex-col items-center justify-between p-3 sm:p-4 z-10">
+      {/* Top Bar with Profile / Secret Admin Access */}
+      <div className="w-full max-w-md flex items-center justify-between px-1 z-20">
+        <div className="flex items-center gap-1.5 bg-[#fff8e7]/80 px-2.5 py-1 rounded-full border-2 border-[#2b2140] shadow-sm">
+          <span className="text-base">🎲</span>
+          <span className="font-black text-xs text-[#2b2140] tracking-wide">MUROS LOCOS</span>
+        </div>
+
+        <button
+          onClick={() => {
+            sounds.playClick();
+            onAbrirPerfil();
+          }}
+          className="py-1 px-3 rounded-2xl bg-white border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fff9db] hover:-translate-y-0.5 active:translate-y-1 active:shadow-none transition-all cursor-pointer flex items-center gap-2 group"
+          title="Gestionar perfil de usuario o iniciar sesión"
+        >
+          {usuarioActual ? (
+            <>
+              <CartoonCharacter
+                color={usuarioActual.avatarColor}
+                hat={usuarioActual.avatarHat}
+                size={26}
+                showShadow={false}
+              />
+              <div className="text-left leading-tight">
+                <div className="flex items-center gap-1">
+                  <span className="text-xs font-black text-[#2b2140] max-w-[95px] truncate">
+                    {usuarioActual.nombre}
+                  </span>
+                  {usuarioActual.rol === 'admin' && (
+                    <span className="text-[8px] bg-[#ffd43b] text-[#5c3c00] font-black px-1 rounded border border-[#2b2140]">
+                      ADMIN
+                    </span>
+                  )}
+                </div>
+                <span className="text-[10px] font-bold text-[#2b8a3e] block">
+                  ⭐ {usuarioActual.puntos} pts
+                </span>
+              </div>
+            </>
+          ) : (
+            <>
+              <span className="text-sm group-hover:scale-110 transition-transform">👤</span>
+              <span className="text-xs font-black text-[#2b2140]">Mi Perfil</span>
+            </>
+          )}
+        </button>
+      </div>
+
       {/* Cartoon Top Header / Title */}
-      <div className="flex flex-col items-center mt-4 sm:mt-8">
+      <div className="flex flex-col items-center mt-2 sm:mt-4">
         <div className="flex items-center justify-center gap-1 sm:gap-2">
           {letters.map((l, i) =>
             l.char === ' ' ? (

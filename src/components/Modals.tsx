@@ -10,20 +10,29 @@ import {
   AchievementDef,
   AppSettings,
   GameState,
+  HatType,
   LevelInfo,
   MatchResultRecord,
   RankEntry,
   ScoreBreakdown,
   TorneoState,
+  UserAccount,
 } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
 import {
+  adminActualizarUsuario,
+  adminEliminarUsuario,
+  cargarCuentas,
   cargarHistorial,
   cargarRanking,
+  cerrarSesion,
   exportarDatosJSON,
+  guardarCuentas,
   importarDatosJSON,
+  iniciarSesion,
   LOGROS_LISTA,
   obtenerNivelYTitulo,
+  registrarUsuario,
 } from '../game/storage';
 
 // =========================================================================
@@ -939,7 +948,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
 
 
 // =========================================================================
-// 7. ONLINE DISCONNECT MODAL (GRACE PERIOD COUNTDOWN)
+// 7. ONLINE DISCONNECT MODAL (10 SECONDS GRACE PERIOD & ABANDONMENT VICTORY)
 // =========================================================================
 interface OnlineDisconnectModalProps {
   segundosRestantes: number;
@@ -953,29 +962,25 @@ export const OnlineDisconnectModal: React.FC<OnlineDisconnectModalProps> = ({
   onVolverAlMenu,
 }) => {
   const tiempoTerminado = segundosRestantes <= 0;
-  const progresoPct = Math.max(0, Math.min(100, (segundosRestantes / 45) * 100));
+  const progresoPct = Math.max(0, Math.min(100, (segundosRestantes / 10) * 100));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
       <div className="relative w-full max-w-sm bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col text-center">
         <div className="text-4xl mb-2 animate-bounce">
-          {tiempoTerminado ? '🔌' : '⏳'}
+          {tiempoTerminado ? '🏆' : '⏳'}
         </div>
 
         <h3 className="text-xl font-black text-[#2b2140] mb-1">
           {tiempoTerminado
-            ? 'Partida interrumpida'
-            : esAnfitrion
-            ? '⚠️ Conexión perdida'
-            : '⚠️ Esperando al anfitrión...'}
+            ? '¡Victoria por abandono!'
+            : '⚠️ Esperando reconexión del rival...'}
         </h3>
 
         <p className="text-xs text-[#593922] mb-3 leading-relaxed">
           {tiempoTerminado
-            ? 'El tiempo de espera para la reconexión ha finalizado. La sala se ha cerrado.'
-            : esAnfitrion
-            ? 'Se ha detectado una desconexión. Intentando restablecer la sala...'
-            : 'El anfitrión ha salido o recargado la página. Tienes un margen de tiempo para que vuelva sin perder la partida.'}
+            ? 'El rival no ha regresado en 10 segundos. Has ganado la partida automáticamente (+100 pts).'
+            : 'Un jugador se ha desconectado o cerrado la pestaña. Tiene 10 segundos para volver o perderá la partida por abandono.'}
         </p>
 
         {!tiempoTerminado && (
@@ -983,7 +988,7 @@ export const OnlineDisconnectModal: React.FC<OnlineDisconnectModalProps> = ({
             <div className="text-3xl font-black text-[#c92a2a] font-mono-num animate-pulse">
               {segundosRestantes}s
             </div>
-            <div className="w-full bg-[#f1f3f5] h-3 rounded-full border-2 border-[#2b2140] mt-2 overflow-hidden">
+            <div className="w-full bg-[#f1f3f5] h-3.5 rounded-full border-2 border-[#2b2140] mt-2 overflow-hidden">
               <div
                 className="h-full bg-[#ff922b] transition-all duration-1000 ease-linear"
                 style={{ width: `${progresoPct}%` }}
@@ -996,9 +1001,9 @@ export const OnlineDisconnectModal: React.FC<OnlineDisconnectModalProps> = ({
           {tiempoTerminado ? (
             <button
               onClick={onVolverAlMenu}
-              className="w-full py-2.5 px-4 rounded-xl font-black text-sm bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] active:translate-y-0.5 cursor-pointer"
+              className="w-full py-2.5 px-4 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer"
             >
-              🏠 Volver al Menú Principal
+              🎉 Reclamar Victoria y Volver al Menú
             </button>
           ) : (
             <button
@@ -1013,3 +1018,515 @@ export const OnlineDisconnectModal: React.FC<OnlineDisconnectModalProps> = ({
     </div>
   );
 };
+
+// =========================================================================
+// 8. PERFIL Y CUENTA DE USUARIO MODAL
+// =========================================================================
+interface PerfilModalProps {
+  usuarioActual: UserAccount | null;
+  onLoginSuccess: (usuario: UserAccount) => void;
+  onLogout: () => void;
+  onAbrirAdmin: () => void;
+  onCerrar: () => void;
+}
+
+export const PerfilModal: React.FC<PerfilModalProps> = ({
+  usuarioActual,
+  onLoginSuccess,
+  onLogout,
+  onAbrirAdmin,
+  onCerrar,
+}) => {
+  const [tab, setTab] = useState<'login' | 'registro'>('login');
+  const [nombre, setNombre] = useState('');
+  const [clave, setClave] = useState('');
+  const [color, setColor] = useState('#ff6b6b');
+  const [hat, setHat] = useState<HatType>('corona');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    sounds.playClick();
+    setErrorMsg(null);
+    const res = iniciarSesion(nombre, clave);
+    if (res.ok && res.user) {
+      onLoginSuccess(res.user);
+      onCerrar();
+    } else {
+      sounds.playError();
+      setErrorMsg(res.error || 'Credenciales inválidas');
+    }
+  };
+
+  const handleRegistro = (e: React.FormEvent) => {
+    e.preventDefault();
+    sounds.playClick();
+    setErrorMsg(null);
+    const res = registrarUsuario(nombre, clave, color, hat);
+    if (res.ok && res.user) {
+      onLoginSuccess(res.user);
+      onCerrar();
+    } else {
+      sounds.playError();
+      setErrorMsg(res.error || 'No se pudo crear la cuenta');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+      <div className="relative w-full max-w-sm bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col max-h-[92vh] overflow-y-auto">
+        <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
+          <h3 className="text-xl font-black text-[#2b2140] flex items-center gap-2">
+            <span>👤</span> {usuarioActual ? 'Mi Perfil' : 'Perfil y Cuenta'}
+          </h3>
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onCerrar();
+            }}
+            className="w-8 h-8 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-sm font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] flex items-center justify-center cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* If logged in: Show User Dashboard */}
+        {usuarioActual ? (
+          <div className="flex flex-col gap-3 py-1">
+            <div className="flex items-center gap-3 p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm">
+              <CartoonCharacter
+                color={usuarioActual.avatarColor}
+                hat={usuarioActual.avatarHat}
+                size={54}
+                showShadow={false}
+              />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-black text-base text-[#2b2140] truncate">
+                    {usuarioActual.nombre}
+                  </span>
+                  {usuarioActual.rol === 'admin' && (
+                    <span className="text-[9px] bg-[#ffd43b] text-[#5c3c00] font-black px-1.5 py-0.5 rounded border border-[#2b2140]">
+                      👑 ADMIN
+                    </span>
+                  )}
+                </div>
+                <span className="text-xs font-bold text-[#86542d] block">
+                  {obtenerNivelYTitulo(usuarioActual.puntos).titulo}
+                </span>
+                <span className="text-xs font-black text-[#2b8a3e] block">
+                  {usuarioActual.puntos} puntos acumulados
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-center">
+              <div className="p-2.5 bg-white rounded-xl border-2 border-[#2b2140]">
+                <span className="text-[11px] font-bold text-[#86542d] block">Victorias</span>
+                <span className="text-lg font-black text-[#2b2140]">
+                  {usuarioActual.victorias} / {usuarioActual.partidas}
+                </span>
+              </div>
+              <div className="p-2.5 bg-white rounded-xl border-2 border-[#2b2140]">
+                <span className="text-[11px] font-bold text-[#86542d] block">Puntos Elo</span>
+                <span className="text-lg font-black text-[#2b2140]">{usuarioActual.elo}</span>
+              </div>
+            </div>
+
+            {usuarioActual.rol === 'admin' && (
+              <button
+                onClick={() => {
+                  sounds.playClick();
+                  onAbrirAdmin();
+                }}
+                className="w-full py-2.5 rounded-xl font-black text-xs bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <span>⚙️</span>
+                <span>Panel de Administración Secreto</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => {
+                sounds.playClick();
+                cerrarSesion();
+                onLogout();
+                onCerrar();
+              }}
+              className="w-full py-2 rounded-xl font-bold text-xs bg-white text-[#c92a2a] border-2 border-[#2b2140] hover:bg-[#ffe3e3] cursor-pointer"
+            >
+              Cerrar Sesión
+            </button>
+          </div>
+        ) : (
+          /* If not logged in: Login or Register */
+          <div className="flex flex-col gap-3 py-1">
+            <div className="grid grid-cols-2 p-1 bg-[#ede4d0] rounded-xl border-2 border-[#2b2140]">
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setTab('login');
+                  setErrorMsg(null);
+                }}
+                className={`py-1.5 rounded-lg font-black text-xs transition-all cursor-pointer ${
+                  tab === 'login'
+                    ? 'bg-white text-[#2b2140] border border-[#2b2140] shadow-sm'
+                    : 'text-[#86542d]'
+                }`}
+              >
+                Iniciar Sesión
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setTab('registro');
+                  setErrorMsg(null);
+                }}
+                className={`py-1.5 rounded-lg font-black text-xs transition-all cursor-pointer ${
+                  tab === 'registro'
+                    ? 'bg-[#51cf66] text-[#134e20] border border-[#2b2140] shadow-sm'
+                    : 'text-[#86542d]'
+                }`}
+              >
+                Crear Perfil
+              </button>
+            </div>
+
+            <form onSubmit={tab === 'login' ? handleLogin : handleRegistro} className="flex flex-col gap-2.5">
+              <div>
+                <label className="text-xs font-bold text-[#86542d] block mb-0.5">Nombre de usuario:</label>
+                <input
+                  type="text"
+                  maxLength={14}
+                  required
+                  value={nombre}
+                  onChange={(e) => setNombre(e.target.value)}
+                  placeholder="Tu nombre"
+                  className="w-full text-xs font-bold text-[#2b2140] bg-white border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-[#ffd43b]"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-[#86542d] block mb-0.5">Clave / Contraseña:</label>
+                <input
+                  type="password"
+                  required
+                  value={clave}
+                  onChange={(e) => setClave(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full text-xs font-bold text-[#2b2140] bg-white border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-[#ffd43b]"
+                />
+              </div>
+
+              {tab === 'registro' && (
+                <div>
+                  <label className="text-xs font-bold text-[#86542d] block mb-1">Color y Sombrero:</label>
+                  <div className="grid grid-cols-4 gap-1">
+                    {[
+                      { id: 'corona', icon: '👑', color: '#ff6b6b' },
+                      { id: 'pompon', icon: '❄️', color: '#4dabf7' },
+                      { id: 'antena', icon: '⚡', color: '#ffd43b' },
+                      { id: 'brote', icon: '🌱', color: '#51cf66' },
+                    ].map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          sounds.playClick();
+                          setHat(item.id as HatType);
+                          setColor(item.color);
+                        }}
+                        className={`py-1 rounded-xl text-base border-2 border-[#2b2140] cursor-pointer ${
+                          hat === item.id ? 'bg-[#ffd43b] shadow-sm' : 'bg-white'
+                        }`}
+                      >
+                        {item.icon}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {errorMsg && (
+                <div className="p-2 bg-[#ffe3e3] text-[#c92a2a] text-xs font-bold rounded-xl border border-[#2b2140] text-center">
+                  ⚠️ {errorMsg}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                className="w-full py-2.5 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer mt-1"
+              >
+                {tab === 'login' ? 'Entrar a mi Cuenta' : 'Registrar y Guardar'}
+              </button>
+            </form>
+
+            <div className="pt-2 border-t border-[#2b2140]/10 text-center">
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  onAbrirAdmin();
+                }}
+                className="text-[11px] text-[#86542d] hover:text-[#2b2140] underline font-bold cursor-pointer"
+              >
+                🔒 Acceso de Administrador Secreto
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// =========================================================================
+// 9. PANEL DE ADMINISTRADOR SECRETO MODAL
+// =========================================================================
+interface AdminPanelModalProps {
+  onCerrar: () => void;
+  onShowToast: (msg: string) => void;
+}
+
+export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({ onCerrar, onShowToast }) => {
+  const [autenticado, setAutenticado] = useState(false);
+  const [claveInput, setClaveInput] = useState('');
+  const [cuentas, setCuentas] = useState<Record<string, UserAccount>>(() => cargarCuentas());
+  const [filtro, setFiltro] = useState('');
+  const [editandoId, setEditandoId] = useState<string | null>(null);
+
+  // Edit fields
+  const [editNombre, setEditNombre] = useState('');
+  const [editClave, setEditClave] = useState('');
+  const [editPuntos, setEditPuntos] = useState<number>(0);
+  const [editVictorias, setEditVictorias] = useState<number>(0);
+
+  const handleAdminLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    sounds.playClick();
+    const adminAcc = cuentas['admin'];
+    if (adminAcc && claveInput.trim() === adminAcc.clave) {
+      setAutenticado(true);
+      onShowToast('👑 Modo Administrador concedido');
+    } else {
+      sounds.playError();
+      onShowToast('❌ Clave de administrador incorrecta');
+    }
+  };
+
+  const iniciarEdicion = (acc: UserAccount) => {
+    sounds.playClick();
+    setEditandoId(acc.id);
+    setEditNombre(acc.nombre);
+    setEditClave(acc.clave);
+    setEditPuntos(acc.puntos);
+    setEditVictorias(acc.victorias);
+  };
+
+  const guardarEdicion = (id: string) => {
+    sounds.playClick();
+    adminActualizarUsuario(id, {
+      nombre: editNombre,
+      clave: editClave,
+      puntos: editPuntos,
+      victorias: editVictorias,
+    });
+    setCuentas(cargarCuentas());
+    setEditandoId(null);
+    onShowToast(`✅ Perfil ${editNombre} actualizado`);
+  };
+
+  const handleEliminar = (id: string, nombre: string) => {
+    sounds.playClick();
+    if (window.confirm(`¿Seguro que deseas eliminar a "${nombre}"?`)) {
+      adminEliminarUsuario(id);
+      setCuentas(cargarCuentas());
+      onShowToast(`🗑️ Perfil "${nombre}" eliminado`);
+    }
+  };
+
+  const cuentasFiltradas = Object.values(cuentas).filter((acc) =>
+    acc.nombre.toLowerCase().includes(filtro.toLowerCase())
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/65 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+      <div className="relative w-full max-w-lg bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col max-h-[92vh]">
+        <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
+          <h3 className="text-xl font-black text-[#2b2140] flex items-center gap-2">
+            <span>🛡️</span> Panel de Control y Administración
+          </h3>
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onCerrar();
+            }}
+            className="w-8 h-8 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-sm font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] flex items-center justify-center cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+
+        {!autenticado ? (
+          <form onSubmit={handleAdminLogin} className="flex flex-col gap-3 my-4">
+            <p className="text-xs text-[#593922] font-semibold leading-relaxed">
+              Introduce la clave secreta de administración para gestionar perfiles, modificar ranking y resetear claves:
+            </p>
+            <input
+              type="password"
+              required
+              value={claveInput}
+              onChange={(e) => setClaveInput(e.target.value)}
+              placeholder="Clave maestra (por defecto: muros2026)"
+              className="w-full text-center text-sm font-black tracking-widest text-[#2b2140] bg-white border-2 border-[#2b2140] rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-[#ffd43b]"
+            />
+            <button
+              type="submit"
+              className="w-full py-2.5 rounded-xl font-black text-sm bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer"
+            >
+              🔓 Desbloquear Panel de Administrador
+            </button>
+          </form>
+        ) : (
+          <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-2.5 my-1">
+            <div className="flex items-center justify-between gap-2">
+              <input
+                type="text"
+                placeholder="🔍 Buscar jugador..."
+                value={filtro}
+                onChange={(e) => setFiltro(e.target.value)}
+                className="w-full text-xs font-bold bg-white border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none"
+              />
+              <span className="text-xs font-bold text-[#86542d] whitespace-nowrap">
+                {cuentasFiltradas.length} perfiles
+              </span>
+            </div>
+
+            <div className="flex flex-col gap-2 mt-1">
+              {cuentasFiltradas.map((acc) => {
+                const isEditing = editandoId === acc.id;
+
+                return (
+                  <div
+                    key={acc.id}
+                    className="p-3 rounded-2xl border-2 border-[#2b2140] bg-white shadow-sm flex flex-col gap-2"
+                  >
+                    {!isEditing ? (
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <CartoonCharacter
+                            color={acc.avatarColor}
+                            hat={acc.avatarHat}
+                            size={34}
+                            showShadow={false}
+                          />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-black text-xs sm:text-sm text-[#2b2140] truncate">
+                                {acc.nombre}
+                              </span>
+                              {acc.rol === 'admin' && (
+                                <span className="text-[9px] bg-[#ffd43b] text-[#5c3c00] font-black px-1 rounded border border-[#2b2140]">
+                                  ADMIN
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[11px] text-[#86542d] font-semibold block">
+                              Clave: {acc.clave} • {acc.puntos} pts • {acc.victorias} vic
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => iniciarEdicion(acc)}
+                            className="p-1.5 rounded-lg border border-[#2b2140] bg-[#fff9db] text-xs hover:bg-[#fff3bf] cursor-pointer"
+                            title="Editar"
+                          >
+                            ✏️
+                          </button>
+                          {acc.id !== 'admin' && (
+                            <button
+                              onClick={() => handleEliminar(acc.id, acc.nombre)}
+                              className="p-1.5 rounded-lg border border-[#2b2140] bg-[#ffe3e3] text-xs hover:bg-[#ffc9c9] cursor-pointer"
+                              title="Eliminar"
+                            >
+                              🗑️
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      /* Formulario de Edición */
+                      <div className="flex flex-col gap-2 pt-1 border-t border-[#2b2140]/10">
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <label className="font-bold text-[#86542d] block">Nombre:</label>
+                            <input
+                              type="text"
+                              value={editNombre}
+                              onChange={(e) => setEditNombre(e.target.value)}
+                              className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
+                            />
+                          </div>
+                          <div>
+                            <label className="font-bold text-[#86542d] block">Clave:</label>
+                            <input
+                              type="text"
+                              value={editClave}
+                              onChange={(e) => setEditClave(e.target.value)}
+                              className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <label className="font-bold text-[#86542d] block">Puntos Ranking:</label>
+                            <input
+                              type="number"
+                              value={editPuntos}
+                              onChange={(e) => setEditPuntos(Number(e.target.value))}
+                              className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
+                            />
+                          </div>
+                          <div>
+                            <label className="font-bold text-[#86542d] block">Victorias:</label>
+                            <input
+                              type="number"
+                              value={editVictorias}
+                              onChange={(e) => setEditVictorias(Number(e.target.value))}
+                              className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex justify-end gap-2 mt-1">
+                          <button
+                            onClick={() => setEditandoId(null)}
+                            className="px-2.5 py-1 rounded bg-[#f1f3f5] border border-[#2b2140] text-xs font-bold cursor-pointer"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            onClick={() => guardarEdicion(acc.id)}
+                            className="px-3 py-1 rounded bg-[#51cf66] text-[#134e20] border border-[#2b2140] text-xs font-black cursor-pointer shadow-sm"
+                          >
+                            Guardar Cambios
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+

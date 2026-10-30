@@ -230,10 +230,19 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                     <div className="absolute w-2.5 h-2.5 rounded-full bg-[#ffd43b] border-2 border-[#2b2140] animate-ping opacity-80 pointer-events-none" />
                   )}
 
-                  {/* Legal move destination indicator */}
+                  {/* Legal move destination indicator matching active character's color */}
                   {isLegalMove && !bloqueadoPorAnimacion && esTurnoHumano && (
-                    <div className="absolute inset-1 rounded-md border-3 border-dashed border-[#51cf66] bg-[#51cf66]/20 flex items-center justify-center animate-pulse pointer-events-none">
-                      <div className="w-3.5 h-3.5 rounded-full bg-[#51cf66] border-2 border-[#2b2140] shadow-sm transform scale-110" />
+                    <div
+                      className="absolute inset-1 rounded-md border-3 border-dashed flex items-center justify-center animate-pulse pointer-events-none"
+                      style={{
+                        borderColor: jugadorActivo.color,
+                        backgroundColor: `${jugadorActivo.color}35`,
+                      }}
+                    >
+                      <div
+                        className="w-3.5 h-3.5 rounded-full border-2 border-[#2b2140] shadow-sm transform scale-110"
+                        style={{ backgroundColor: jugadorActivo.color }}
+                      />
                     </div>
                   )}
                 </div>

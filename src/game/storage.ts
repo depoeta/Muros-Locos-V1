@@ -7,10 +7,12 @@ import {
   AchievementDef,
   AppSettings,
   GameState,
+  HatType,
   LevelInfo,
   MatchResultRecord,
   RankEntry,
   ScoreBreakdown,
+  UserAccount,
 } from '../types/murosLocos';
 import { bfsCamino } from './murosLocosEngine';
 
@@ -329,6 +331,25 @@ export function actualizarDespuesDePartida(
     }
 
     ranking[key] = entry;
+
+    // Sync with UserAccount if one exists with matching name
+    const cuentas = cargarCuentas();
+    const matchingAcc = Object.values(cuentas).find(
+      (acc) => acc.nombre.trim().toLowerCase() === key
+    );
+    if (matchingAcc) {
+      matchingAcc.puntos = entry.puntosTotales;
+      matchingAcc.partidas = entry.partidas;
+      matchingAcc.victorias = entry.victorias;
+      matchingAcc.elo = entry.elo;
+      matchingAcc.ultimaConexion = new Date().toISOString();
+      cuentas[matchingAcc.id] = matchingAcc;
+      guardarCuentas(cuentas);
+      const cur = obtenerUsuarioActual();
+      if (cur && cur.id === matchingAcc.id) {
+        guardarUsuarioActual(matchingAcc);
+      }
+    }
   }
 
   guardarRanking(ranking);
@@ -410,9 +431,230 @@ export function borrarTodosLosDatos() {
       localStorage.removeItem(STORAGE_KEY_RANKING);
       localStorage.removeItem(STORAGE_KEY_HISTORY);
       localStorage.removeItem(STORAGE_KEY_SETTINGS);
+      localStorage.removeItem(STORAGE_KEY_ACCOUNTS);
+      localStorage.removeItem(STORAGE_KEY_CURRENT_USER);
     }
   } catch {
     // ignore
   }
   Object.keys(memoryStore).forEach((k) => delete memoryStore[k]);
+}
+
+// =========================================================================
+// CUENTAS DE USUARIO Y PANEL DE ADMINISTRADOR SECRETO
+// =========================================================================
+export const STORAGE_KEY_ACCOUNTS = 'muros_locos_accounts_v1';
+export const STORAGE_KEY_CURRENT_USER = 'muros_locos_current_user_v1';
+
+export function cargarCuentas(): Record<string, UserAccount> {
+  const raw = safeGet(STORAGE_KEY_ACCOUNTS);
+  let accounts: Record<string, UserAccount> = {};
+  if (raw) {
+    try {
+      accounts = JSON.parse(raw);
+    } catch {}
+  }
+
+  // Usuario Admin Secreto predeterminado (para gestionar otros perfiles y ranking)
+  if (!accounts['admin']) {
+    accounts['admin'] = {
+      id: 'admin',
+      nombre: 'Admin Supremo',
+      clave: 'muros2026',
+      rol: 'admin',
+      avatarColor: '#ffd43b',
+      avatarHat: 'corona',
+      puntos: 9999,
+      partidas: 100,
+      victorias: 99,
+      elo: 2500,
+      creadoEn: new Date().toISOString(),
+      ultimaConexion: new Date().toISOString(),
+    };
+    safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(accounts));
+  }
+  return accounts;
+}
+
+export function guardarCuentas(cuentas: Record<string, UserAccount>) {
+  safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(cuentas));
+}
+
+export function obtenerUsuarioActual(): UserAccount | null {
+  const raw = safeGet(STORAGE_KEY_CURRENT_USER);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    const accounts = cargarCuentas();
+    return accounts[parsed.id] || parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function guardarUsuarioActual(user: UserAccount | null) {
+  if (!user) {
+    try {
+      if (typeof window !== 'undefined') localStorage.removeItem(STORAGE_KEY_CURRENT_USER);
+    } catch {}
+    delete memoryStore[STORAGE_KEY_CURRENT_USER];
+  } else {
+    safeSet(STORAGE_KEY_CURRENT_USER, JSON.stringify(user));
+  }
+}
+
+export function iniciarSesion(
+  nombre: string,
+  clave: string
+): { ok: boolean; error?: string; user?: UserAccount } {
+  const cuentas = cargarCuentas();
+  const search = nombre.trim().toLowerCase();
+
+  const entry = Object.values(cuentas).find(
+    (acc) => acc.nombre.trim().toLowerCase() === search || acc.id.toLowerCase() === search
+  );
+
+  if (!entry) {
+    return { ok: false, error: 'Usuario no encontrado. Crea un perfil con ese nombre.' };
+  }
+
+  if (entry.clave !== clave.trim()) {
+    return { ok: false, error: 'Clave incorrecta.' };
+  }
+
+  entry.ultimaConexion = new Date().toISOString();
+  cuentas[entry.id] = entry;
+  guardarCuentas(cuentas);
+  guardarUsuarioActual(entry);
+
+  return { ok: true, user: entry };
+}
+
+export function registrarUsuario(
+  nombre: string,
+  clave: string,
+  avatarColor: string,
+  avatarHat: HatType
+): { ok: boolean; error?: string; user?: UserAccount } {
+  const cleanName = nombre.trim();
+  if (cleanName.length < 2) {
+    return { ok: false, error: 'El nombre debe tener al menos 2 caracteres.' };
+  }
+  if (clave.trim().length < 3) {
+    return { ok: false, error: 'La clave debe tener al menos 3 caracteres.' };
+  }
+
+  const cuentas = cargarCuentas();
+  const search = cleanName.toLowerCase();
+  const existe = Object.values(cuentas).some(
+    (acc) => acc.nombre.trim().toLowerCase() === search || acc.id.toLowerCase() === search
+  );
+
+  if (existe) {
+    return { ok: false, error: 'Ese nombre de usuario ya está registrado. Inicia sesión.' };
+  }
+
+  const id = `user_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const newUser: UserAccount = {
+    id,
+    nombre: cleanName.slice(0, 14),
+    clave: clave.trim(),
+    rol: 'jugador',
+    avatarColor,
+    avatarHat,
+    puntos: 100,
+    partidas: 0,
+    victorias: 0,
+    elo: 1000,
+    creadoEn: new Date().toISOString(),
+    ultimaConexion: new Date().toISOString(),
+  };
+
+  cuentas[id] = newUser;
+  guardarCuentas(cuentas);
+  guardarUsuarioActual(newUser);
+
+  // Sync to ranking
+  const ranking = cargarRanking();
+  ranking[cleanName.toLowerCase()] = normalizarRankEntry(
+    {
+      nombre: cleanName,
+      puntosTotales: 100,
+      partidas: 0,
+      victorias: 0,
+      elo: 1000,
+      avatarColor,
+      avatarHat,
+    },
+    cleanName
+  );
+  guardarRanking(ranking);
+
+  return { ok: true, user: newUser };
+}
+
+export function cerrarSesion() {
+  guardarUsuarioActual(null);
+}
+
+export function adminActualizarUsuario(
+  id: string,
+  patch: Partial<UserAccount>
+): boolean {
+  const cuentas = cargarCuentas();
+  if (!cuentas[id]) return false;
+
+  const current = cuentas[id];
+  const oldName = current.nombre.trim().toLowerCase();
+
+  cuentas[id] = { ...current, ...patch };
+  guardarCuentas(cuentas);
+
+  const ranking = cargarRanking();
+  const newName = (patch.nombre || current.nombre).trim().toLowerCase();
+
+  if (ranking[oldName] && oldName !== newName) {
+    const prevRank = ranking[oldName];
+    delete ranking[oldName];
+    ranking[newName] = { ...prevRank, nombre: patch.nombre || current.nombre };
+  }
+
+  if (ranking[newName]) {
+    if (patch.puntos !== undefined) ranking[newName].puntosTotales = patch.puntos;
+    if (patch.elo !== undefined) ranking[newName].elo = patch.elo;
+    if (patch.victorias !== undefined) ranking[newName].victorias = patch.victorias;
+    if (patch.avatarColor) ranking[newName].avatarColor = patch.avatarColor;
+    if (patch.avatarHat) ranking[newName].avatarHat = patch.avatarHat;
+  }
+  guardarRanking(ranking);
+
+  const cur = obtenerUsuarioActual();
+  if (cur && cur.id === id) {
+    guardarUsuarioActual(cuentas[id]);
+  }
+
+  return true;
+}
+
+export function adminEliminarUsuario(id: string): boolean {
+  if (id === 'admin') return false; // protect admin account
+  const cuentas = cargarCuentas();
+  if (!cuentas[id]) return false;
+
+  const name = cuentas[id].nombre.trim().toLowerCase();
+  delete cuentas[id];
+  guardarCuentas(cuentas);
+
+  const ranking = cargarRanking();
+  if (ranking[name]) {
+    delete ranking[name];
+    guardarRanking(ranking);
+  }
+
+  const cur = obtenerUsuarioActual();
+  if (cur && cur.id === id) {
+    guardarUsuarioActual(null);
+  }
+
+  return true;
 }

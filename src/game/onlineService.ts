@@ -286,13 +286,18 @@ class OnlineManager {
         this.connections.delete(conn.peer);
         this.lastSeenMap.delete(conn.peer);
 
-        // Remove from lobby to immediately free room slot
-        const prevCount = this.lobbyPlayers.length;
-        this.lobbyPlayers = this.lobbyPlayers.filter((p) => p.peerId !== conn.peer);
-        this.lobbyPlayers.forEach((p, idx) => { p.id = idx; });
+        // If game is in progress and not finished: start 10s abandonment countdown
+        if (this.currentGameState && !this.currentGameState.terminada) {
+          this.startPeerDisconnectGracePeriod();
+        } else {
+          // In lobby: remove immediately to free room slot
+          const prevCount = this.lobbyPlayers.length;
+          this.lobbyPlayers = this.lobbyPlayers.filter((p) => p.peerId !== conn.peer);
+          this.lobbyPlayers.forEach((p, idx) => { p.id = idx; });
 
-        if (this.lobbyPlayers.length !== prevCount) {
-          this.broadcastLobbyUpdate();
+          if (this.lobbyPlayers.length !== prevCount) {
+            this.broadcastLobbyUpdate();
+          }
         }
       });
     };
@@ -609,11 +614,11 @@ class OnlineManager {
     }
   }
 
-  // ===================== GRACE PERIOD ON DISCONNECT =====================
+  // ===================== GRACE PERIOD ON DISCONNECT (10 SECONDS) =====================
   private startHostDisconnectGracePeriod(hostPeerId: string) {
     if (this.countdownInterval) return; // already active
 
-    let secondsLeft = 45;
+    let secondsLeft = 10;
 
     if (this.callbacks.onHostDisconnected) {
       this.callbacks.onHostDisconnected(secondsLeft);
@@ -644,7 +649,33 @@ class OnlineManager {
           // retry
         }
       }
-    }, 2500);
+    }, 2000);
+  }
+
+  private startPeerDisconnectGracePeriod() {
+    if (this.countdownInterval) return; // already active
+
+    let secondsLeft = 10;
+
+    if (this.callbacks.onHostDisconnected) {
+      this.callbacks.onHostDisconnected(secondsLeft);
+    }
+
+    if (this.countdownInterval) clearInterval(this.countdownInterval);
+
+    this.countdownInterval = setInterval(() => {
+      secondsLeft -= 1;
+      if (this.callbacks.onHostDisconnected) {
+        this.callbacks.onHostDisconnected(secondsLeft);
+      }
+
+      if (secondsLeft <= 0) {
+        this.stopReconnectGracePeriod();
+        if (this.callbacks.onDisconnectTimeout) {
+          this.callbacks.onDisconnectTimeout();
+        }
+      }
+    }, 1000);
   }
 
   private stopReconnectGracePeriod() {

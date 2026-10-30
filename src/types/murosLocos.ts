@@ -252,4 +252,19 @@ export interface LevelInfo {
   icono: string;
 }
 
+export interface UserAccount {
+  id: string;
+  nombre: string;
+  clave: string;
+  rol: 'jugador' | 'admin';
+  avatarColor: string;
+  avatarHat: HatType;
+  puntos: number;
+  partidas: number;
+  victorias: number;
+  elo: number;
+  creadoEn: string;
+  ultimaConexion: string;
+}
+
 export type Screen = 'menu' | 'config' | 'juego' | 'ranking' | 'logros' | 'como_jugar' | 'ajustes' | 'online_lobby';
