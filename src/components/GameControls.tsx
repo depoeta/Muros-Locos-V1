@@ -15,9 +15,10 @@ import { sounds } from '../audio/murosAudio';
 interface PlayerCardsProps {
   estado: GameState;
   mostrarDistancia: boolean;
+  onAbrirAspecto?: () => void;
 }
 
-export const PlayerCards: React.FC<PlayerCardsProps> = ({ estado, mostrarDistancia }) => {
+export const PlayerCards: React.FC<PlayerCardsProps> = ({ estado, mostrarDistancia, onAbrirAspecto }) => {
   return (
     <div className="w-full max-w-[620px] mx-auto px-2 mb-2">
       <div
@@ -61,14 +62,28 @@ export const PlayerCards: React.FC<PlayerCardsProps> = ({ estado, mostrarDistanc
                 </div>
               )}
 
-              <div className="flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  if (idx === (estado.miJugadorId ?? 0)) {
+                    sounds.playClick();
+                    onAbrirAspecto?.();
+                  }
+                }}
+                className={`flex-shrink-0 ${
+                  idx === (estado.miJugadorId ?? 0)
+                    ? 'hover:scale-115 active:scale-95 transition-transform cursor-pointer'
+                    : ''
+                }`}
+                title={idx === (estado.miJugadorId ?? 0) ? 'Clic para cambiar aspecto (personaje y tema)' : undefined}
+              >
                 <CartoonCharacter
                   color={jugador.color}
                   hat={jugador.hat}
                   size={36}
                   showShadow={false}
                 />
-              </div>
+              </button>
 
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1">

@@ -699,6 +699,11 @@ export const App: React.FC = () => {
           usuarioActual={usuarioActual}
           onIniciar={handleIniciarPartida}
           onVolver={() => setScreen('menu')}
+          onUsuarioActualizado={(upd) => {
+            setUsuarioActual(upd);
+            guardarUsuarioActual(upd);
+          }}
+          onShowToast={showToast}
         />
       )}
 
@@ -775,7 +780,14 @@ export const App: React.FC = () => {
           </div>
 
           {/* Player Cards */}
-          <PlayerCards estado={estado} mostrarDistancia={ajustes.mostrarDistancia} />
+          <PlayerCards
+            estado={estado}
+            mostrarDistancia={ajustes.mostrarDistancia}
+            onAbrirAspecto={() => {
+              sounds.playClick();
+              setModalAspectoAbierto(true);
+            }}
+          />
 
           {/* Central Arena Board */}
           <div className="flex-1 flex items-center justify-center py-1">

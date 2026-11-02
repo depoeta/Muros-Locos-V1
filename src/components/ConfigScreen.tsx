@@ -5,18 +5,10 @@
 
 import React, { useState } from 'react';
 import { sounds } from '../audio/murosAudio';
-import { AppSettings, BoardTheme, HatType, MatchConfig, PlayerType, UserAccount } from '../types/murosLocos';
+import { AppSettings, BoardTheme, HatType, MatchConfig, PERSONAJES_REGISTRO, PlayerType, UserAccount } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
+import { AspectoModal } from './AspectoModal';
 import { actualizarNombreInvitadoLocal } from '../game/storage';
-
-const ALL_HATS: { hat: HatType; color: string }[] = [
-  { hat: 'corona', color: '#ff6b6b' },
-  { hat: 'pompon', color: '#4dabf7' },
-  { hat: 'antena', color: '#ffd43b' },
-  { hat: 'brote', color: '#51cf66' },
-  { hat: 'mago', color: '#9775fa' },
-  { hat: 'gatito', color: '#f06595' },
-];
 
 interface ConfigScreenProps {
   ajustes?: AppSettings;
@@ -24,6 +16,8 @@ interface ConfigScreenProps {
   usuarioActual?: UserAccount | null;
   onIniciar: (config: MatchConfig) => void;
   onVolver: () => void;
+  onUsuarioActualizado?: (u: UserAccount) => void;
+  onShowToast?: (msg: string) => void;
 }
 
 export const ConfigScreen: React.FC<ConfigScreenProps> = ({
@@ -32,8 +26,11 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
   usuarioActual,
   onIniciar,
   onVolver,
+  onUsuarioActualizado,
+  onShowToast,
 }) => {
   const [numJugadores, setNumJugadores] = useState<2 | 4>(2);
+  const [modalAspectoAbierto, setModalAspectoAbierto] = useState(false);
   const [temaTablero, setTemaTablero] = useState<BoardTheme>(
     () => usuarioActual?.temaTablero || ajustes?.temaTablero || 'madera'
   );
@@ -295,65 +292,105 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
 
         {/* Players List */}
         <div className="space-y-2 mt-1">
-          {jugadores.slice(0, numJugadores).map((j, idx) => (
-            <div
-              key={idx}
-              className="p-2.5 bg-white rounded-2xl border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] flex items-center gap-3 animate-[slideDown_0.2s_ease-out]"
-            >
-              <button
-                type="button"
-                onClick={() => {
-                  sounds.playClick();
-                  const curIdx = ALL_HATS.findIndex((h) => h.hat === j.hat);
-                  const nextH = ALL_HATS[(curIdx + 1) % ALL_HATS.length];
-                  updateJugador(idx, { hat: nextH.hat, color: nextH.color });
-                }}
-                className="hover:scale-110 active:scale-95 transition-transform cursor-pointer shrink-0"
-                title="Clic para cambiar personaje"
-              >
-                <CartoonCharacter
-                  color={j.color}
-                  hat={j.hat}
-                  size={44}
-                  showShadow={false}
-                />
-              </button>
+          {jugadores.slice(0, numJugadores).map((j, idx) => {
+            const isUserPlayer = idx === 0;
 
-              <div className="flex-1 min-w-0">
-                <input
-                  type="text"
-                  maxLength={12}
-                  value={j.nombre}
-                  onChange={(e) => updateJugador(idx, { nombre: e.target.value })}
-                  placeholder={`Jugador ${idx + 1}`}
-                  className="w-full text-sm font-extrabold text-[#2b2140] bg-[#f8f9fa] border-2 border-[#2b2140]/30 rounded-lg px-2 py-1 outline-none focus:border-[#2b2140]"
-                />
+            return (
+              <div
+                key={idx}
+                className="p-2.5 bg-white rounded-2xl border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] flex items-center gap-3 animate-[slideDown_0.2s_ease-out]"
+              >
+                {/* Avatar with click popup */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    sounds.playClick();
+                    if (isUserPlayer) {
+                      setModalAspectoAbierto(true);
+                    } else {
+                      const curIdx = PERSONAJES_REGISTRO.findIndex((h) => h.id === j.hat);
+                      const nextH = PERSONAJES_REGISTRO[(curIdx + 1) % PERSONAJES_REGISTRO.length];
+                      updateJugador(idx, { hat: nextH.id, color: nextH.defaultColor });
+                    }
+                  }}
+                  className="hover:scale-110 active:scale-95 transition-transform cursor-pointer shrink-0 relative"
+                  title={isUserPlayer ? 'Clic para elegir muñequito y tema' : 'Clic para cambiar personaje'}
+                >
+                  <CartoonCharacter
+                    color={j.color}
+                    hat={j.hat}
+                    size={44}
+                    showShadow={false}
+                  />
+                  {isUserPlayer && (
+                    <span className="absolute -bottom-1 -right-1 text-[10px] bg-white rounded-full border border-[#2b2140] px-1 font-black shadow-xs">
+                      🎨
+                    </span>
+                  )}
+                </button>
+
+                {/* Name field: Locked for registered accounts, editable for guests and other players */}
+                <div className="flex-1 min-w-0">
+                  {isUserPlayer && usuarioActual ? (
+                    <div className="w-full flex items-center justify-between text-sm font-extrabold text-[#2b2140] bg-[#e7f5ff] border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 shadow-xs select-none">
+                      <span className="truncate">{usuarioActual.nombre}</span>
+                      <span className="text-[10px] text-[#1971c2] font-black uppercase tracking-wider flex items-center gap-1 shrink-0 bg-white px-1.5 py-0.5 rounded border border-[#1971c2]/30">
+                        🔒 Cuenta
+                      </span>
+                    </div>
+                  ) : (
+                    <input
+                      type="text"
+                      maxLength={12}
+                      value={j.nombre}
+                      onChange={(e) => updateJugador(idx, { nombre: e.target.value })}
+                      placeholder={isUserPlayer ? 'Nombre invitado' : `Jugador ${idx + 1}`}
+                      className="w-full text-sm font-extrabold text-[#2b2140] bg-[#f8f9fa] border-2 border-[#2b2140]/30 rounded-xl px-2.5 py-1.5 outline-none focus:border-[#2b2140]"
+                    />
+                  )}
+                </div>
+
+                {/* Quick Aspect Button for Player 1 */}
+                {isUserPlayer && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sounds.playClick();
+                      setModalAspectoAbierto(true);
+                    }}
+                    className="py-1 px-2 rounded-xl bg-[#fff9db] border-2 border-[#2b2140] text-xs font-black text-[#5c3c00] hover:bg-[#ffd43b] active:translate-y-0.5 cursor-pointer shadow-xs shrink-0 flex items-center gap-1"
+                    title="Abrir mini ventana de aspecto y tema"
+                  >
+                    <span>🎨</span>
+                    <span className="hidden sm:inline">Aspecto</span>
+                  </button>
+                )}
+
+                <select
+                  value={j.tipo}
+                  onChange={(e) => {
+                    const newTipo = e.target.value as PlayerType;
+                    let newNombre = j.nombre;
+                    const isBotName = /^bot\s*(normal|fácil|facil|difícil|dificil)/i.test(j.nombre);
+                    if (newTipo === 'humano' && (isBotName || j.tipo !== 'humano')) {
+                      newNombre = idx === 0 ? (usuarioActual?.nombre || 'Tú') : `Jugador ${idx + 1}`;
+                    } else if (newTipo !== 'humano' && (j.tipo === 'humano' || /^jugador\s*\d+/i.test(j.nombre) || j.nombre === 'Tú')) {
+                      if (newTipo === 'bot_facil') newNombre = 'Bot Fácil';
+                      else if (newTipo === 'bot_normal') newNombre = 'Bot Normal';
+                      else if (newTipo === 'bot_dificil') newNombre = 'Bot Difícil';
+                    }
+                    updateJugador(idx, { tipo: newTipo, nombre: newNombre });
+                  }}
+                  className="text-xs font-bold text-[#2b2140] bg-[#fff9db] border-2 border-[#2b2140] rounded-xl px-2 py-1.5 outline-none cursor-pointer shadow-sm shrink-0"
+                >
+                  <option value="humano">👤 Humano</option>
+                  <option value="bot_facil">🤖 Bot Fácil</option>
+                  <option value="bot_normal">🤖 Bot Normal</option>
+                  <option value="bot_dificil">🤖 Bot Difícil</option>
+                </select>
               </div>
-
-              <select
-                value={j.tipo}
-                onChange={(e) => {
-                  const newTipo = e.target.value as PlayerType;
-                  let newNombre = j.nombre;
-                  const isBotName = /^bot\s*(normal|fácil|facil|difícil|dificil)/i.test(j.nombre);
-                  if (newTipo === 'humano' && (isBotName || j.tipo !== 'humano')) {
-                    newNombre = idx === 0 ? 'Tú' : `Jugador ${idx + 1}`;
-                  } else if (newTipo !== 'humano' && (j.tipo === 'humano' || /^jugador\s*\d+/i.test(j.nombre) || j.nombre === 'Tú')) {
-                    if (newTipo === 'bot_facil') newNombre = 'Bot Fácil';
-                    else if (newTipo === 'bot_normal') newNombre = 'Bot Normal';
-                    else if (newTipo === 'bot_dificil') newNombre = 'Bot Difícil';
-                  }
-                  updateJugador(idx, { tipo: newTipo, nombre: newNombre });
-                }}
-                className="text-xs font-bold text-[#2b2140] bg-[#fff9db] border-2 border-[#2b2140] rounded-xl px-2 py-1.5 outline-none cursor-pointer shadow-sm"
-              >
-                <option value="humano">👤 Humano</option>
-                <option value="bot_facil">🤖 Bot Fácil</option>
-                <option value="bot_normal">🤖 Bot Normal</option>
-                <option value="bot_dificil">🤖 Bot Difícil</option>
-              </select>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Match Toggles */}
@@ -505,6 +542,25 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
         <span>{esTorneo ? '🏆' : '🚀'}</span>
         <span>{esTorneo ? '¡COMENZAR TORNEO!' : '¡COMENZAR PARTIDA!'}</span>
       </button>
+
+      {/* Mini Aspecto Popup Modal in ConfigScreen */}
+      {modalAspectoAbierto && (
+        <AspectoModal
+          onCerrar={() => setModalAspectoAbierto(false)}
+          personajeActual={{
+            hat: jugadores[0].hat,
+            color: jugadores[0].color,
+          }}
+          temaActual={temaTablero}
+          usuarioActual={usuarioActual}
+          onUsuarioActualizado={onUsuarioActualizado}
+          onShowToast={onShowToast}
+          onAplicar={(nuevoP, nuevoTema) => {
+            updateJugador(0, { hat: nuevoP.hat, color: nuevoP.color });
+            setTemaTablero(nuevoTema);
+          }}
+        />
+      )}
     </div>
   );
 };
