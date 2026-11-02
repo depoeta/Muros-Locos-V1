@@ -96,7 +96,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
     }
   }, []);
 
-  // Entrar a una sala pública (Auto-Matchmaking)
+  // Entrar a una sala pública de la lista
   const handleEntrarSalaPublica = async (salaId: string, maxP: 2 | 4) => {
     sounds.playClick();
     setConectando(true);
@@ -105,15 +105,11 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
     setMaxJugadores(maxP);
 
     try {
-      const rol = await onlineService.joinOrHostPublicRoom(salaId, nombre, color, hat, maxP);
+      await onlineService.joinRoom(salaId, nombre, color, hat);
       setTab('en_sala');
-      if (rol === 'client') {
-        onShowToast(`¡Te has unido a ${salaId}!`);
-      } else {
-        onShowToast(`Esperando rival en ${salaId}...`);
-      }
+      onShowToast(`¡Te has unido a ${salaId}!`);
     } catch {
-      setErrorMsg('No se pudo conectar a la sala pública. Reintenta en unos segundos.');
+      setErrorMsg('No se pudo conectar a la sala pública. Es posible que el anfitrión haya salido o la sala esté llena.');
       setConectando(false);
     }
   };

@@ -4,8 +4,40 @@
  */
 
 export type PlayerType = 'humano' | 'bot_facil' | 'bot_normal' | 'bot_dificil';
-export type HatType = 'corona' | 'pompon' | 'antena' | 'brote' | 'mago' | 'gatito';
+export type HatType =
+  | 'corona'
+  | 'pompon'
+  | 'antena'
+  | 'brote'
+  | 'mago'
+  | 'gatito'
+  | 'zorro'
+  | 'robot'
+  | 'dragon'
+  | 'ninja';
 export type WallOrientation = 'H' | 'V';
+
+export interface CharacterDef {
+  id: HatType;
+  label: string;
+  icon: string;
+  defaultColor: string;
+  puntosRequeridos: number;
+  descripcion: string;
+}
+
+export const PERSONAJES_REGISTRO: CharacterDef[] = [
+  { id: 'corona', label: 'Corona', icon: '👑', defaultColor: '#ff6b6b', puntosRequeridos: 0, descripcion: 'Inicial' },
+  { id: 'pompon', label: 'Pompón', icon: '❄️', defaultColor: '#4dabf7', puntosRequeridos: 0, descripcion: 'Inicial' },
+  { id: 'antena', label: 'Antena', icon: '⚡', defaultColor: '#ffd43b', puntosRequeridos: 0, descripcion: 'Inicial' },
+  { id: 'brote', label: 'Brote', icon: '🌱', defaultColor: '#51cf66', puntosRequeridos: 0, descripcion: 'Inicial' },
+  { id: 'mago', label: 'Mago', icon: '🧙', defaultColor: '#9775fa', puntosRequeridos: 0, descripcion: 'Inicial' },
+  { id: 'gatito', label: 'Gatito', icon: '🐱', defaultColor: '#f06595', puntosRequeridos: 0, descripcion: 'Inicial' },
+  { id: 'zorro', label: 'Zorro Astuto', icon: '🦊', defaultColor: '#f76707', puntosRequeridos: 150, descripcion: 'Requiere 150 pts' },
+  { id: 'robot', label: 'Cyber Bot', icon: '🤖', defaultColor: '#22b8cf', puntosRequeridos: 350, descripcion: 'Requiere 350 pts' },
+  { id: 'dragon', label: 'Dragón Mítico', icon: '🐲', defaultColor: '#12b886', puntosRequeridos: 600, descripcion: 'Requiere 600 pts' },
+  { id: 'ninja', label: 'Sombra Ninja', icon: '🥷', defaultColor: '#495057', puntosRequeridos: 1000, descripcion: 'Requiere 1000 pts' },
+];
 
 export interface Coord {
   r: number;
@@ -57,6 +89,7 @@ export interface MatchConfig {
   esTorneo?: boolean;
   totalRondasTorneo?: number; // 3 | 5
   temaTablero?: BoardTheme;
+  rotationMode?: boolean; // Auto-rotate board in local pass-and-play
 }
 
 export interface AccionRegistro {
@@ -133,6 +166,8 @@ export type OnlineMessage =
   | { type: 'REMATCH_ACCEPT'; state: GameState }
   | { type: 'PING' }
   | { type: 'PONG' }
+  | { type: 'DIAG_PING'; ts: number }
+  | { type: 'DIAG_PONG'; ts: number }
   | { type: 'HOST_DISCONNECT_WARNING'; tiempoRestante: number }
   | { type: 'HOST_RESUMED'; state: GameState };
 
@@ -295,3 +330,15 @@ export interface UserAccount {
 }
 
 export type Screen = 'menu' | 'config' | 'juego' | 'ranking' | 'logros' | 'como_jugar' | 'ajustes' | 'online_lobby';
+
+export interface OnlineDiagnosticData {
+  status: 'conectado' | 'negociando' | 'reconectando' | 'desconectado';
+  pingMs: number | null;
+  calidad: 'excelente' | 'buena' | 'inestable' | 'critica' | 'desconectado';
+  miPeerId: string;
+  rivalPeerId: string | null;
+  role: 'host' | 'client' | 'none';
+  iceState: string;
+  dataChannelState: string;
+  logs: { ts: string; tipo: 'info' | 'warn' | 'error'; mensaje: string }[];
+}

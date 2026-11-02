@@ -9,6 +9,7 @@ import {
   Coord,
   GameState,
   HatType,
+  OnlineDiagnosticData,
   OnlineMessage,
   OnlinePlayerInfo,
   WallOrientation,
@@ -78,6 +79,77 @@ class OnlineManager {
   private countdownInterval: ReturnType<typeof setInterval> | null = null;
   private currentGameState: GameState | null = null;
   private isIntentionalExit: boolean = false;
+
+  // Visual Diagnostic Overlay State
+  private diagnosticData: OnlineDiagnosticData = {
+    status: 'desconectado',
+    pingMs: null,
+    calidad: 'desconectado',
+    miPeerId: '',
+    rivalPeerId: null,
+    role: 'none',
+    iceState: 'new',
+    dataChannelState: 'closed',
+    logs: [],
+  };
+  private diagnosticListeners: Set<(data: OnlineDiagnosticData) => void> = new Set();
+  private diagPingTimer: ReturnType<typeof setInterval> | null = null;
+
+  public getDiagnosticData(): OnlineDiagnosticData {
+    return { ...this.diagnosticData, logs: [...this.diagnosticData.logs] };
+  }
+
+  public subscribeDiagnostics(listener: (data: OnlineDiagnosticData) => void): () => void {
+    this.diagnosticListeners.add(listener);
+    listener(this.getDiagnosticData());
+    return () => {
+      this.diagnosticListeners.delete(listener);
+    };
+  }
+
+  private notifyDiagnostics() {
+    const data = this.getDiagnosticData();
+    this.diagnosticListeners.forEach((l) => {
+      try { l(data); } catch {}
+    });
+  }
+
+  public addDiagnosticLog(tipo: 'info' | 'warn' | 'error', mensaje: string) {
+    const now = new Date();
+    const ts = now.toTimeString().split(' ')[0];
+    this.diagnosticData.logs.unshift({ ts, tipo, mensaje });
+    if (this.diagnosticData.logs.length > 20) {
+      this.diagnosticData.logs.pop();
+    }
+    this.notifyDiagnostics();
+  }
+
+  public sendInstantDiagnosticPing() {
+    const now = Date.now();
+    if (this.role === 'client' && this.hostConnection && this.hostConnection.open) {
+      this.hostConnection.send({ type: 'DIAG_PING', ts: now });
+    } else if (this.role === 'host') {
+      this.connections.forEach((conn) => {
+        if (conn.open) {
+          try { conn.send({ type: 'DIAG_PING', ts: now }); } catch {}
+        }
+      });
+    }
+  }
+
+  private startDiagnosticPingLoop() {
+    if (this.diagPingTimer) clearInterval(this.diagPingTimer);
+    this.diagPingTimer = setInterval(() => {
+      this.sendInstantDiagnosticPing();
+    }, 3000);
+  }
+
+  private stopDiagnosticPingLoop() {
+    if (this.diagPingTimer) {
+      clearInterval(this.diagPingTimer);
+      this.diagPingTimer = null;
+    }
+  }
 
   public setCallbacks(cb: OnlineEventCallback) {
     this.callbacks = { ...this.callbacks, ...cb };
@@ -266,6 +338,14 @@ class OnlineManager {
         this.saveActiveSession();
         this.startHeartbeat();
 
+        this.diagnosticData.status = 'conectado';
+        this.diagnosticData.role = 'host';
+        this.diagnosticData.miPeerId = id;
+        this.diagnosticData.iceState = 'connected';
+        this.diagnosticData.dataChannelState = 'open';
+        this.addDiagnosticLog('info', `Sala creada. PeerID Host: ${id}`);
+        this.startDiagnosticPingLoop();
+
         if (this.callbacks.onLobbyUpdate) {
           this.callbacks.onLobbyUpdate([...this.lobbyPlayers], this.maxPlayers);
         }
@@ -273,10 +353,14 @@ class OnlineManager {
       });
 
       this.peer.on('connection', (conn) => {
+        this.diagnosticData.rivalPeerId = conn.peer;
+        this.addDiagnosticLog('info', `Cliente conectado: ${conn.peer}`);
         this.handleIncomingClientConnection(conn);
       });
 
       this.peer.on('error', (err) => {
+        this.diagnosticData.status = 'desconectado';
+        this.addDiagnosticLog('error', `Error en Peer: ${err.message}`);
         if (this.callbacks.onError) {
           this.callbacks.onError(`Error en la sala: ${err.message}`);
         }
@@ -339,6 +423,19 @@ class OnlineManager {
       return;
     }
     if (msg.type === 'PONG') {
+      return;
+    }
+
+    if (msg.type === 'DIAG_PING') {
+      try { conn.send({ type: 'DIAG_PONG', ts: msg.ts }); } catch {}
+      return;
+    }
+    if (msg.type === 'DIAG_PONG') {
+      const rtt = Math.max(1, Date.now() - msg.ts);
+      this.diagnosticData.pingMs = rtt;
+      this.diagnosticData.calidad =
+        rtt < 100 ? 'excelente' : rtt < 200 ? 'buena' : rtt < 350 ? 'inestable' : 'critica';
+      this.notifyDiagnostics();
       return;
     }
 
@@ -482,16 +579,27 @@ class OnlineManager {
           this.cleanUp();
           reject(new Error('Sala no disponible'));
         }
-      }, 2500);
+      }, 6000);
 
       this.peer.on('open', () => {
+        this.diagnosticData.status = 'negociando';
+        this.diagnosticData.role = 'client';
+        this.diagnosticData.miPeerId = this.peer?.id || '';
+        this.diagnosticData.rivalPeerId = hostPeerId;
+        this.addDiagnosticLog('info', `Peer cliente iniciado (${this.peer?.id}). Conectando a host: ${hostPeerId}...`);
+
         this.connectToHost(
           hostPeerId,
           () => {
             if (!isSettled) {
               isSettled = true;
               clearTimeout(timeoutId);
+              this.diagnosticData.status = 'conectado';
+              this.diagnosticData.iceState = 'connected';
+              this.diagnosticData.dataChannelState = 'open';
+              this.addDiagnosticLog('info', `Conexión WebRTC establecida con el anfitrión`);
               this.startHeartbeat();
+              this.startDiagnosticPingLoop();
               resolve();
             }
           },
@@ -499,6 +607,8 @@ class OnlineManager {
             if (!isSettled) {
               isSettled = true;
               clearTimeout(timeoutId);
+              this.diagnosticData.status = 'desconectado';
+              this.addDiagnosticLog('warn', `Fallo de conexión con anfitrión`);
               reject(err);
             }
           }
@@ -599,6 +709,19 @@ class OnlineManager {
       return;
     }
     if (msg.type === 'PONG') {
+      return;
+    }
+
+    if (msg.type === 'DIAG_PING') {
+      try { this.hostConnection?.send({ type: 'DIAG_PONG', ts: msg.ts }); } catch {}
+      return;
+    }
+    if (msg.type === 'DIAG_PONG') {
+      const rtt = Math.max(1, Date.now() - msg.ts);
+      this.diagnosticData.pingMs = rtt;
+      this.diagnosticData.calidad =
+        rtt < 100 ? 'excelente' : rtt < 200 ? 'buena' : rtt < 350 ? 'inestable' : 'critica';
+      this.notifyDiagnostics();
       return;
     }
 
@@ -844,6 +967,13 @@ class OnlineManager {
     this.isIntentionalExit = true;
     this.stopHeartbeat();
     this.stopReconnectGracePeriod();
+    this.stopDiagnosticPingLoop();
+    this.diagnosticData.status = 'desconectado';
+    this.diagnosticData.calidad = 'desconectado';
+    this.diagnosticData.pingMs = null;
+    this.diagnosticData.role = 'none';
+    this.diagnosticData.rivalPeerId = null;
+    this.notifyDiagnostics();
     this.currentGameState = null;
     try {
       localStorage.removeItem('muros_active_session');

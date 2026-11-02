@@ -62,6 +62,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
   const [segundosPorTurno, setSegundosPorTurno] = useState<number>(30);
   const [esTorneo, setEsTorneo] = useState<boolean>(esTorneoInicial);
   const [totalRondasTorneo, setTotalRondasTorneo] = useState<number>(3);
+  const [rotationMode, setRotationMode] = useState<boolean>(true);
   const [avisoInvitadoVisible, setAvisoInvitadoVisible] = useState<boolean>(true);
 
   const updateJugador = (idx: number, patch: Partial<(typeof jugadores)[0]>) => {
@@ -110,6 +111,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
       esTorneo,
       totalRondasTorneo,
       temaTablero,
+      rotationMode,
     });
   };
 
@@ -439,6 +441,31 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
               <div
                 className={`w-3.5 h-3.5 rounded-full bg-white border border-[#2b2140] transition-transform ${
                   modoConTiempo ? 'translate-x-4' : ''
+                }`}
+              />
+            </div>
+          </div>
+
+          {/* Girar tablero por turno (Pasa y Juega) */}
+          <div
+            onClick={() => {
+              setRotationMode(!rotationMode);
+              sounds.playClick();
+            }}
+            className="p-2 bg-white rounded-xl border-2 border-[#2b2140] flex items-center justify-between cursor-pointer select-none col-span-2"
+          >
+            <div className="flex flex-col text-left">
+              <span className="text-xs font-bold text-[#2b2140]">🔄 Girar tablero en cada turno</span>
+              <span className="text-[10px] text-[#86542d]">Ideal para jugar en el mismo dispositivo</span>
+            </div>
+            <div
+              className={`w-9 h-5 rounded-full p-0.5 border border-[#2b2140] transition-colors ${
+                rotationMode ? 'bg-[#51cf66]' : 'bg-[#ced4da]'
+              }`}
+            >
+              <div
+                className={`w-3.5 h-3.5 rounded-full bg-white border border-[#2b2140] transition-transform ${
+                  rotationMode ? 'translate-x-4' : ''
                 }`}
               />
             </div>

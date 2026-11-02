@@ -316,6 +316,116 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
             <path d="M 84 57 L 73 58 M 85 62 L 73 61" stroke="#2b2140" strokeWidth="2.5" strokeLinecap="round" />
           </g>
         )}
+
+        {/* 7. Zorro Astuto 🦊 */}
+        {hat === 'zorro' && (
+          <g>
+            {/* Left Fox Ear */}
+            <path
+              d="M 21 34 L 16 7 L 39 24 Z"
+              fill="#f76707"
+              stroke="#2b2140"
+              strokeWidth="3.5"
+              strokeLinejoin="round"
+            />
+            <path d="M 22 28 L 18 13 L 34 23 Z" fill="#fff4e6" />
+            {/* Right Fox Ear */}
+            <path
+              d="M 79 34 L 84 7 L 61 24 Z"
+              fill="#f76707"
+              stroke="#2b2140"
+              strokeWidth="3.5"
+              strokeLinejoin="round"
+            />
+            <path d="M 78 28 L 82 13 L 66 23 Z" fill="#fff4e6" />
+            {/* Fox Snout & Cute Black Nose */}
+            <ellipse cx="50" cy="62" rx="7" ry="5" fill="#fff4e6" stroke="#2b2140" strokeWidth="2" />
+            <polygon points="47,59 53,59 50,63" fill="#2b2140" />
+            {/* Fox Whiskers */}
+            <path d="M 18 56 L 28 58 M 17 62 L 28 61" stroke="#2b2140" strokeWidth="2" strokeLinecap="round" />
+            <path d="M 82 56 L 72 58 M 83 62 L 72 61" stroke="#2b2140" strokeWidth="2" strokeLinecap="round" />
+          </g>
+        )}
+
+        {/* 8. Cyber Bot 🤖 */}
+        {hat === 'robot' && (
+          <g transform="translate(50, 24)">
+            {/* Metallic Head Crest */}
+            <rect x="-14" y="-8" width="28" height="10" rx="3" fill="#adb5bd" stroke="#2b2140" strokeWidth="3" />
+            {/* Cyber Antenna with Neon Pulse */}
+            <line x1="0" y1="-8" x2="0" y2="-22" stroke="#2b2140" strokeWidth="3.5" strokeLinecap="round" />
+            <circle cx="0" cy="-24" r="5.5" fill="#22b8cf" stroke="#2b2140" strokeWidth="2.5" className="animate-pulse" />
+            {/* Ear Bolts */}
+            <rect x="-42" y="16" width="6" height="12" rx="2" fill="#ced4da" stroke="#2b2140" strokeWidth="2.5" />
+            <rect x="36" y="16" width="6" height="12" rx="2" fill="#ced4da" stroke="#2b2140" strokeWidth="2.5" />
+            {/* Cyber Visor Over Eyes */}
+            <rect x="-24" y="20" width="48" height="11" rx="4" fill="#15aabf" stroke="#2b2140" strokeWidth="2.5" opacity="0.85" />
+            <line x1="-20" y1="25" x2="20" y2="25" stroke="#e3fafc" strokeWidth="2" strokeDasharray="3,2" />
+          </g>
+        )}
+
+        {/* 9. Dragón Mítico 🐲 */}
+        {hat === 'dragon' && (
+          <g>
+            {/* Left Dragon Horn */}
+            <path
+              d="M 26 32 C 16 22 10 7 20 2 C 26 8 28 18 36 26 Z"
+              fill="#ffd43b"
+              stroke="#2b2140"
+              strokeWidth="3.5"
+              strokeLinejoin="round"
+            />
+            {/* Right Dragon Horn */}
+            <path
+              d="M 74 32 C 84 22 90 7 80 2 C 74 8 72 18 64 26 Z"
+              fill="#ffd43b"
+              stroke="#2b2140"
+              strokeWidth="3.5"
+              strokeLinejoin="round"
+            />
+            {/* Center Spine Scales */}
+            <polygon points="46,24 50,14 54,24" fill="#12b886" stroke="#2b2140" strokeWidth="2" />
+            <polygon points="47,15 50,7 53,15" fill="#12b886" stroke="#2b2140" strokeWidth="2" />
+            {/* Cute Little Dragon Fangs */}
+            <polygon points="43,65 46,70 47,65" fill="#ffffff" stroke="#2b2140" strokeWidth="1.5" />
+            <polygon points="53,65 54,70 57,65" fill="#ffffff" stroke="#2b2140" strokeWidth="1.5" />
+          </g>
+        )}
+
+        {/* 10. Sombra Ninja 🥷 */}
+        {hat === 'ninja' && (
+          <g>
+            {/* Flowing Ninja Headband Tails (Left) */}
+            <path
+              d="M 20 40 Q 6 36 2 48 Q 12 44 22 46 Z"
+              fill="#212529"
+              stroke="#2b2140"
+              strokeWidth="3"
+            />
+            <path
+              d="M 18 44 Q 4 48 0 60 Q 10 52 20 48 Z"
+              fill="#343a40"
+              stroke="#2b2140"
+              strokeWidth="2.5"
+            />
+            {/* Forehead Shinobi Band */}
+            <rect x="20" y="32" width="60" height="12" rx="4" fill="#212529" stroke="#2b2140" strokeWidth="3" />
+            {/* Metallic Clan Plate */}
+            <rect x="38" y="34" width="24" height="8" rx="2" fill="#ced4da" stroke="#2b2140" strokeWidth="2" />
+            {/* Mini Shuriken Crest */}
+            <path
+              d="M 50 35 L 51.5 38 L 54 38 L 52 39.5 L 53 42 L 50 40.5 L 47 42 L 48 39.5 L 46 38 L 48.5 38 Z"
+              fill="#ffd43b"
+            />
+            {/* Lower Stealth Mask covering mouth */}
+            <path
+              d="M 28 60 Q 50 78 72 60 L 68 76 Q 50 86 32 76 Z"
+              fill="#212529"
+              stroke="#2b2140"
+              strokeWidth="3"
+            />
+          </g>
+        )}
       </svg>
     </div>
   );

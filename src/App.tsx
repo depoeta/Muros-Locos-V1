@@ -32,9 +32,11 @@ import {
   cargarAjustes,
   guardarAjustes,
   guardarUsuarioActual,
+  iniciarEscuchaNube,
   obtenerUsuarioActual,
   penalizarAbandono,
   sincronizarConNube,
+  suscribirCambiosNube,
   verificarCambiosUsuario,
 } from './game/storage';
 import { onlineService } from './game/onlineService';
@@ -42,6 +44,8 @@ import { MenuScreen } from './components/MenuScreen';
 import { ConfigScreen } from './components/ConfigScreen';
 import { OnlineLobbyScreen } from './components/OnlineLobbyScreen';
 import { MurosBoard } from './components/MurosBoard';
+import { AspectoModal } from './components/AspectoModal';
+import { OnlineDiagnosticsOverlay } from './components/OnlineDiagnosticsOverlay';
 import { ActionBar, HistorialPanel, PlayerCards } from './components/GameControls';
 import {
   AdminPanelModal,
@@ -58,6 +62,7 @@ export const App: React.FC = () => {
   const [screen, setScreen] = useState<Screen>('menu');
   const [usuarioActual, setUsuarioActual] = useState<UserAccount | null>(() => obtenerUsuarioActual());
   const [ajustes, setAjustes] = useState<AppSettings>(() => cargarAjustes());
+  const [modalAspectoAbierto, setModalAspectoAbierto] = useState(false);
 
   // Game state
   const [estado, setEstado] = useState<GameState | null>(null);
@@ -97,28 +102,30 @@ export const App: React.FC = () => {
   }, [ajustes.sonido]);
 
   // Sync with cloud database on load
+  // Initial cloud sync and real-time 5-second KV listener
   useEffect(() => {
     sincronizarConNube(false).catch(() => {});
-  }, []);
-
-  // Check periodically for external admin changes or account deletion
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (!usuarioActual) return;
-      const res = verificarCambiosUsuario(usuarioActual);
-      if (res.cambiado) {
-        if (res.eliminado) {
-          guardarUsuarioActual(null);
-          setUsuarioActual(null);
-          if (res.mensaje) showToast(res.mensaje);
-        } else if (res.usuarioActualizado) {
-          setUsuarioActual(res.usuarioActualizado);
-          guardarUsuarioActual(res.usuarioActualizado);
-          if (res.mensaje) showToast(res.mensaje);
+    const stopListener = iniciarEscuchaNube(5000);
+    const unsubs = suscribirCambiosNube(({ cuentas }) => {
+      if (usuarioActual && cuentas[usuarioActual.id]) {
+        const fresh = cuentas[usuarioActual.id];
+        if (
+          fresh.rol !== usuarioActual.rol ||
+          fresh.puntos !== usuarioActual.puntos ||
+          fresh.avatarHat !== usuarioActual.avatarHat ||
+          fresh.avatarColor !== usuarioActual.avatarColor
+        ) {
+          setUsuarioActual(fresh);
+          guardarUsuarioActual(fresh);
+          showToast('☁️ Perfil sincronizado con la nube');
         }
       }
-    }, 5000);
-    return () => clearInterval(interval);
+    });
+
+    return () => {
+      stopListener();
+      unsubs();
+    };
   }, [usuarioActual, showToast]);
 
   // Turn Timer effect (stops if disconnected or game ended)
@@ -583,6 +590,7 @@ export const App: React.FC = () => {
   // Exit match to menu
   const handleVolverAlMenu = () => {
     sounds.playClick();
+    const eraOnline = Boolean(estado?.modoOnline);
     if (estado && !estado.terminada) {
       // If human abandons active match, apply penalty
       const curPlayer = estado.jugadores[estado.turnoActual];
@@ -597,7 +605,11 @@ export const App: React.FC = () => {
     setMostrarBarraPostPartida(false);
     setDesconexionSegundos(null);
     setEstado(null);
-    setScreen('menu');
+    if (eraOnline) {
+      setScreen('online_lobby');
+    } else {
+      setScreen('menu');
+    }
   };
 
   // Board Theme calculation: from match config -> or current user theme -> or settings
@@ -735,8 +747,20 @@ export const App: React.FC = () => {
               )}
             </div>
 
-            {/* Quick in-game settings */}
+            {/* Quick in-game settings & Aspect switcher */}
             <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setModalAspectoAbierto(true);
+                }}
+                className="py-1 px-2.5 rounded-xl bg-white border border-[#2b2140] flex items-center gap-1 text-xs font-black text-[#2b2140] hover:bg-[#fff9db] cursor-pointer shadow-xs active:translate-y-0.5"
+                title="Cambiar personaje o tema de la arena"
+              >
+                <span>🎨</span>
+                <span className="hidden sm:inline">Aspecto</span>
+              </button>
               <button
                 onClick={() => {
                   setModalPrevio(modalActivo);
@@ -768,6 +792,7 @@ export const App: React.FC = () => {
               modoDaltonico={ajustes.modoDaltonico}
               animacionesReducidas={ajustes.animacionesReducidas}
               perspectivaInvertida={perspectivaInvertida}
+              rotationMode={Boolean(!estado.modoOnline && (estado.config.rotationMode ?? true))}
               onTogglePerspectiva={() => setPerspectivaInvertida((p) => !p)}
               temaTablero={temaTableroActivo}
             />
@@ -799,7 +824,18 @@ export const App: React.FC = () => {
                 className="py-1.5 px-3 rounded-xl bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] font-black text-xs hover:bg-[#fcc419] cursor-pointer flex items-center gap-1 shadow-sm"
               >
                 <span>🏆</span>
-                <span>Ver Resultados</span>
+                <span>Resultados</span>
+              </button>
+              <button
+                onClick={() => {
+                  sounds.playClick();
+                  setModalPrevio('victoria');
+                  setModalActivo('ranking');
+                }}
+                className="py-1.5 px-3 rounded-xl bg-[#4dabf7] text-white border-2 border-[#2b2140] font-black text-xs hover:bg-[#339af0] cursor-pointer flex items-center gap-1 shadow-sm"
+              >
+                <span>📊</span>
+                <span>Ranking</span>
               </button>
               <button
                 onClick={handleRevancha}
@@ -812,8 +848,8 @@ export const App: React.FC = () => {
                 onClick={handleVolverAlMenu}
                 className="py-1.5 px-3 rounded-xl bg-white text-[#2b2140] border-2 border-[#2b2140] font-black text-xs hover:bg-[#f1f3f5] cursor-pointer flex items-center gap-1 shadow-sm"
               >
-                <span>🏠</span>
-                <span>Menú</span>
+                <span>{estado.modoOnline ? '🌐' : '🏠'}</span>
+                <span>{estado.modoOnline ? 'Lobby' : 'Menú'}</span>
               </button>
             </div>
           )}
@@ -935,6 +971,50 @@ export const App: React.FC = () => {
             setModalActivo('ranking');
           }}
           onIrAlMenu={handleVolverAlMenu}
+        />
+      )}
+
+      {/* Visual Diagnostic Overlay for Online Mode */}
+      {(screen === 'online_lobby' || Boolean(estado?.modoOnline)) && (
+        <OnlineDiagnosticsOverlay />
+      )}
+
+      {/* AspectoModal (Selector Unificado de Personajes y Temas) */}
+      {modalAspectoAbierto && (
+        <AspectoModal
+          onCerrar={() => setModalAspectoAbierto(false)}
+          personajeActual={{
+            hat: usuarioActual?.avatarHat || estado?.jugadores[0]?.hat || 'corona',
+            color: usuarioActual?.avatarColor || estado?.jugadores[0]?.color || '#ff6b6b',
+          }}
+          temaActual={temaTableroActivo}
+          usuarioActual={usuarioActual}
+          onUsuarioActualizado={(upd) => {
+            setUsuarioActual(upd);
+            guardarUsuarioActual(upd);
+          }}
+          onShowToast={showToast}
+          onAplicar={(nuevoP, nuevoTema) => {
+            if (estado) {
+              setEstado((prev) => {
+                if (!prev) return prev;
+                const nextPlayers = [...prev.jugadores];
+                if (nextPlayers[0]) {
+                  nextPlayers[0] = { ...nextPlayers[0], hat: nuevoP.hat, color: nuevoP.color };
+                }
+                return {
+                  ...prev,
+                  jugadores: nextPlayers,
+                  config: { ...prev.config, temaTablero: nuevoTema },
+                };
+              });
+            }
+            setAjustes((prev) => {
+              const updated = { ...prev, temaTablero: nuevoTema };
+              guardarAjustes(updated);
+              return updated;
+            });
+          }}
         />
       )}
     </div>

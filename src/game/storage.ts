@@ -90,6 +90,120 @@ const STORAGE_KEY_SETTINGS = 'muros_locos_settings_v1';
 let cloudKvConnected: boolean = false;
 let lastCloudSyncTime: number = 0;
 
+export type NetworkDiagnostic = {
+  isOnline: boolean;
+  kvConnected: boolean;
+  serverPingMs: number;
+  lastPingTime: number;
+  lastError: string | null;
+  salasCount: number;
+  cuentasCount: number;
+};
+
+let currentDiagnostic: NetworkDiagnostic = {
+  isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+  kvConnected: true,
+  serverPingMs: 0,
+  lastPingTime: Date.now(),
+  lastError: null,
+  salasCount: 0,
+  cuentasCount: 0,
+};
+
+const diagnosticListeners = new Set<(d: NetworkDiagnostic) => void>();
+let lastKnownKvUpdate: number = 0;
+let pingIntervalId: any = null;
+
+export function obtenerDiagnosticoRed(): NetworkDiagnostic {
+  return { ...currentDiagnostic };
+}
+
+export function suscribirDiagnostico(cb: (d: NetworkDiagnostic) => void): () => void {
+  diagnosticListeners.add(cb);
+  cb({ ...currentDiagnostic });
+  return () => {
+    diagnosticListeners.delete(cb);
+  };
+}
+
+export function reportarDiagnostico(diag: Partial<NetworkDiagnostic>) {
+  currentDiagnostic = { ...currentDiagnostic, ...diag };
+  diagnosticListeners.forEach((l) => {
+    try { l({ ...currentDiagnostic }); } catch {}
+  });
+}
+
+export async function pingServidor(): Promise<NetworkDiagnostic> {
+  const startTime = Date.now();
+  try {
+    const res = await fetch(getApiBaseUrl('/api/ping'), {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store',
+    });
+    if (res.ok) {
+      const pingMs = Math.max(1, Date.now() - startTime);
+      const data = await res.json();
+      const isKv = res.headers.get('X-KV-Bound') === 'true' || Boolean(data.kvBound);
+      cloudKvConnected = isKv;
+
+      reportarDiagnostico({
+        isOnline: true,
+        kvConnected: isKv,
+        serverPingMs: pingMs,
+        lastPingTime: Date.now(),
+        lastError: null,
+        salasCount: data.salasCount || 0,
+        cuentasCount: data.cuentasCount || 0,
+      });
+
+      // If KV data has updated on server, silently auto-refresh ranking and accounts
+      if (data.lastUpdate && data.lastUpdate !== lastKnownKvUpdate) {
+        lastKnownKvUpdate = data.lastUpdate;
+        sincronizarConNube(true);
+      }
+    } else {
+      reportarDiagnostico({
+        isOnline: false,
+        lastError: `Servidor HTTP ${res.status}`,
+      });
+    }
+  } catch (err: any) {
+    reportarDiagnostico({
+      isOnline: false,
+      lastError: err?.message || 'Error de red con el servidor',
+    });
+  }
+  return obtenerDiagnosticoRed();
+}
+
+export function iniciarHeartbeatGlobal() {
+  if (typeof window === 'undefined') return;
+  if (pingIntervalId) return;
+
+  pingServidor();
+
+  pingIntervalId = setInterval(() => {
+    pingServidor();
+  }, 6000);
+
+  window.addEventListener('online', () => {
+    reportarDiagnostico({ isOnline: true, lastError: null });
+    pingServidor();
+  });
+
+  window.addEventListener('offline', () => {
+    reportarDiagnostico({ isOnline: false, lastError: 'Sin conexión a internet' });
+  });
+}
+
+// Auto-start heartbeat in client
+if (typeof window !== 'undefined') {
+  setTimeout(() => {
+    iniciarHeartbeatGlobal();
+  }, 100);
+}
+
 export function estaKvConectado(): boolean {
   return cloudKvConnected;
 }
@@ -207,6 +321,83 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
     rankingCount: Object.keys(cargarRanking()).length,
     cuentasCount: Object.keys(cargarCuentas()).length,
   };
+}
+
+let lastKnownCloudTimestamp = 0;
+type CloudChangeListener = (data: { cuentas: Record<string, UserAccount>; ranking: Record<string, RankEntry> }) => void;
+const cloudChangeListeners = new Set<CloudChangeListener>();
+
+export function suscribirCambiosNube(listener: CloudChangeListener): () => void {
+  cloudChangeListeners.add(listener);
+  return () => {
+    cloudChangeListeners.delete(listener);
+  };
+}
+
+/**
+ * Real-time cloud listener: checks /api/ping every 5 seconds.
+ * If Cloudflare KV or server modified accounts, rankings, or roles,
+ * it immediately triggers background resync and notifies active listeners.
+ */
+export function iniciarEscuchaNube(intervaloMs: number = 5000): () => void {
+  let isChecking = false;
+
+  const verificar = async () => {
+    if (isChecking) return;
+    isChecking = true;
+    try {
+      const res = await fetch(getApiBaseUrl('/api/ping'));
+      if (res.ok) {
+        const info = await res.json();
+        const remoteTs = Number(info.lastUpdate || info.timestamp || 0);
+
+        if (lastKnownCloudTimestamp === 0) {
+          lastKnownCloudTimestamp = remoteTs;
+          return;
+        }
+
+        if (remoteTs > lastKnownCloudTimestamp) {
+          lastKnownCloudTimestamp = remoteTs;
+          await sincronizarConNube(true);
+          const cuentas = cargarCuentas();
+          const ranking = cargarRanking();
+
+          // Check if currently active user account was updated or deleted
+          const current = obtenerUsuarioActual();
+          if (current) {
+            const updated = cuentas[current.id];
+            if (!updated) {
+              // Account was deleted in cloud!
+              cerrarSesion();
+            } else if (
+              updated.rol !== current.rol ||
+              updated.puntos !== current.puntos ||
+              updated.avatarHat !== current.avatarHat ||
+              updated.avatarColor !== current.avatarColor
+            ) {
+              guardarUsuarioActual(updated);
+            }
+          }
+
+          cloudChangeListeners.forEach((l) => {
+            try {
+              l({ cuentas, ranking });
+            } catch (err) {
+              console.error('Error in cloud change listener:', err);
+            }
+          });
+        }
+      }
+    } catch {
+      // network hiccup, ignore
+    } finally {
+      isChecking = false;
+    }
+  };
+
+  const timer = setInterval(verificar, intervaloMs);
+  verificar();
+  return () => clearInterval(timer);
 }
 
 export function cargarAjustes(): AppSettings {

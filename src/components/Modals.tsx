@@ -16,6 +16,7 @@ import {
   MatchResultRecord,
   RankEntry,
   ScoreBreakdown,
+  PERSONAJES_REGISTRO,
   TorneoState,
   UserAccount,
 } from '../types/murosLocos';
@@ -37,6 +38,7 @@ import {
   darDeBajaUsuarioAsync,
   estaKvConectado,
   exportarDatosJSON,
+  getApiBaseUrl,
   guardarCuentas,
   guardarRanking,
   importarDatosJSON,
@@ -363,7 +365,7 @@ interface RankingModalProps {
   onAbrirPerfil?: () => void;
 }
 
-type TabType = 'global' | 'esta_semana' | 'semana_pasada' | 'local';
+type TabType = 'local' | 'global' | 'esta_semana' | 'semana_pasada';
 
 interface DisplayRankEntry {
   nombre: string;
@@ -380,7 +382,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
   usuarioActual,
   onAbrirPerfil,
 }) => {
-  const [tab, setTab] = useState<TabType>('global');
+  const [tab, setTab] = useState<TabType>('local');
   const [rankingData, setRankingData] = useState<Record<string, RankEntry>>(() => cargarRanking());
   const [localRankingData, setLocalRankingData] = useState<Record<string, RankEntry>>(() => cargarRankingLocal());
   const [historial, setHistorial] = useState(() => cargarHistorial());
@@ -570,13 +572,13 @@ export const RankingModal: React.FC<RankingModalProps> = ({
           </button>
         </div>
 
-        {/* Tab Filters: Global, Esta Semana, Semana Pasada, Local */}
+        {/* Tab Filters: Local, Global, Esta Semana, Semana Pasada */}
         <div className="grid grid-cols-4 gap-1 p-1 bg-[#ede4d0] rounded-2xl border-2 border-[#2b2140] my-2">
           {[
+            { id: 'local', label: '📍 Local' },
             { id: 'global', label: '🌍 Global' },
             { id: 'esta_semana', label: '📅 Esta Semana' },
             { id: 'semana_pasada', label: '⏮️ Sem. Pasada' },
-            { id: 'local', label: '📍 Local' },
           ].map((t) => (
             <button
               key={t.id}
@@ -1205,6 +1207,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
   const [perfilColor, setPerfilColor] = useState<string>(() => usuarioActual?.avatarColor || '#ff6b6b');
   const [guardandoPersonaje, setGuardandoPersonaje] = useState(false);
   const [personajeGuardadoMsg, setPersonajeGuardadoMsg] = useState(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
 
   const todasLasCuentas = useMemo(() => cargarCuentas(), [usuarioActual, cargando]);
   const comunidadLista = useMemo(() => {
@@ -1360,6 +1363,11 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                     <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
                       Tu Personaje Favorito
                     </span>
+                    {toastMsg && (
+                      <span className="text-[10px] text-[#e03131] font-black animate-pulse">
+                        {toastMsg}
+                      </span>
+                    )}
                     {personajeGuardadoMsg && (
                       <span className="text-[10px] text-[#2b8a3e] font-black animate-bounce">
                         ✓ ¡Guardado!
@@ -1374,32 +1382,44 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                       </span>
                     </div>
                   </div>
-                  <div className="grid grid-cols-6 gap-1 mt-1">
-                    {[
-                      { id: 'corona' as HatType, label: 'Corona', icon: '👑', color: '#ff6b6b' },
-                      { id: 'pompon' as HatType, label: 'Pompón', icon: '❄️', color: '#4dabf7' },
-                      { id: 'antena' as HatType, label: 'Antena', icon: '⚡', color: '#ffd43b' },
-                      { id: 'brote' as HatType, label: 'Brote', icon: '🌱', color: '#51cf66' },
-                      { id: 'mago' as HatType, label: 'Mago', icon: '🧙', color: '#9775fa' },
-                      { id: 'gatito' as HatType, label: 'Gatito', icon: '🐱', color: '#f06595' },
-                    ].map((h) => (
-                      <button
-                        key={h.id}
-                        type="button"
-                        onClick={() => {
-                          sounds.playClick();
-                          setPerfilHat(h.id);
-                          setPerfilColor(h.color);
-                        }}
-                        className={`py-1 rounded-xl text-sm border-2 border-[#2b2140] cursor-pointer flex flex-col items-center gap-0.5 transition-all ${
-                          perfilHat === h.id ? 'bg-[#ffd43b] shadow-sm -translate-y-0.5' : 'bg-[#fff8e7] hover:bg-white'
-                        }`}
-                        title={h.label}
-                      >
-                        <span>{h.icon}</span>
-                        <span className="text-[8px] font-bold">{h.label}</span>
-                      </button>
-                    ))}
+                  <div className="grid grid-cols-5 gap-1.5 mt-1">
+                    {PERSONAJES_REGISTRO.map((h) => {
+                      const unlocked = (usuarioActual.puntos || 0) >= h.puntosRequeridos || usuarioActual.rol === 'admin';
+                      return (
+                        <button
+                          key={h.id}
+                          type="button"
+                          onClick={() => {
+                            if (!unlocked) {
+                              sounds.playError();
+                              setToastMsg(`🔒 Se desbloquea con ${h.puntosRequeridos} puntos`);
+                              setTimeout(() => setToastMsg(null), 2500);
+                              return;
+                            }
+                            sounds.playClick();
+                            setPerfilHat(h.id);
+                            setPerfilColor(h.defaultColor);
+                          }}
+                          className={`relative py-1.5 px-1 rounded-xl text-xs border-2 border-[#2b2140] cursor-pointer flex flex-col items-center gap-0.5 transition-all ${
+                            !unlocked
+                              ? 'bg-[#e9ecef] opacity-60'
+                              : perfilHat === h.id
+                              ? 'bg-[#ffd43b] shadow-sm -translate-y-0.5 font-black'
+                              : 'bg-[#fff8e7] hover:bg-white'
+                          }`}
+                          title={unlocked ? h.label : `Requiere ${h.puntosRequeridos} puntos`}
+                        >
+                          {!unlocked && (
+                            <span className="absolute top-0.5 right-0.5 text-[8px]">🔒</span>
+                          )}
+                          <span className="text-base">{h.icon}</span>
+                          <span className="text-[9px] font-bold truncate max-w-full">{h.label}</span>
+                          {!unlocked && (
+                            <span className="text-[7px] text-[#e03131] font-black">{h.puntosRequeridos}p</span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                   <button
                     type="button"
@@ -1772,6 +1792,8 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const [autenticado, setAutenticado] = useState<boolean>(() => {
     return Boolean(usuarioActual && (usuarioActual.rol === 'admin' || usuarioActual.id === 'admin'));
   });
+  const [esAdminCloud, setEsAdminCloud] = useState<boolean>(() => Boolean(usuarioActual?.rol === 'admin'));
+  const [adminKeyIngresada, setAdminKeyIngresada] = useState<string>('');
   const [claveInput, setClaveInput] = useState('');
   const [cuentas, setCuentas] = useState<Record<string, UserAccount>>(() => cargarCuentas());
   const [filtro, setFiltro] = useState('');
@@ -1811,17 +1833,86 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     sincronizar(false);
   }, []);
 
-  const handleAdminLogin = (e: React.FormEvent) => {
+  const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     sounds.playClick();
+    const key = claveInput.trim();
+
+    try {
+      const res = await fetch(getApiBaseUrl('/api/admin/verify'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clave: key, usuario: usuarioActual?.id }),
+      });
+
+      if (res.ok) {
+        const info = await res.json();
+        setAutenticado(true);
+        setEsAdminCloud(Boolean(info.isCloudAdmin));
+        setAdminKeyIngresada(key);
+        if (info.isCloudAdmin) {
+          onShowToast('👑 Modo Administrador Cloudflare KV Verificado');
+        } else {
+          onShowToast('🟡 Acceso Local (muros2026). Solo datos de este dispositivo.');
+        }
+        return;
+      }
+    } catch {}
+
+    // Fallback if offline
     const adminAcc = cuentas['admin'];
-    if (adminAcc && claveInput.trim() === adminAcc.clave) {
+    if (adminAcc && key === adminAcc.clave) {
       setAutenticado(true);
-      onShowToast('👑 Modo Administrador concedido');
+      setEsAdminCloud(false);
+      setAdminKeyIngresada(key);
+      onShowToast('🟡 Acceso Local concedido (Modo Offline)');
     } else {
       sounds.playError();
       onShowToast('❌ Clave de administrador incorrecta');
     }
+  };
+
+  // Security Gate: Checked before EVERY admin action
+  const verificarAdminAntesDeAccion = async (requiereCloud: boolean = true): Promise<boolean> => {
+    // 1. If trying to do cloud changes while offline
+    if (requiereCloud && !kvActivo) {
+      sounds.playError();
+      onShowToast('⚠️ El modo Admin en la nube no funciona sin conexión a Cloudflare KV.');
+      return false;
+    }
+
+    if (requiereCloud && !esAdminCloud) {
+      sounds.playError();
+      onShowToast('🔒 La clave "muros2026" sólo tiene acceso local. Para modificar Cloudflare KV se requiere la clave maestra.');
+      return false;
+    }
+
+    // 2. Query server/KV to verify if user is STILL an admin
+    try {
+      const res = await fetch(getApiBaseUrl('/api/admin/verify-action'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          usuarioId: usuarioActual?.id,
+          adminKey: adminKeyIngresada,
+        }),
+      });
+
+      if (!res.ok) {
+        sounds.playError();
+        alert('⛔ Acción denegada: Tu acceso de administrador ha sido revocado en la base de datos. La página se reiniciará por seguridad.');
+        cerrarSesion();
+        window.location.reload();
+        return false;
+      }
+    } catch {
+      if (requiereCloud) {
+        onShowToast('⚠️ Error de conexión al verificar privilegios de administrador con Cloudflare KV.');
+        return false;
+      }
+    }
+
+    return true;
   };
 
   const iniciarEdicion = (acc: UserAccount) => {
@@ -1836,6 +1927,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
   const guardarEdicion = async (id: string) => {
     sounds.playClick();
+    const autorizado = await verificarAdminAntesDeAccion(true);
+    if (!autorizado) return;
+
     const nombreLimpio = editNombre.trim();
     if (nombreLimpio.length < 3 || nombreLimpio.length > 15) {
       onShowToast('⚠️ El nombre debe tener entre 3 y 15 letras');
@@ -1843,7 +1937,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     }
 
     setGuardando(true);
-    onShowToast('⏳ Guardando cambios en la base de datos...');
+    onShowToast('⏳ Guardando cambios en Cloudflare KV...');
     try {
       const ok = await adminActualizarUsuarioAsync(id, {
         nombre: nombreLimpio,
@@ -1872,9 +1966,12 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
   const handleEliminar = async (id: string, nombre: string) => {
     sounds.playClick();
+    const autorizado = await verificarAdminAntesDeAccion(true);
+    if (!autorizado) return;
+
     if (window.confirm(`¿Seguro que deseas eliminar el usuario "${nombre}"? Esta acción borrará también su puntuación en el ranking global.`)) {
       setGuardando(true);
-      onShowToast('⏳ Eliminando usuario de la base de datos...');
+      onShowToast('⏳ Eliminando usuario de Cloudflare KV...');
       try {
         await adminEliminarUsuarioAsync(id);
         const actualizadas = cargarCuentas();
@@ -1968,24 +2065,41 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         ) : (
           <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 my-1">
             {/* Cloud Status Banner */}
-            <div className={`p-2.5 rounded-2xl border-2 border-[#2b2140] flex items-center justify-between gap-2 text-xs font-bold ${
-              kvActivo ? 'bg-[#d3f9d8] text-[#134e20]' : 'bg-[#fff3bf] text-[#8f4b00]'
-            }`}>
-              <div className="flex items-center gap-1.5 min-w-0">
-                <span>{kvActivo ? '🟢' : '🟡'}</span>
-                <span className="truncate">
-                  {kvActivo ? 'Cloudflare KV Activo (Nube Global)' : 'Modo Local (KV no vinculado en Cloudflare)'}
-                </span>
+            {!kvActivo ? (
+              <div className="p-3 rounded-2xl border-2 border-[#2b2140] bg-[#fff3bf] text-[#8f4b00] text-xs font-bold flex flex-col gap-1 shadow-sm">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-base">⚠️</span>
+                  <span className="font-black text-[#5c3c00]">Modo Desconectado (Sin conexión a Cloudflare KV)</span>
+                </div>
+                <p className="text-[11px] leading-tight text-[#8f4b00]">
+                  El modo admin en la nube no funcionará porque para modificar algo se requiere conectar con Cloudflare KV. En modo offline no se pueden aplicar cambios globales.
+                </p>
               </div>
-              <button
-                onClick={() => sincronizar(true)}
-                disabled={sincronizando}
-                className="py-1 px-2.5 rounded-lg bg-white border border-[#2b2140] text-[11px] font-black text-[#2b2140] shadow-sm hover:bg-[#f1f3f5] cursor-pointer flex items-center gap-1 shrink-0"
-              >
-                <span className={sincronizando ? 'animate-spin' : ''}>🔄</span>
-                <span>{sincronizando ? 'Sincronizando...' : 'Sincronizar'}</span>
-              </button>
-            </div>
+            ) : !esAdminCloud ? (
+              <div className="p-2.5 rounded-2xl border-2 border-[#2b2140] bg-[#e7f5ff] text-[#1864ab] text-xs font-bold flex items-center justify-between gap-2 shadow-sm">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-base">🟡</span>
+                  <span className="text-[11px] leading-tight">
+                    <strong>Administrador Local (muros2026):</strong> Gestión limitada a este navegador. Para modificar Cloudflare KV se requiere la clave maestra del Worker.
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="p-2.5 rounded-2xl border-2 border-[#2b2140] bg-[#d3f9d8] text-[#134e20] text-xs font-black flex items-center justify-between gap-2 shadow-sm">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-base">👑</span>
+                  <span>Administrador Global: Conectado a Cloudflare KV</span>
+                </div>
+                <button
+                  onClick={() => sincronizar(true)}
+                  disabled={sincronizando}
+                  className="py-1 px-2.5 rounded-lg bg-white border border-[#2b2140] text-[11px] font-black text-[#2b2140] shadow-sm hover:bg-[#f1f3f5] cursor-pointer flex items-center gap-1 shrink-0"
+                >
+                  <span className={sincronizando ? 'animate-spin' : ''}>🔄</span>
+                  <span>{sincronizando ? 'Sincronizando...' : 'Sincronizar'}</span>
+                </button>
+              </div>
+            )}
 
             {/* User Search Bar */}
             <div className="flex items-center justify-between gap-2">
@@ -2155,6 +2269,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
               <button
                 onClick={async () => {
                   sounds.playClick();
+                  const autorizado = await verificarAdminAntesDeAccion(true);
+                  if (!autorizado) return;
+
                   if (
                     window.confirm(
                       '⚠️ ¿CONFIRMAS que deseas reiniciar TODO el ranking a cero?\n\nEsta acción borrará todas las puntuaciones acumuladas y todos empezarán desde 0.'

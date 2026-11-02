@@ -22,6 +22,8 @@ interface MurosBoardProps {
   animacionesReducidas?: boolean;
   temaTablero?: BoardTheme;
   perspectivaInvertida?: boolean;
+  rotacionGrados?: number;
+  rotationMode?: boolean;
   onTogglePerspectiva?: () => void;
   onMover: (destino: Coord) => void;
   onPonerMuro: (orientacion: WallOrientation, r: number, c: number) => void;
@@ -83,6 +85,8 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
   animacionesReducidas = false,
   temaTablero = 'madera',
   perspectivaInvertida = false,
+  rotacionGrados = 0,
+  rotationMode = false,
   onTogglePerspectiva,
   onMover,
   onPonerMuro,
@@ -141,18 +145,30 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
   const esTurnoHumano = jugadorActivo.tipo === 'humano' && esMiTurnoOnline;
   const movimientos = esTurnoHumano ? movimientosLegales(jugadorActivo, estado) : [];
 
-  // Perspective 180-deg coordinate mapping helpers
+  const anguloRotacion = React.useMemo(() => {
+    if (rotationMode) {
+      if (estado.n === 2) {
+        return estado.turnoActual === 1 ? 180 : 0;
+      }
+      return (estado.turnoActual % 4) * 90;
+    }
+    if (perspectivaInvertida) return 180;
+    return rotacionGrados || 0;
+  }, [rotationMode, estado.n, estado.turnoActual, perspectivaInvertida, rotacionGrados]);
+
+  // Perspective 180-deg coordinate mapping helpers (used when board is NOT rotated by CSS)
+  const aplicarInversionManual = perspectivaInvertida && !rotationMode;
   const toLogicalCell = (vr: number, vc: number): Coord =>
-    perspectivaInvertida ? { r: 8 - vr, c: 8 - vc } : { r: vr, c: vc };
+    aplicarInversionManual ? { r: 8 - vr, c: 8 - vc } : { r: vr, c: vc };
 
   const toVisualCell = (r: number, c: number): Coord =>
-    perspectivaInvertida ? { r: 8 - r, c: 8 - c } : { r, c };
+    aplicarInversionManual ? { r: 8 - r, c: 8 - c } : { r, c };
 
   const toLogicalIntersection = (vr: number, vc: number): Coord =>
-    perspectivaInvertida ? { r: 7 - vr, c: 7 - vc } : { r: vr, c: vc };
+    aplicarInversionManual ? { r: 7 - vr, c: 7 - vc } : { r: vr, c: vc };
 
   const toVisualIntersection = (r: number, c: number): Coord =>
-    perspectivaInvertida ? { r: 7 - r, c: 7 - c } : { r, c };
+    aplicarInversionManual ? { r: 7 - r, c: 7 - c } : { r, c };
 
   // Goal indicators for 2P vs 4P
   const isGoalForActivePlayer = (r: number, c: number): boolean => {
@@ -283,7 +299,13 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
       {/* Outer Themed Board Frame */}
       <div
         className={`relative w-full aspect-square rounded-3xl p-3 sm:p-4 ${currentTheme.frameBg} border-4 border-[#2b2140] shadow-[0_10px_0_#2b2140,0_18px_25px_rgba(0,0,0,0.35)] select-none transition-all duration-300`}
-        style={currentTheme.frameStyle}
+        style={{
+          ...currentTheme.frameStyle,
+          transform: `rotate(${anguloRotacion}deg)`,
+          transition: animacionesReducidas
+            ? 'none'
+            : 'transform 0.8s cubic-bezier(0.25, 1, 0.5, 1), background-color 0.3s ease',
+        }}
       >
         {/* Frame corner inlays */}
         <div className={`absolute top-2 left-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} border-2 border-[#2b2140]`} />
@@ -532,13 +554,23 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                       </div>
                     )}
 
-                    <CartoonCharacter
-                      color={player.color}
-                      hat={player.hat}
-                      size={46}
-                      isActive={estado.turnoActual === player.id}
-                      isDancing={estado.ganador === player.id}
-                    />
+                    <div
+                      style={{
+                        transform: `rotate(${-anguloRotacion}deg)`,
+                        transition: animacionesReducidas
+                          ? 'none'
+                          : 'transform 0.8s cubic-bezier(0.25, 1, 0.5, 1)',
+                      }}
+                      className="w-full h-full flex items-center justify-center"
+                    >
+                      <CartoonCharacter
+                        color={player.color}
+                        hat={player.hat}
+                        size={46}
+                        isActive={estado.turnoActual === player.id}
+                        isDancing={estado.ganador === player.id}
+                      />
+                    </div>
                   </motion.div>
                 </motion.div>
               );

@@ -310,7 +310,14 @@ export function movimientosLegales(jugador: Player, estado: GameState): Coord[] 
 }
 
 // Check if position reaches goal
-export function esMeta(jugador: Player, r: number, c: number): boolean {
+// In 4-player games, all 4 corners (0,0), (0,8), (8,0), (8,8) are neutral and do NOT grant victory
+export function esMeta(jugador: Player, r: number, c: number, numJugadores: number = 2): boolean {
+  if (numJugadores === 4) {
+    if ((r === 0 || r === 8) && (c === 0 || c === 8)) {
+      return false;
+    }
+  }
+
   if (jugador.targetType === 'row') {
     return r === jugador.targetValue;
   }
@@ -322,12 +329,13 @@ export function bfsCamino(
   jugador: Player,
   murosH: number[][],
   murosV: number[][],
-  desde?: Coord
+  desde?: Coord,
+  numJugadores: number = 2
 ): { distancia: number; camino: Coord[] } {
   const start = desde || { r: jugador.r, c: jugador.c };
 
   // Fast check: already at goal
-  if (esMeta(jugador, start.r, start.c)) {
+  if (esMeta(jugador, start.r, start.c, numJugadores)) {
     return { distancia: 0, camino: [start] };
   }
 
@@ -353,7 +361,7 @@ export function bfsCamino(
   while (queue.length > 0) {
     const cur = queue.shift()!;
 
-    if (esMeta(jugador, cur.r, cur.c)) {
+    if (esMeta(jugador, cur.r, cur.c, numJugadores)) {
       goalNode = cur;
       break;
     }
@@ -517,8 +525,8 @@ export function aplicarMovimiento(
   // Track remontada stats: calculate current disadvantage vs closest rival
   actualizarDesventaja(estado);
 
-  // Check victory
-  if (esMeta(jugador, jugador.r, jugador.c)) {
+  // Check victory (respecting neutral corners for 4P)
+  if (esMeta(jugador, jugador.r, jugador.c, estado.n)) {
     estado.terminada = true;
     estado.ganador = estado.turnoActual;
     const msg = `👑 ¡${jugador.nombre} ha ganado la partida!`;

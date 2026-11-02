@@ -39,13 +39,17 @@ function writeJsonFile(filePath: string, data: any) {
   }
 }
 
+// Admin credentials from environment variables
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || process.env.ADMIN_USER || 'admin';
+const ADMIN_SECRET_KEY = process.env.ADMIN_SECRET_KEY || process.env.ADMIN_KEY || process.env.ADMIN_PASSWORD || 'muros2026';
+
 // Ensure default admin user
 let cuentasData = readJsonFile(CUENTAS_FILE, {});
-if (!cuentasData['admin']) {
-  cuentasData['admin'] = {
-    id: 'admin',
+if (!cuentasData[ADMIN_USERNAME]) {
+  cuentasData[ADMIN_USERNAME] = {
+    id: ADMIN_USERNAME,
     nombre: 'Admin Supremo',
-    clave: 'muros2026',
+    clave: ADMIN_SECRET_KEY,
     rol: 'admin',
     avatarColor: '#ffd43b',
     avatarHat: 'corona',
@@ -56,6 +60,9 @@ if (!cuentasData['admin']) {
     creadoEn: new Date().toISOString(),
     ultimaConexion: new Date().toISOString(),
   };
+  writeJsonFile(CUENTAS_FILE, cuentasData);
+} else if (cuentasData[ADMIN_USERNAME].clave !== ADMIN_SECRET_KEY) {
+  cuentasData[ADMIN_USERNAME].clave = ADMIN_SECRET_KEY;
   writeJsonFile(CUENTAS_FILE, cuentasData);
 }
 
@@ -73,12 +80,21 @@ let salasPublicas: Record<
   }
 > = readJsonFile(SALAS_FILE, {});
 
+// Track last data modification timestamp
+let lastKvUpdate = Date.now();
+
 function cleanExpiredRooms() {
   const now = Date.now();
   let changed = false;
   for (const [code, r] of Object.entries(salasPublicas)) {
-    // Rooms older than 30 minutes get cleaned up
-    if (now - r.creadoEn > 30 * 60 * 1000) {
+    const roomAny = r as any;
+    // Rooms with 0 players that have been idle for > 60 seconds are removed
+    if (roomAny.jugadoresConectados === 0 && now - (roomAny.ultimoCambio || roomAny.creadoEn) > 60 * 1000) {
+      delete salasPublicas[code];
+      changed = true;
+    }
+    // Hard limit: rooms older than 30 minutes get pruned
+    else if (now - r.creadoEn > 30 * 60 * 1000) {
       delete salasPublicas[code];
       changed = true;
     }
@@ -87,6 +103,76 @@ function cleanExpiredRooms() {
     writeJsonFile(SALAS_FILE, salasPublicas);
   }
 }
+
+// 0. Ping / Heartbeat API for real-time status and KV change detection
+app.get('/api/ping', (req, res) => {
+  cleanExpiredRooms();
+  res.setHeader('X-KV-Bound', 'true');
+  res.json({
+    ok: true,
+    kvBound: true,
+    timestamp: Date.now(),
+    lastUpdate: lastKvUpdate,
+    salasCount: Object.keys(salasPublicas).length,
+    cuentasCount: Object.keys(cuentasData).length,
+  });
+});
+
+app.post('/api/admin/verify', (req, res) => {
+  const { usuario, clave } = req.body || {};
+  const trimmedKey = String(clave || '').trim();
+  const trimmedUser = String(usuario || '').trim();
+
+  // 1. Cloud Secret Key
+  if (trimmedKey === ADMIN_SECRET_KEY) {
+    return res.json({ ok: true, isCloudAdmin: true, level: 'cloud_kv' });
+  }
+
+  // 2. Local default credentials (admin / muros2026) -> local only
+  if (trimmedKey === 'muros2026' && (trimmedUser === 'admin' || !trimmedUser)) {
+    return res.json({
+      ok: true,
+      isCloudAdmin: false,
+      localOnly: true,
+      level: 'local_only',
+      message: 'Acceso concedido exclusivamente para administración local.',
+    });
+  }
+
+  // 3. User account with rol === 'admin'
+  cuentasData = readJsonFile(CUENTAS_FILE, {});
+  const userAcc = cuentasData[trimmedUser];
+  if (userAcc && userAcc.clave === trimmedKey && userAcc.rol === 'admin') {
+    return res.json({ ok: true, isCloudAdmin: true, level: 'cloud_kv' });
+  }
+
+  return res.status(401).json({ ok: false, error: 'Credenciales de administrador inválidas' });
+});
+
+// Verify action endpoint: checked before EVERY admin action
+app.post('/api/admin/verify-action', (req, res) => {
+  const { usuarioId, adminKey } = req.body || {};
+  cuentasData = readJsonFile(CUENTAS_FILE, {});
+
+  // 1. Master Cloud Key
+  if (adminKey && String(adminKey).trim() === ADMIN_SECRET_KEY) {
+    return res.json({ ok: true, isCloudAdmin: true });
+  }
+
+  // 2. Check if user is still an active admin in current database
+  if (usuarioId && cuentasData[usuarioId]) {
+    const acc = cuentasData[usuarioId];
+    if (acc.rol === 'admin') {
+      return res.json({ ok: true, isCloudAdmin: true });
+    }
+  }
+
+  return res.status(403).json({
+    ok: false,
+    revoked: true,
+    error: 'El usuario ya no tiene permisos de administrador en la base de datos.',
+  });
+});
 
 // 1. Cuentas API
 app.get('/api/cuentas', (req, res) => {
@@ -98,8 +184,9 @@ app.get('/api/cuentas', (req, res) => {
 app.post('/api/cuentas', (req, res) => {
   const body = req.body;
   writeJsonFile(CUENTAS_FILE, body);
+  lastKvUpdate = Date.now();
   res.setHeader('X-KV-Bound', 'true');
-  res.json({ ok: true, source: 'local_kv_store', kv_bound: true });
+  res.json({ ok: true, source: 'local_kv_store', kv_bound: true, lastUpdate: lastKvUpdate });
 });
 
 // 2. Ranking API
@@ -112,8 +199,9 @@ app.get('/api/ranking', (req, res) => {
 app.post('/api/ranking', (req, res) => {
   const body = req.body;
   writeJsonFile(RANKING_FILE, body);
+  lastKvUpdate = Date.now();
   res.setHeader('X-KV-Bound', 'true');
-  res.json({ ok: true, source: 'local_kv_store', kv_bound: true });
+  res.json({ ok: true, source: 'local_kv_store', kv_bound: true, lastUpdate: lastKvUpdate });
 });
 
 // 3. Salas Públicas API
@@ -132,9 +220,31 @@ app.post('/api/salas', (req, res) => {
     salasPublicas[room.codigo] = {
       ...room,
       creadoEn: Date.now(),
+      ultimoCambio: Date.now(),
+      jugadoresConectados: typeof room.jugadoresConectados === 'number' ? room.jugadoresConectados : 1,
+    };
+    writeJsonFile(SALAS_FILE, salasPublicas);
+    lastKvUpdate = Date.now();
+  }
+  res.setHeader('X-KV-Bound', 'true');
+  res.json({ ok: true });
+});
+
+// Update room player count or heartbeat
+app.patch('/api/salas/:codigo', (req, res) => {
+  salasPublicas = readJsonFile(SALAS_FILE, {});
+  const code = req.params.codigo;
+  if (code && salasPublicas[code]) {
+    const current = salasPublicas[code] as any;
+    const { jugadoresConectados } = req.body || {};
+    salasPublicas[code] = {
+      ...current,
+      jugadoresConectados: typeof jugadoresConectados === 'number' ? jugadoresConectados : current.jugadoresConectados,
+      ultimoCambio: Date.now(),
     };
     writeJsonFile(SALAS_FILE, salasPublicas);
   }
+  cleanExpiredRooms();
   res.setHeader('X-KV-Bound', 'true');
   res.json({ ok: true });
 });
@@ -145,6 +255,7 @@ app.delete('/api/salas/:codigo', (req, res) => {
   if (code && salasPublicas[code]) {
     delete salasPublicas[code];
     writeJsonFile(SALAS_FILE, salasPublicas);
+    lastKvUpdate = Date.now();
   }
   res.setHeader('X-KV-Bound', 'true');
   res.json({ ok: true });
