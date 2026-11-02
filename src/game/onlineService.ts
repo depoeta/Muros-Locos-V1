@@ -46,9 +46,15 @@ export type OnlineEventCallback = {
     accion: 'mover' | 'muro' | 'pasar',
     payload: { destino?: Coord; orientacion?: WallOrientation; r?: number; c?: number }
   ) => void;
+  onPlayerAction?: (
+    jugadorId: number,
+    accion: 'mover' | 'muro' | 'pasar',
+    payload: any
+  ) => void;
   onReaction?: (jugadorId: number, emoji: string) => void;
   onRematchRequested?: (jugadorId: number) => void;
   onHostDisconnected?: (secondsRemaining: number) => void;
+  onHostDisconnectWarning?: (secondsRemaining: number) => void;
   onHostReconnected?: () => void;
   onError?: (errorMsg: string) => void;
   onDisconnectTimeout?: () => void;
@@ -168,7 +174,7 @@ class OnlineManager {
           }
 
           const lastSeen = this.lastSeenMap.get(peerId) || now;
-          if (now - lastSeen > 5000) {
+          if (now - lastSeen > 12000) {
             deadPeers.push(peerId);
           }
         }
@@ -184,12 +190,17 @@ class OnlineManager {
             this.lastSeenMap.delete(pId);
           });
 
-          const prevCount = this.lobbyPlayers.length;
-          this.lobbyPlayers = this.lobbyPlayers.filter((p) => p.esAnfitrion || !deadPeers.includes(p.peerId));
-          this.lobbyPlayers.forEach((p, idx) => { p.id = idx; });
+          // In game: trigger grace period instead of removing
+          if (this.currentGameState && !this.currentGameState.terminada) {
+            this.startPeerDisconnectGracePeriod();
+          } else {
+            const prevCount = this.lobbyPlayers.length;
+            this.lobbyPlayers = this.lobbyPlayers.filter((p) => p.esAnfitrion || !deadPeers.includes(p.peerId));
+            this.lobbyPlayers.forEach((p, idx) => { p.id = idx; });
 
-          if (this.lobbyPlayers.length !== prevCount) {
-            this.broadcastLobbyUpdate();
+            if (this.lobbyPlayers.length !== prevCount) {
+              this.broadcastLobbyUpdate();
+            }
           }
         }
       } else if (this.role === 'client') {
@@ -207,7 +218,7 @@ class OnlineManager {
           !this.isIntentionalExit &&
           this.currentGameState &&
           !this.currentGameState.terminada &&
-          now - this.hostLastSeen > 5500
+          now - this.hostLastSeen > 12000
         ) {
           this.startHostDisconnectGracePeriod(formatRoomPeerId(this.roomCode));
         }
@@ -322,6 +333,13 @@ class OnlineManager {
   private handleMessageFromClient(conn: DataConnection, msg: OnlineMessage) {
     this.lastSeenMap.set(conn.peer, Date.now());
 
+    if (this.countdownInterval) {
+      this.stopReconnectGracePeriod();
+      if (this.callbacks.onHostReconnected) {
+        this.callbacks.onHostReconnected();
+      }
+    }
+
     if (msg.type === 'PING') {
       try { conn.send({ type: 'PONG' }); } catch {}
       return;
@@ -424,6 +442,22 @@ class OnlineManager {
       type: 'STATE_SYNC',
       state,
     });
+  }
+
+  public syncState(state: GameState) {
+    this.syncGameStateFromHost(state);
+  }
+
+  public disconnect() {
+    this.cleanUp();
+  }
+
+  public getActiveSession(): ActiveOnlineSession | null {
+    return this.getSavedSession();
+  }
+
+  public requestRematch(jugadorId?: number) {
+    this.sendRematchRequest();
   }
 
   // ===================== CLIENT JOINING =====================
@@ -637,11 +671,11 @@ class OnlineManager {
     }
   }
 
-  // ===================== GRACE PERIOD ON DISCONNECT (10 SECONDS) =====================
+  // ===================== GRACE PERIOD ON DISCONNECT (2 MINUTES / 120 SECONDS) =====================
   private startHostDisconnectGracePeriod(hostPeerId: string) {
     if (this.countdownInterval) return; // already active
 
-    let secondsLeft = 10;
+    let secondsLeft = 120; // 2 minutos para volver
 
     if (this.callbacks.onHostDisconnected) {
       this.callbacks.onHostDisconnected(secondsLeft);
@@ -672,13 +706,13 @@ class OnlineManager {
           // retry
         }
       }
-    }, 2000);
+    }, 2500);
   }
 
   private startPeerDisconnectGracePeriod() {
     if (this.countdownInterval) return; // already active
 
-    let secondsLeft = 10;
+    let secondsLeft = 120; // 2 minutos para volver
 
     if (this.callbacks.onHostDisconnected) {
       this.callbacks.onHostDisconnected(secondsLeft);
@@ -761,6 +795,54 @@ class OnlineManager {
         jugadorId: this.myPlayerId,
       });
     }
+  }
+
+  // ===================== SALAS PÚBLICAS DINÁMICAS =====================
+  public async obtenerSalasPublicas(): Promise<any[]> {
+    try {
+      const res = await fetch('/api/salas');
+      if (res.ok) {
+        const list = await res.json();
+        if (Array.isArray(list)) return list;
+      }
+    } catch {
+      // fallback
+    }
+    return [];
+  }
+
+  public async publicarSalaPublica(input?: string | any): Promise<boolean> {
+    const info = typeof input === 'object' && input !== null ? input : {};
+    const code = info.codigo || this.roomCode;
+    if (!code) return false;
+    const nombre = typeof input === 'string' ? input : info.nombre || `Sala ${code}`;
+    try {
+      const res = await fetch('/api/salas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          codigo: code,
+          nombre: String(nombre).trim() || `Sala ${code}`,
+          anfitrion: info.anfitrion || this.myName,
+          color: info.color || this.myColor,
+          hat: info.hat || this.myHat,
+          maxJugadores: info.maxJugadores || this.maxPlayers,
+          creadoEn: info.creadoEn || Date.now(),
+        }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  public async eliminarSalaPublica(): Promise<void> {
+    if (!this.roomCode) return;
+    try {
+      await fetch(`/api/salas/${this.roomCode}`, {
+        method: 'DELETE',
+      });
+    } catch {}
   }
 
   public cleanUp() {

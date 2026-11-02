@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   BOARD_SIZE,
@@ -21,6 +21,8 @@ interface MurosBoardProps {
   modoDaltonico: boolean;
   animacionesReducidas?: boolean;
   temaTablero?: BoardTheme;
+  perspectivaInvertida?: boolean;
+  onTogglePerspectiva?: () => void;
   onMover: (destino: Coord) => void;
   onPonerMuro: (orientacion: WallOrientation, r: number, c: number) => void;
   onRotarMuro: () => void;
@@ -80,6 +82,8 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
   modoDaltonico,
   animacionesReducidas = false,
   temaTablero = 'madera',
+  perspectivaInvertida = false,
+  onTogglePerspectiva,
   onMover,
   onPonerMuro,
   onRotarMuro,
@@ -91,6 +95,44 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
   const [hoveredIntersection, setHoveredIntersection] = useState<Coord | null>(null);
   const [ghostValidity, setGhostValidity] = useState<'ok' | 'fuera' | 'solape' | 'bloquea'>('ok');
 
+  // Elemental landing effect state: { r, c, type }
+  const [efectoAterrizaje, setEfectoAterrizaje] = useState<{
+    r: number;
+    c: number;
+    tipo: 'fuego' | 'hielo' | 'rayo' | 'hojas';
+    key: number;
+  } | null>(null);
+
+  const prevPositionsRef = useRef<Record<number, string>>({});
+
+  // Detect when any player changes coordinate to trigger elemental burst
+  useEffect(() => {
+    estado.jugadores.forEach((p) => {
+      const posKey = `${p.r},${p.c}`;
+      const prev = prevPositionsRef.current[p.id];
+      if (prev && prev !== posKey) {
+        // Determine element from player's hat / color
+        let tipo: 'fuego' | 'hielo' | 'rayo' | 'hojas' = 'fuego';
+        if (p.hat === 'pompon' || p.color.includes('4d') || p.color.includes('339')) tipo = 'hielo';
+        else if (p.hat === 'antena' || p.color.includes('ffd') || p.color.includes('fcc')) tipo = 'rayo';
+        else if (p.hat === 'brote' || p.color.includes('51') || p.color.includes('40c')) tipo = 'hojas';
+        else tipo = 'fuego';
+
+        setEfectoAterrizaje({
+          r: p.r,
+          c: p.c,
+          tipo,
+          key: Date.now() + p.id,
+        });
+
+        setTimeout(() => {
+          setEfectoAterrizaje((current) => (current && Date.now() - current.key > 900 ? null : current));
+        }, 1100);
+      }
+      prevPositionsRef.current[p.id] = posKey;
+    });
+  }, [estado.jugadores]);
+
   const jugadorActivo = estado.jugadores[estado.turnoActual];
   const esMiTurnoOnline =
     !estado.modoOnline ||
@@ -99,12 +141,24 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
   const esTurnoHumano = jugadorActivo.tipo === 'humano' && esMiTurnoOnline;
   const movimientos = esTurnoHumano ? movimientosLegales(jugadorActivo, estado) : [];
 
+  // Perspective 180-deg coordinate mapping helpers
+  const toLogicalCell = (vr: number, vc: number): Coord =>
+    perspectivaInvertida ? { r: 8 - vr, c: 8 - vc } : { r: vr, c: vc };
+
+  const toVisualCell = (r: number, c: number): Coord =>
+    perspectivaInvertida ? { r: 8 - r, c: 8 - c } : { r, c };
+
+  const toLogicalIntersection = (vr: number, vc: number): Coord =>
+    perspectivaInvertida ? { r: 7 - vr, c: 7 - vc } : { r: vr, c: vc };
+
+  const toVisualIntersection = (r: number, c: number): Coord =>
+    perspectivaInvertida ? { r: 7 - r, c: 7 - c } : { r, c };
+
   // Goal indicators for 2P vs 4P
   const isGoalForActivePlayer = (r: number, c: number): boolean => {
     return esMeta(jugadorActivo, r, c);
   };
 
-  // Check goal coloring for cell matching the player whose target it is
   const getGoalInfo = (r: number, c: number) => {
     const p0 = estado.jugadores[0];
     const p1 = estado.jugadores[1];
@@ -143,7 +197,6 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
       return;
     }
 
-    // If tapping an intersection that wasn't selected yet, select and preview it first
     const isAlreadySelected =
       hoveredIntersection && hoveredIntersection.r === r && hoveredIntersection.c === c;
 
@@ -153,7 +206,6 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
       return;
     }
 
-    // Already selected: attempt to place the wall
     confirmWallPlacement(r, c);
   };
 
@@ -182,7 +234,6 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
     }
   };
 
-  // Color of wall according to player who placed it
   const getWallColor = (playerId: number) => {
     const p = estado.jugadores.find((j) => j.id === playerId);
     return p ? p.color : '#e67700';
@@ -190,29 +241,51 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
 
   return (
     <div className="flex flex-col items-center justify-center w-full max-w-[620px] mx-auto px-2">
-      {/* Online Turn Indicator Banner */}
-      {estado.modoOnline && !estado.terminada && (
-        <div
-          className={`w-full py-1.5 px-3 rounded-2xl border-2 border-[#2b2140] mb-2 font-black text-xs sm:text-sm text-center shadow-[0_3px_0_#2b2140] flex items-center justify-center gap-2 transition-all ${
-            esMiTurnoOnline
-              ? 'bg-[#51cf66] text-[#134e20] animate-pulse'
-              : 'bg-[#fff3bf] text-[#8f4b00]'
-          }`}
-        >
-          <span>
-            {esMiTurnoOnline
-              ? '👉 ¡ES TU TURNO! Mueve tu ficha o pon un muro'
-              : `⏳ Turno de ${jugadorActivo.nombre}... Esperando jugada`}
-          </span>
-        </div>
-      )}
+      {/* Top Bar with Online Turn Indicator and Perspective Flip Toggle */}
+      <div className="w-full flex items-center justify-between gap-2 mb-2">
+        {estado.modoOnline && !estado.terminada ? (
+          <div
+            className={`flex-1 py-1.5 px-3 rounded-2xl border-2 border-[#2b2140] font-black text-xs sm:text-sm text-center shadow-[0_2px_0_#2b2140] flex items-center justify-center gap-2 transition-all ${
+              esMiTurnoOnline
+                ? 'bg-[#51cf66] text-[#134e20] animate-pulse'
+                : 'bg-[#fff3bf] text-[#8f4b00]'
+            }`}
+          >
+            <span>
+              {esMiTurnoOnline
+                ? '👉 ¡ES TU TURNO! Mueve o pon un muro'
+                : `⏳ Turno de ${jugadorActivo.nombre}...`}
+            </span>
+          </div>
+        ) : (
+          <div className="flex-1" />
+        )}
+
+        {/* Girar Perspectiva Button */}
+        {onTogglePerspectiva && (
+          <button
+            type="button"
+            onClick={() => {
+              sounds.playClick();
+              onTogglePerspectiva();
+            }}
+            className="py-1 px-2.5 rounded-xl bg-white border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#fff9db] active:translate-y-0.5 cursor-pointer text-xs font-black text-[#2b2140] flex items-center gap-1 shrink-0"
+            title="Girar la perspectiva del tablero 180 grados"
+          >
+            <span>🔄</span>
+            <span className="hidden sm:inline">
+              {perspectivaInvertida ? 'Vista: Desde Arriba' : 'Vista: Desde Abajo'}
+            </span>
+          </button>
+        )}
+      </div>
 
       {/* Outer Themed Board Frame */}
       <div
         className={`relative w-full aspect-square rounded-3xl p-3 sm:p-4 ${currentTheme.frameBg} border-4 border-[#2b2140] shadow-[0_10px_0_#2b2140,0_18px_25px_rgba(0,0,0,0.35)] select-none transition-all duration-300`}
         style={currentTheme.frameStyle}
       >
-        {/* Decorative frame corner inlays */}
+        {/* Frame corner inlays */}
         <div className={`absolute top-2 left-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} border-2 border-[#2b2140]`} />
         <div className={`absolute top-2 right-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} border-2 border-[#2b2140]`} />
         <div className={`absolute bottom-2 left-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} border-2 border-[#2b2140]`} />
@@ -224,9 +297,13 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
           className={`relative w-full h-full rounded-2xl ${currentTheme.innerBg} border-3 border-[#2b2140] overflow-hidden grid grid-cols-9 grid-rows-9 gap-[6px] p-[6px] transition-colors duration-300`}
           style={{ touchAction: 'manipulation' }}
         >
-          {/* Render 9x9 Cells (Static board background) */}
-          {Array.from({ length: BOARD_SIZE }).map((_, r) =>
-            Array.from({ length: BOARD_SIZE }).map((_, c) => {
+          {/* Render 9x9 Cells (Mapped via visual coordinates) */}
+          {Array.from({ length: BOARD_SIZE }).map((_, vr) =>
+            Array.from({ length: BOARD_SIZE }).map((_, vc) => {
+              const logical = toLogicalCell(vr, vc);
+              const r = logical.r;
+              const c = logical.c;
+
               const isEven = (r + c) % 2 === 0;
               const goalInfo = getGoalInfo(r, c);
               const isLegalMove = movimientos.some((m) => m.r === r && m.c === c);
@@ -238,7 +315,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
 
               return (
                 <div
-                  key={`cell-${r}-${c}`}
+                  key={`cell-${vr}-${vc}`}
                   onClick={() => {
                     if (isLegalMove && !bloqueadoPorAnimacion && esTurnoHumano) {
                       onMover({ r, c });
@@ -257,7 +334,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                       : undefined,
                   }}
                 >
-                  {/* Goal strip indicator accent edge */}
+                  {/* Goal strip indicator */}
                   {goalInfo && (
                     <div
                       className={`absolute inset-0 pointer-events-none rounded-lg border-2 ${
@@ -303,12 +380,51 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
             })
           )}
 
-          {/* Placed Horizontal Walls with Motion entry animation */}
+          {/* Elemental Landing Particle Effect on landing cell */}
+          <AnimatePresence>
+            {efectoAterrizaje && (
+              (() => {
+                const vis = toVisualCell(efectoAterrizaje.r, efectoAterrizaje.c);
+                const emoji =
+                  efectoAterrizaje.tipo === 'fuego'
+                    ? '🔥'
+                    : efectoAterrizaje.tipo === 'hielo'
+                    ? '❄️'
+                    : efectoAterrizaje.tipo === 'rayo'
+                    ? '⚡'
+                    : '🌱';
+
+                return (
+                  <motion.div
+                    key={`landing-${efectoAterrizaje.key}`}
+                    initial={{ scale: 0.3, opacity: 0, y: 0 }}
+                    animate={{ scale: [0.5, 1.4, 0.9], opacity: [0, 1, 0], y: -16 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.85, ease: 'easeOut' }}
+                    className="absolute z-35 pointer-events-none flex items-center justify-center text-xl select-none"
+                    style={{
+                      width: 'calc((100% - 60px) / 9)',
+                      height: 'calc((100% - 60px) / 9)',
+                      left: `calc(6px + ${vis.c} * ((100% - 6px) / 9))`,
+                      top: `calc(6px + ${vis.r} * ((100% - 6px) / 9))`,
+                    }}
+                  >
+                    <span className="filter drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]">
+                      {emoji}
+                    </span>
+                  </motion.div>
+                );
+              })()
+            )}
+          </AnimatePresence>
+
+          {/* Placed Horizontal Walls */}
           {Array.from({ length: WALL_GRID_SIZE }).map((_, r) =>
             Array.from({ length: WALL_GRID_SIZE }).map((_, c) => {
               const wallOwner = estado.murosH[r][c];
               if (wallOwner === -1) return null;
               const wallColor = getWallColor(wallOwner);
+              const vis = toVisualIntersection(r, c);
 
               return (
                 <motion.div
@@ -322,9 +438,9 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                   }
                   className="absolute z-15 h-3 rounded-full border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] flex items-center justify-between px-1 pointer-events-none"
                   style={{
-                    left: `calc(6px + ${c} * ((100% - 6px) / 9))`,
+                    left: `calc(6px + ${vis.c} * ((100% - 6px) / 9))`,
                     width: `calc((200% - 66px) / 9)`,
-                    top: `calc(6px + ${r + 1} * ((100% - 6px) / 9) - 9px)`,
+                    top: `calc(6px + ${vis.r + 1} * ((100% - 6px) / 9) - 9px)`,
                     backgroundColor: wallColor,
                     backgroundImage:
                       'linear-gradient(180deg, rgba(255,255,255,0.4) 0%, rgba(0,0,0,0.15) 100%)',
@@ -337,12 +453,13 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
             })
           )}
 
-          {/* Placed Vertical Walls with Motion entry animation */}
+          {/* Placed Vertical Walls */}
           {Array.from({ length: WALL_GRID_SIZE }).map((_, r) =>
             Array.from({ length: WALL_GRID_SIZE }).map((_, c) => {
               const wallOwner = estado.murosV[r][c];
               if (wallOwner === -1) return null;
               const wallColor = getWallColor(wallOwner);
+              const vis = toVisualIntersection(r, c);
 
               return (
                 <motion.div
@@ -356,9 +473,9 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                   }
                   className="absolute z-15 w-3 rounded-full border-2 border-[#2b2140] shadow-[2px_2px_0_#2b2140] flex flex-col items-center justify-between py-1 pointer-events-none"
                   style={{
-                    top: `calc(6px + ${r} * ((100% - 6px) / 9))`,
+                    top: `calc(6px + ${vis.r} * ((100% - 6px) / 9))`,
                     height: `calc((200% - 66px) / 9)`,
-                    left: `calc(6px + ${c + 1} * ((100% - 6px) / 9) - 9px)`,
+                    left: `calc(6px + ${vis.c + 1} * ((100% - 6px) / 9) - 9px)`,
                     backgroundColor: wallColor,
                     backgroundImage:
                       'linear-gradient(90deg, rgba(255,255,255,0.4) 0%, rgba(0,0,0,0.15) 100%)',
@@ -371,86 +488,87 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
             })
           )}
 
-          {/* Absolute Characters Overlay with Motion Spring Glide & Hop Animation */}
+          {/* Absolute Characters Overlay */}
           <div className="absolute inset-0 pointer-events-none z-20">
-            {estado.jugadores.map((player) => (
-              <motion.div
-                key={`player-entity-${player.id}`}
-                className="absolute flex items-center justify-center pointer-events-none"
-                style={{
-                  width: 'calc((100% - 60px) / 9)',
-                  height: 'calc((100% - 60px) / 9)',
-                }}
-                initial={false}
-                animate={{
-                  left: `calc(6px + ${player.c} * ((100% - 6px) / 9))`,
-                  top: `calc(6px + ${player.r} * ((100% - 6px) / 9))`,
-                }}
-                transition={
-                  animacionesReducidas
-                    ? { duration: 0 }
-                    : {
-                        type: 'spring',
-                        stiffness: 340,
-                        damping: 24,
-                      }
-                }
-              >
-                {/* Inner Hop / Jump Animation on coordinate change */}
+            {estado.jugadores.map((player) => {
+              const vis = toVisualCell(player.r, player.c);
+              return (
                 <motion.div
-                  key={`hop-${player.r}-${player.c}`}
-                  initial={animacionesReducidas ? {} : { y: -12, scale: 1.1 }}
-                  animate={{ y: 0, scale: 1 }}
+                  key={`player-entity-${player.id}`}
+                  className="absolute flex items-center justify-center pointer-events-none"
+                  style={{
+                    width: 'calc((100% - 60px) / 9)',
+                    height: 'calc((100% - 60px) / 9)',
+                  }}
+                  initial={false}
+                  animate={{
+                    left: `calc(6px + ${vis.c} * ((100% - 6px) / 9))`,
+                    top: `calc(6px + ${vis.r} * ((100% - 6px) / 9))`,
+                  }}
                   transition={
                     animacionesReducidas
                       ? { duration: 0 }
-                      : { type: 'spring', stiffness: 400, damping: 18 }
+                      : {
+                          type: 'spring',
+                          stiffness: 340,
+                          damping: 24,
+                        }
                   }
-                  className="w-full h-full flex items-center justify-center relative"
                 >
-                  {/* Floating speech bubble for live online emoji reaction */}
-                  {estado.reaccionActiva && estado.reaccionActiva.jugadorId === player.id && (
-                    <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-white border-2 border-[#2b2140] rounded-full px-2 py-0.5 shadow-md text-base animate-bounce z-40 pointer-events-none whitespace-nowrap">
-                      {estado.reaccionActiva.emoji}
-                    </div>
-                  )}
+                  <motion.div
+                    key={`hop-${player.r}-${player.c}`}
+                    initial={animacionesReducidas ? {} : { y: -12, scale: 1.1 }}
+                    animate={{ y: 0, scale: 1 }}
+                    transition={
+                      animacionesReducidas
+                        ? { duration: 0 }
+                        : { type: 'spring', stiffness: 400, damping: 18 }
+                    }
+                    className="w-full h-full flex items-center justify-center relative"
+                  >
+                    {estado.reaccionActiva && estado.reaccionActiva.jugadorId === player.id && (
+                      <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-white border-2 border-[#2b2140] rounded-full px-2 py-0.5 shadow-md text-base animate-bounce z-40 pointer-events-none whitespace-nowrap">
+                        {estado.reaccionActiva.emoji}
+                      </div>
+                    )}
 
-                  <CartoonCharacter
-                    color={player.color}
-                    hat={player.hat}
-                    size={46}
-                    isActive={estado.turnoActual === player.id}
-                    isDancing={estado.ganador === player.id}
-                  />
+                    <CartoonCharacter
+                      color={player.color}
+                      hat={player.hat}
+                      size={46}
+                      isActive={estado.turnoActual === player.id}
+                      isDancing={estado.ganador === player.id}
+                    />
+                  </motion.div>
                 </motion.div>
-              </motion.div>
-            ))}
+              );
+            })}
           </div>
 
-          {/* Clickable/Tappable Intersections Overlay for Wall Placement */}
+          {/* Clickable Intersections Overlay for Wall Placement */}
           {estado.modoAccion === 'muro' && esTurnoHumano && !bloqueadoPorAnimacion && (
             <div className="absolute inset-0 pointer-events-auto z-30">
-              {Array.from({ length: WALL_GRID_SIZE }).map((_, r) =>
-                Array.from({ length: WALL_GRID_SIZE }).map((_, c) => {
+              {Array.from({ length: WALL_GRID_SIZE }).map((_, vr) =>
+                Array.from({ length: WALL_GRID_SIZE }).map((_, vc) => {
+                  const logical = toLogicalIntersection(vr, vc);
                   const isCurrentHovered =
                     hoveredIntersection &&
-                    hoveredIntersection.r === r &&
-                    hoveredIntersection.c === c;
+                    hoveredIntersection.r === logical.r &&
+                    hoveredIntersection.c === logical.c;
 
                   return (
                     <button
-                      key={`hit-${r}-${c}`}
+                      key={`hit-${vr}-${vc}`}
                       type="button"
-                      aria-label={`Intersección ${r}, ${c}`}
-                      onClick={() => handleIntersectionClick(r, c)}
-                      onMouseEnter={() => updatePreview(r, c)}
+                      aria-label={`Intersección ${logical.r}, ${logical.c}`}
+                      onClick={() => handleIntersectionClick(logical.r, logical.c)}
+                      onMouseEnter={() => updatePreview(logical.r, logical.c)}
                       className="absolute w-10 h-10 sm:w-11 sm:h-11 rounded-full -translate-x-1/2 -translate-y-1/2 flex items-center justify-center cursor-pointer group"
                       style={{
-                        left: `calc(6px + ${c + 1} * ((100% - 6px) / 9) - 3px)`,
-                        top: `calc(6px + ${r + 1} * ((100% - 6px) / 9) - 3px)`,
+                        left: `calc(6px + ${vc + 1} * ((100% - 6px) / 9) - 3px)`,
+                        top: `calc(6px + ${vr + 1} * ((100% - 6px) / 9) - 3px)`,
                       }}
                     >
-                      {/* Responsive target dot */}
                       <div
                         className={`w-3.5 h-3.5 rounded-full border-2 border-[#2b2140] transition-all duration-150 shadow-sm ${
                           isCurrentHovered
@@ -471,37 +589,42 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
               esTurnoHumano &&
               hoveredIntersection &&
               !bloqueadoPorAnimacion && (
-                <motion.div
-                  key="ghost-wall"
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.8 }}
-                  transition={{ duration: 0.12 }}
-                  className={`absolute z-40 pointer-events-none rounded-full border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] flex items-center justify-center ${
-                    ghostValidity === 'ok'
-                      ? 'bg-[#51cf66]/90'
-                      : 'bg-[#ff6b6b]/90 animate-[shake_0.2s_ease-in-out_infinite]'
-                  }`}
-                  style={
-                    estado.orientacionMuro === 'H'
-                      ? {
-                          left: `calc(6px + ${hoveredIntersection.c} * ((100% - 6px) / 9))`,
-                          width: `calc((200% - 66px) / 9)`,
-                          top: `calc(6px + ${hoveredIntersection.r + 1} * ((100% - 6px) / 9) - 9px)`,
-                          height: '12px',
-                        }
-                      : {
-                          top: `calc(6px + ${hoveredIntersection.r} * ((100% - 6px) / 9))`,
-                          height: `calc((200% - 66px) / 9)`,
-                          left: `calc(6px + ${hoveredIntersection.c + 1} * ((100% - 6px) / 9) - 9px)`,
-                          width: '12px',
-                        }
-                  }
-                >
-                  <span className="text-[10px] font-black text-white drop-shadow">
-                    {ghostValidity === 'ok' ? '✔' : '✕'}
-                  </span>
-                </motion.div>
+                (() => {
+                  const vis = toVisualIntersection(hoveredIntersection.r, hoveredIntersection.c);
+                  return (
+                    <motion.div
+                      key="ghost-wall"
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      transition={{ duration: 0.12 }}
+                      className={`absolute z-40 pointer-events-none rounded-full border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] flex items-center justify-center ${
+                        ghostValidity === 'ok'
+                          ? 'bg-[#51cf66]/90'
+                          : 'bg-[#ff6b6b]/90 animate-[shake_0.2s_ease-in-out_infinite]'
+                      }`}
+                      style={
+                        estado.orientacionMuro === 'H'
+                          ? {
+                              left: `calc(6px + ${vis.c} * ((100% - 6px) / 9))`,
+                              width: `calc((200% - 66px) / 9)`,
+                              top: `calc(6px + ${vis.r + 1} * ((100% - 6px) / 9) - 9px)`,
+                              height: '12px',
+                            }
+                          : {
+                              top: `calc(6px + ${vis.r} * ((100% - 6px) / 9))`,
+                              height: `calc((200% - 66px) / 9)`,
+                              left: `calc(6px + ${vis.c + 1} * ((100% - 6px) / 9) - 9px)`,
+                              width: '12px',
+                            }
+                      }
+                    >
+                      <span className="text-[10px] font-black text-white drop-shadow">
+                        {ghostValidity === 'ok' ? '✔' : '✕'}
+                      </span>
+                    </motion.div>
+                  );
+                })()
               )}
           </AnimatePresence>
         </div>
@@ -518,7 +641,6 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
             onClick={() => {
               sounds.playClick();
               onRotarMuro();
-              // Update preview with toggled orientation
               const nuevaOrientacion = estado.orientacionMuro === 'H' ? 'V' : 'H';
               updatePreview(hoveredIntersection.r, hoveredIntersection.c, nuevaOrientacion);
             }}
@@ -553,7 +675,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
       {estado.modoAccion === 'muro' && esTurnoHumano && !hoveredIntersection && (
         <div className="mt-2 text-xs font-semibold text-[#593922] bg-[#fff8e7] px-3 py-1 rounded-full border-2 border-[#2b2140] shadow-sm flex items-center gap-2">
           <span>
-            Toca una intersección para previsualizar el muro ({estado.orientacionMuro === 'H' ? 'Horizontal' : 'Vertical'})
+            Toca una intersección para previsualizar ({estado.orientacionMuro === 'H' ? 'Horizontal' : 'Vertical'})
           </span>
           <button
             onClick={onRotarMuro}

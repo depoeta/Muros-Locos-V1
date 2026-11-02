@@ -285,6 +285,8 @@ export const ComoSeJuegaModal: React.FC<ComoSeJuegaModalProps> = ({ onCerrar }) 
   );
 };
 
+export const ComoJugarModal = ComoSeJuegaModal;
+
 // =========================================================================
 // 3. LOGROS MODAL
 // =========================================================================
@@ -1133,10 +1135,13 @@ export const OnlineDisconnectModal: React.FC<OnlineDisconnectModalProps> = ({
   onVolverAlMenu,
 }) => {
   const tiempoTerminado = segundosRestantes <= 0;
-  const progresoPct = Math.max(0, Math.min(100, (segundosRestantes / 10) * 100));
+  const progresoPct = Math.max(0, Math.min(100, (segundosRestantes / 120) * 100));
+  const minutos = Math.floor(segundosRestantes / 60);
+  const segundos = segundosRestantes % 60;
+  const tiempoStr = `${minutos}:${segundos < 10 ? '0' : ''}${segundos}`;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
       <div className="relative w-full max-w-sm bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col text-center">
         <div className="text-4xl mb-2 animate-bounce">
           {tiempoTerminado ? '🏆' : '⏳'}
@@ -1150,14 +1155,14 @@ export const OnlineDisconnectModal: React.FC<OnlineDisconnectModalProps> = ({
 
         <p className="text-xs text-[#593922] mb-3 leading-relaxed">
           {tiempoTerminado
-            ? 'El rival no ha regresado en 10 segundos. Has ganado la partida automáticamente (+100 pts).'
-            : 'Un jugador se ha desconectado o cerrado la pestaña. Tiene 10 segundos para volver o perderá la partida por abandono.'}
+            ? 'El rival no ha regresado en 2 minutos. Has ganado la partida automáticamente (+100 pts).'
+            : 'Tu oponente se ha ausentado o desconectado. El reloj de turno se ha pausado. Tiene 2 minutos para reconectarse.'}
         </p>
 
         {!tiempoTerminado && (
           <div className="mb-4">
             <div className="text-3xl font-black text-[#c92a2a] font-mono-num animate-pulse">
-              {segundosRestantes}s
+              {tiempoStr}
             </div>
             <div className="w-full bg-[#f1f3f5] h-3.5 rounded-full border-2 border-[#2b2140] mt-2 overflow-hidden">
               <div
@@ -1209,12 +1214,23 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
   onCerrar,
 }) => {
   const [tab, setTab] = useState<'login' | 'registro'>('login');
+  const [perfilSubTab, setPerfilSubTab] = useState<'mi_perfil' | 'comunidad'>('mi_perfil');
+  const [confirmandoBaja, setConfirmandoBaja] = useState(false);
+  const [textoBajaConfirmacion, setTextoBajaConfirmacion] = useState('');
   const [nombre, setNombre] = useState('');
   const [clave, setClave] = useState('');
   const [color, setColor] = useState('#ff6b6b');
   const [hat, setHat] = useState<HatType>('corona');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
+
+  const todasLasCuentas = useMemo(() => cargarCuentas(), [usuarioActual, cargando]);
+  const comunidadLista = useMemo(() => {
+    return Object.values(todasLasCuentas).sort((a, b) => {
+      if (b.puntos !== a.puntos) return b.puntos - a.puntos;
+      return b.victorias - a.victorias;
+    });
+  }, [todasLasCuentas]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1279,96 +1295,219 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
         {/* If logged in: Show User Dashboard */}
         {usuarioActual ? (
           <div className="flex flex-col gap-3 py-1">
-            <div className="flex items-center gap-3 p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm">
-              <CartoonCharacter
-                color={usuarioActual.avatarColor}
-                hat={usuarioActual.avatarHat}
-                size={54}
-                showShadow={false}
-              />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="font-black text-base text-[#2b2140] truncate">
-                    {usuarioActual.nombre}
-                  </span>
-                  {usuarioActual.rol === 'admin' && (
-                    <span className="text-[9px] bg-[#ffd43b] text-[#5c3c00] font-black px-1.5 py-0.5 rounded border border-[#2b2140]">
-                      👑 ADMIN
-                    </span>
-                  )}
-                  <span className="text-[10px] bg-[#f1f3f5] text-[#495057] font-extrabold px-1.5 py-0.5 rounded border border-[#2b2140]/30 shadow-xs">
-                    ID: {usuarioActual.id}
-                  </span>
-                </div>
-                <span className="text-xs font-bold text-[#86542d] block">
-                  {obtenerNivelYTitulo(usuarioActual.puntos).titulo}
-                </span>
-                <span className="text-xs font-black text-[#2b8a3e] block">
-                  {usuarioActual.puntos} puntos acumulados
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 text-center">
-              <div className="p-2.5 bg-white rounded-xl border-2 border-[#2b2140]">
-                <span className="text-[11px] font-bold text-[#86542d] block">Victorias</span>
-                <span className="text-lg font-black text-[#2b2140]">
-                  {usuarioActual.victorias} / {usuarioActual.partidas}
-                </span>
-              </div>
-              <div className="p-2.5 bg-white rounded-xl border-2 border-[#2b2140]">
-                <span className="text-[11px] font-bold text-[#86542d] block">Puntos Elo</span>
-                <span className="text-lg font-black text-[#2b2140]">{usuarioActual.elo}</span>
-              </div>
-            </div>
-
-            {usuarioActual.rol === 'admin' && (
+            {/* Sub-tabs: Mi Perfil vs Comunidad */}
+            <div className="grid grid-cols-2 p-1 bg-[#ede4d0] rounded-xl border-2 border-[#2b2140]">
               <button
+                type="button"
                 onClick={() => {
                   sounds.playClick();
-                  onAbrirAdmin();
+                  setPerfilSubTab('mi_perfil');
                 }}
-                className="w-full py-2.5 rounded-xl font-black text-xs bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer flex items-center justify-center gap-1.5"
+                className={`py-1.5 rounded-lg font-black text-xs transition-all cursor-pointer ${
+                  perfilSubTab === 'mi_perfil'
+                    ? 'bg-white text-[#2b2140] border border-[#2b2140] shadow-sm'
+                    : 'text-[#86542d]'
+                }`}
               >
-                <span>⚙️</span>
-                <span>Panel de Administración Secreto</span>
+                👤 Mi Perfil
               </button>
-            )}
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setPerfilSubTab('comunidad');
+                }}
+                className={`py-1.5 rounded-lg font-black text-xs transition-all cursor-pointer ${
+                  perfilSubTab === 'comunidad'
+                    ? 'bg-white text-[#2b2140] border border-[#2b2140] shadow-sm'
+                    : 'text-[#86542d]'
+                }`}
+              >
+                👥 Comunidad ({Object.keys(todasLasCuentas).length})
+              </button>
+            </div>
 
-            <button
-              onClick={() => {
-                sounds.playClick();
-                cerrarSesion();
-                onLogout();
-                onCerrar();
-              }}
-              className="w-full py-2 rounded-xl font-bold text-xs bg-white text-[#c92a2a] border-2 border-[#2b2140] hover:bg-[#ffe3e3] cursor-pointer"
-            >
-              Cerrar Sesión
-            </button>
+            {perfilSubTab === 'mi_perfil' ? (
+              <>
+                <div className="flex items-center gap-3 p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm">
+                  <CartoonCharacter
+                    color={usuarioActual.avatarColor}
+                    hat={usuarioActual.avatarHat}
+                    size={54}
+                    showShadow={false}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-black text-base text-[#2b2140] truncate">
+                        {usuarioActual.nombre}
+                      </span>
+                      {usuarioActual.rol === 'admin' && (
+                        <span className="text-[9px] bg-[#ffd43b] text-[#5c3c00] font-black px-1.5 py-0.5 rounded border border-[#2b2140]">
+                          👑 ADMIN
+                        </span>
+                      )}
+                      <span className="text-[10px] bg-[#f1f3f5] text-[#495057] font-extrabold px-1.5 py-0.5 rounded border border-[#2b2140]/30 shadow-xs">
+                        ID: {usuarioActual.id}
+                      </span>
+                    </div>
+                    <span className="text-xs font-bold text-[#86542d] block">
+                      {obtenerNivelYTitulo(usuarioActual.puntos).titulo}
+                    </span>
+                    <span className="text-xs font-black text-[#2b8a3e] block">
+                      {usuarioActual.puntos} puntos acumulados
+                    </span>
+                  </div>
+                </div>
 
-            {usuarioActual.id !== 'admin' && (
-              <div className="pt-2 border-t border-[#2b2140]/15">
+                <div className="grid grid-cols-2 gap-2 text-center">
+                  <div className="p-2.5 bg-white rounded-xl border-2 border-[#2b2140]">
+                    <span className="text-[11px] font-bold text-[#86542d] block">Victorias</span>
+                    <span className="text-lg font-black text-[#2b2140]">
+                      {usuarioActual.victorias} / {usuarioActual.partidas}
+                    </span>
+                  </div>
+                  <div className="p-2.5 bg-white rounded-xl border-2 border-[#2b2140]">
+                    <span className="text-[11px] font-bold text-[#86542d] block">Puntos Elo</span>
+                    <span className="text-lg font-black text-[#2b2140]">{usuarioActual.elo}</span>
+                  </div>
+                </div>
+
+                {usuarioActual.rol === 'admin' && (
+                  <button
+                    onClick={() => {
+                      sounds.playClick();
+                      onAbrirAdmin();
+                    }}
+                    className="w-full py-2.5 rounded-xl font-black text-xs bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <span>⚙️</span>
+                    <span>Panel de Administración Secreto</span>
+                  </button>
+                )}
+
                 <button
-                  type="button"
-                  onClick={async () => {
+                  onClick={() => {
                     sounds.playClick();
-                    if (
-                      window.confirm(
-                        '⚠️ ¿CONFIRMAS que deseas darte de baja de Muros Locos?\n\nTu perfil se borrará permanentemente de la base de datos en la nube y serás eliminado del Ranking Global. Esta acción es irreversible.'
-                      )
-                    ) {
-                      setCargando(true);
-                      await darDeBajaUsuarioAsync(usuarioActual.id);
-                      onLogout();
-                      onCerrar();
-                    }
+                    cerrarSesion();
+                    onLogout();
+                    onCerrar();
                   }}
-                  className="w-full py-1.5 px-3 rounded-xl font-bold text-[11px] bg-[#fff5f5] text-[#c92a2a] border border-[#ffc9c9] hover:bg-[#ffe3e3] cursor-pointer flex items-center justify-center gap-1"
+                  className="w-full py-2 rounded-xl font-bold text-xs bg-white text-[#c92a2a] border-2 border-[#2b2140] hover:bg-[#ffe3e3] cursor-pointer"
                 >
-                  <span>🗑️</span>
-                  <span>Darme de baja (Eliminar mi cuenta y datos)</span>
+                  Cerrar Sesión
                 </button>
+
+                {usuarioActual.id !== 'admin' && (
+                  <div className="pt-2 border-t border-[#2b2140]/15">
+                    {!confirmandoBaja ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          sounds.playClick();
+                          setConfirmandoBaja(true);
+                          setTextoBajaConfirmacion('');
+                        }}
+                        className="w-full py-1.5 px-3 rounded-xl font-bold text-[11px] bg-[#fff5f5] text-[#c92a2a] border border-[#ffc9c9] hover:bg-[#ffe3e3] cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        <span>🗑️</span>
+                        <span>Darme de baja (Eliminar mi cuenta)</span>
+                      </button>
+                    ) : (
+                      <div className="p-3 bg-[#ffe3e3] rounded-2xl border-2 border-[#ff8787] flex flex-col gap-2 text-left animate-[fadeIn_0.2s_ease-out]">
+                        <div className="flex items-center gap-1.5 text-xs font-black text-[#c92a2a]">
+                          <span>⚠️</span>
+                          <span>¿Confirmas darte de baja?</span>
+                        </div>
+                        <p className="text-[11px] text-[#495057] font-medium leading-tight">
+                          Tu cuenta y tu récord del Ranking Global se eliminarán permanentemente de la base de datos.
+                        </p>
+                        <p className="text-[11px] font-bold text-[#c92a2a]">
+                          Escribe <strong>{usuarioActual.nombre}</strong> o <strong>BORRAR</strong> para confirmar:
+                        </p>
+                        <input
+                          type="text"
+                          value={textoBajaConfirmacion}
+                          onChange={(e) => setTextoBajaConfirmacion(e.target.value)}
+                          placeholder={`Escribe ${usuarioActual.nombre} o BORRAR`}
+                          className="w-full text-xs font-bold bg-white border-2 border-[#ff8787] rounded-xl px-2.5 py-1.5 outline-none"
+                        />
+                        <div className="flex gap-2 mt-1">
+                          <button
+                            type="button"
+                            onClick={() => setConfirmandoBaja(false)}
+                            className="flex-1 py-1.5 rounded-xl font-bold text-xs bg-white text-[#495057] border border-[#ced4da] hover:bg-[#f8f9fa] cursor-pointer"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="button"
+                            disabled={
+                              cargando ||
+                              (textoBajaConfirmacion.trim().toUpperCase() !== 'BORRAR' &&
+                                textoBajaConfirmacion.trim().toLowerCase() !== usuarioActual.nombre.trim().toLowerCase())
+                            }
+                            onClick={async () => {
+                              sounds.playClick();
+                              setCargando(true);
+                              await darDeBajaUsuarioAsync(usuarioActual.id);
+                              onLogout();
+                              onCerrar();
+                            }}
+                            className="flex-1 py-1.5 rounded-xl font-black text-xs bg-[#c92a2a] text-white border border-[#a61e1e] hover:bg-[#b02525] disabled:opacity-40 cursor-pointer"
+                          >
+                            {cargando ? 'Eliminando...' : 'Sí, darme de baja'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            ) : (
+              /* Comunidad Tab: List of all registered players */
+              <div className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
+                <span className="text-[11px] font-black uppercase text-[#86542d]">
+                  Jugadores Registrados ({comunidadLista.length})
+                </span>
+                {comunidadLista.map((u, idx) => {
+                  const esYo = u.id === usuarioActual.id;
+                  const lvl = obtenerNivelYTitulo(u.puntos);
+                  return (
+                    <div
+                      key={u.id}
+                      className={`p-2.5 rounded-xl border-2 border-[#2b2140] flex items-center gap-2.5 ${
+                        esYo ? 'bg-[#fff9db] shadow-sm font-bold' : 'bg-white'
+                      }`}
+                    >
+                      <span className="text-xs font-black text-[#86542d] w-4">{idx + 1}º</span>
+                      <CartoonCharacter color={u.avatarColor} hat={u.avatarHat} size={34} showShadow={false} />
+                      <div className="min-w-0 flex-1 text-left">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-extrabold text-[#2b2140] truncate">
+                            {u.nombre}
+                          </span>
+                          {esYo && (
+                            <span className="text-[9px] bg-[#d3f9d8] text-[#134e20] font-black px-1.5 py-0.2 rounded">
+                              TÚ
+                            </span>
+                          )}
+                          {u.rol === 'admin' && (
+                            <span className="text-[9px] bg-[#ffd43b] text-[#5c3c00] font-black px-1 py-0.2 rounded border border-[#2b2140]/30">
+                              👑
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-[#86542d] font-semibold block">
+                          {lvl.icono} {lvl.titulo} • ID: {u.id}
+                        </span>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <span className="text-xs font-black text-[#2b2140] block">{u.puntos} pts</span>
+                        <span className="text-[10px] text-[#86542d] block">{u.victorias} vic</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1497,14 +1636,14 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
 // =========================================================================
 interface AdminPanelModalProps {
   onCerrar: () => void;
-  onShowToast: (msg: string) => void;
+  onShowToast?: (msg: string) => void;
   usuarioActual?: UserAccount | null;
   onUsuarioActualizado?: (usuario: UserAccount | null) => void;
 }
 
 export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   onCerrar,
-  onShowToast,
+  onShowToast = () => {},
   usuarioActual,
   onUsuarioActualizado,
 }) => {

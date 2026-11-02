@@ -983,34 +983,41 @@ export function calcularJugadaBot(
     }
   }
 
-  // 3. Bot Normal
+  // 3. Bot Normal: Equilibrado, humano y divertido (no invencible)
+  // ~70% de las veces prefiere avanzar hacia la meta
+  const deseaAvanzar = Math.random() < 0.70;
+  const rivalMuyCerca = rivalDist <= 3;
+
+  if (deseaAvanzar && !rivalMuyCerca) {
+    const bm = bestMoveToGoal();
+    if (bm) return { tipo: 'mover', coord: bm };
+  }
+
   let bestWall: { orientacion: WallOrientation; coord: Coord; ganancia: number } | null = null;
 
-  if (jugador.muros > 0 && leadingRival && rivalDist <= myDist + 1) {
-    const wallsToTest: { o: WallOrientation; r: number; c: number }[] = [];
+  if (jugador.muros > 0 && leadingRival && rivalDist <= 6) {
+    const candidatePool: { o: WallOrientation; r: number; c: number }[] = [];
     const rivalPath = bfsCamino(leadingRival, estado.murosH, estado.murosV).camino;
 
-    for (const pt of rivalPath) {
+    // Solo analiza los primeros 3 pasos del camino del rival
+    for (const pt of rivalPath.slice(0, 3)) {
       for (const dr of [-1, 0, 1]) {
         for (const dc of [-1, 0, 1]) {
           const wr = pt.r + dr;
           const wc = pt.c + dc;
           if (wr >= 0 && wr < WALL_GRID_SIZE && wc >= 0 && wc < WALL_GRID_SIZE) {
-            wallsToTest.push({ o: 'H', r: wr, c: wc });
-            wallsToTest.push({ o: 'V', r: wr, c: wc });
+            candidatePool.push({ o: 'H', r: wr, c: wc });
+            candidatePool.push({ o: 'V', r: wr, c: wc });
           }
         }
       }
     }
 
-    const tested = new Set<string>();
+    // Tomamos hasta 8 candidatos al azar para no jugar como un gran maestro infalible
+    const shuffled = candidatePool.sort(() => 0.5 - Math.random()).slice(0, 8);
     let maxGain = -999;
 
-    for (const w of wallsToTest) {
-      const key = `${w.o}_${w.r}_${w.c}`;
-      if (tested.has(key)) continue;
-      tested.add(key);
-
+    for (const w of shuffled) {
       if (validarMuro(w.o, w.r, w.c, estado.murosH, estado.murosV, estado.jugadores) === 'ok') {
         if (w.o === 'H') estado.murosH[w.r][w.c] = jugador.id;
         else estado.murosV[w.r][w.c] = jugador.id;
@@ -1023,7 +1030,7 @@ export function calcularJugadaBot(
 
         const rivalGain = newRivalDist - rivalDist;
         const myLoss = newMyDist - myDist;
-        const jitter = Math.random() * 0.3 - 0.15;
+        const jitter = Math.random() * 0.4 - 0.2;
         const ganancia = rivalGain - myLoss + jitter;
 
         if (ganancia > maxGain) {
@@ -1034,23 +1041,20 @@ export function calcularJugadaBot(
     }
   }
 
-  // Normal decision rule:
+  // Si encontró un buen muro y el rival está a tiro o amerita bloquear:
   if (
     bestWall &&
-    ((bestWall.ganancia >= 2 && rivalDist <= 7) ||
-      (rivalDist <= 2 && bestWall.ganancia >= 1) ||
-      bestWall.ganancia >= 3)
+    ((bestWall.ganancia >= 1.5 && rivalDist <= 5) || (rivalMuyCerca && bestWall.ganancia >= 1))
   ) {
     return { tipo: 'muro', orientacion: bestWall.orientacion, coord: bestWall.coord };
   }
 
-  // Otherwise, make best move to goal
+  // De lo contrario avanza hacia la meta
   const bm = bestMoveToGoal();
   if (bm) {
     return { tipo: 'mover', coord: bm };
   }
 
-  // Fallback if blocked
   if (bestWall && bestWall.ganancia >= 0) {
     return { tipo: 'muro', orientacion: bestWall.orientacion, coord: bestWall.coord };
   }
@@ -1186,5 +1190,89 @@ export function calcularDesglosePuntos(
     },
     multiplicador: mult,
     total,
+  };
+}
+
+export const iniciarPartida = inicializarPartida;
+
+export function calcularDesglosesPuntuacion(estado: GameState): Map<number, ScoreBreakdown> {
+  const map = new Map<number, ScoreBreakdown>();
+  estado.jugadores.forEach((p) => {
+    map.set(p.id, calcularDesglosePuntos(p, estado, p.estadisticas.remontada ? 1 : 0));
+  });
+  return map;
+}
+
+export function ejecutarAccionMover(
+  estado: GameState,
+  destino: Coord,
+  jugadorId?: number
+): GameState {
+  aplicarMovimiento(estado, destino);
+  return { ...estado };
+}
+
+export function ejecutarAccionMuro(
+  estado: GameState,
+  coord: Coord,
+  orientacion: WallOrientation,
+  jugadorId?: number
+): GameState {
+  aplicarMuro(estado, orientacion, coord.r, coord.c);
+  return { ...estado };
+}
+
+export function ejecutarTurnoBot(
+  estado: GameState
+): { nuevoEstado: GameState; accion: any } {
+  const jugador = estado.jugadores[estado.turnoActual];
+  const jugada = calcularJugadaBot(jugador, estado);
+  if (jugada.tipo === 'mover') {
+    aplicarMovimiento(estado, jugada.coord);
+  } else if (jugada.tipo === 'muro') {
+    aplicarMuro(estado, jugada.orientacion, jugada.coord.r, jugada.coord.c);
+  } else {
+    avanzarTurno(estado);
+  }
+  return { nuevoEstado: { ...estado }, accion: jugada };
+}
+
+export function obtenerCaminoPista(
+  jugador: Player,
+  murosH: number[][],
+  murosV: number[][]
+): Coord[] {
+  const { camino } = bfsCamino(jugador, murosH, murosV);
+  return camino;
+}
+
+export function deshacerJugada(estado: GameState): GameState {
+  if (estado.historial.length === 0) return estado;
+  const snapshot = estado.historial.pop()!;
+  const curP = estado.jugadores[estado.turnoActual];
+  if (curP) curP.estadisticas.usosDeshacer++;
+
+  return {
+    ...estado,
+    jugadores: snapshot.jugadores.map((sj) => {
+      const orig = estado.jugadores.find((p) => p.id === sj.id)!;
+      return {
+        ...orig,
+        r: sj.r,
+        c: sj.c,
+        muros: sj.muros,
+        estadisticas: { ...sj.estadisticas },
+      };
+    }),
+    murosH: snapshot.murosH.map((r) => [...r]),
+    murosV: snapshot.murosV.map((r) => [...r]),
+    turnoActual: snapshot.turnoActual,
+    turnosTotales: snapshot.turnosTotales,
+    registroAcciones: snapshot.registroAcciones ? [...snapshot.registroAcciones] : estado.registroAcciones,
+    terminada: false,
+    ganador: null,
+    caminoPista: null,
+    muroPrevisualizado: null,
+    ultimoMensaje: '↩ Jugada deshecha (-10 pts)',
   };
 }

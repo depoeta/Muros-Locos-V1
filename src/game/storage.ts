@@ -311,6 +311,20 @@ export function borrarRankingLocal() {
   safeSet(STORAGE_KEY_RANKING_LOCAL, JSON.stringify({}));
 }
 
+export function actualizarNombreInvitadoLocal(nombreAntiguo: string, nombreNuevo: string): void {
+  const cleanOld = nombreAntiguo.trim().toLowerCase();
+  const cleanNew = nombreNuevo.trim().toLowerCase();
+  if (!cleanNew || cleanOld === cleanNew) return;
+  const local = cargarRankingLocal();
+  if (local[cleanOld]) {
+    const entry = local[cleanOld];
+    entry.nombre = nombreNuevo.trim().slice(0, 14);
+    local[cleanNew] = entry;
+    delete local[cleanOld];
+    guardarRankingLocal(local);
+  }
+}
+
 export function cargarHistorial(): MatchResultRecord[] {
   const raw = safeGet(STORAGE_KEY_HISTORY);
   if (!raw) return [];

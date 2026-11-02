@@ -5,8 +5,9 @@
 
 import React, { useState } from 'react';
 import { sounds } from '../audio/murosAudio';
-import { AppSettings, MatchConfig, PlayerType, UserAccount } from '../types/murosLocos';
+import { AppSettings, BoardTheme, MatchConfig, PlayerType, UserAccount } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
+import { actualizarNombreInvitadoLocal } from '../game/storage';
 
 interface ConfigScreenProps {
   ajustes?: AppSettings;
@@ -24,6 +25,9 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
   onVolver,
 }) => {
   const [numJugadores, setNumJugadores] = useState<2 | 4>(2);
+  const [temaTablero, setTemaTablero] = useState<BoardTheme>(
+    () => usuarioActual?.temaTablero || ajustes?.temaTablero || 'madera'
+  );
   const [jugadores, setJugadores] = useState<
     { nombre: string; tipo: PlayerType; color: string; hat: 'corona' | 'pompon' | 'antena' | 'brote' }[]
   >(() => [
@@ -68,7 +72,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
 
     const sanitized = activeList.map((j, i) => {
       let nom = (i === 0 && usuarioActual) ? usuarioActual.nombre : j.nombre.trim();
-      if (!nom) nom = `Jugador ${i + 1}`;
+      if (!nom) nom = i === 0 ? 'Tú' : `Jugador ${i + 1}`;
       if (seenNames.has(nom.toLowerCase())) {
         nom = `${nom} (2)`;
       }
@@ -81,6 +85,11 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
       };
     });
 
+    if (!usuarioActual && sanitized[0]?.nombre && sanitized[0].nombre !== 'Tú') {
+      actualizarNombreInvitadoLocal('Tú', sanitized[0].nombre);
+      actualizarNombreInvitadoLocal('Invitado', sanitized[0].nombre);
+    }
+
     onIniciar({
       numJugadores,
       jugadores: sanitized,
@@ -91,6 +100,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
       segundosPorTurno,
       esTorneo,
       totalRondasTorneo,
+      temaTablero,
     });
   };
 
@@ -240,6 +250,37 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
           </div>
         </div>
 
+        {/* Arena Theme Selector */}
+        <div className="flex flex-col items-center gap-1 my-1">
+          <span className="text-xs font-extrabold uppercase tracking-wider text-[#593922]">
+            🎨 Tema de la Arena / Tablero
+          </span>
+          <div className="grid grid-cols-4 gap-1.5 p-1 bg-[#ede4d0] rounded-2xl border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140] w-full max-w-sm">
+            {[
+              { id: 'madera', label: 'Madera', icon: '🪵' },
+              { id: 'neon', label: 'Neón', icon: '⚡' },
+              { id: 'hielo', label: 'Hielo', icon: '❄️' },
+              { id: 'lava', label: 'Lava', icon: '🌋' },
+            ].map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setTemaTablero(t.id as BoardTheme);
+                }}
+                className={`py-1.5 px-1 rounded-xl font-black text-xs flex flex-col items-center gap-0.5 transition-all cursor-pointer ${
+                  temaTablero === t.id
+                    ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                    : 'text-[#86542d] hover:text-[#2b2140]'
+                }`}
+              >
+                <span className="text-base">{t.icon}</span>
+                <span className="text-[11px] leading-none">{t.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
 
         {/* Players List */}
         <div className="space-y-2 mt-1">

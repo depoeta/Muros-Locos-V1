@@ -56,6 +56,7 @@ export interface MatchConfig {
   segundosPorTurno: number; // 15 | 30 | 60
   esTorneo?: boolean;
   totalRondasTorneo?: number; // 3 | 5
+  temaTablero?: BoardTheme;
 }
 
 export interface AccionRegistro {
@@ -259,6 +260,16 @@ export interface LevelInfo {
   icono: string;
 }
 
+export interface PublicRoomInfo {
+  codigo: string;
+  nombre: string;
+  anfitrion: string;
+  color: string;
+  hat: HatType;
+  maxJugadores: 2 | 4;
+  creadoEn: number;
+}
+
 export interface UserAccount {
   id: string;
   nombre: string;
@@ -272,6 +283,7 @@ export interface UserAccount {
   elo: number;
   creadoEn: string;
   ultimaConexion: string;
+  temaTablero?: BoardTheme;
 }
 
 export type Screen = 'menu' | 'config' | 'juego' | 'ranking' | 'logros' | 'como_jugar' | 'ajustes' | 'online_lobby';

@@ -11,7 +11,7 @@ import {
   onlineService,
   SALAS_PUBLICAS,
 } from '../game/onlineService';
-import { HatType, OnlinePlayerInfo, UserAccount } from '../types/murosLocos';
+import { HatType, OnlinePlayerInfo, PublicRoomInfo, UserAccount } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
 
 interface OnlineLobbyScreenProps {
@@ -36,9 +36,30 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
   const [codigoInput, setCodigoInput] = useState<string>('');
   const [roomCode, setRoomCode] = useState<string>('');
   const [maxJugadores, setMaxJugadores] = useState<2 | 4>(2);
+  const [publicarEnLista, setPublicarEnLista] = useState<boolean>(true);
+  const [salasDinamicas, setSalasDinamicas] = useState<PublicRoomInfo[]>([]);
+  const [cargandoSalas, setCargandoSalas] = useState<boolean>(false);
   const [conectando, setConectando] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [jugadoresEnLobby, setJugadoresEnLobby] = useState<OnlinePlayerInfo[]>([]);
+
+  const recargarSalasPublicas = async () => {
+    setCargandoSalas(true);
+    try {
+      const salas = await onlineService.obtenerSalasPublicas();
+      setSalasDinamicas(salas);
+    } catch {
+      // ignore
+    } finally {
+      setCargandoSalas(false);
+    }
+  };
+
+  useEffect(() => {
+    if (tab === 'publicas') {
+      recargarSalasPublicas();
+    }
+  }, [tab]);
 
   // Wire Lobby Listeners
   useEffect(() => {
@@ -103,8 +124,19 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
 
     try {
       await onlineService.createRoom(code, nombre, color, hat, maxJugadores);
+      if (publicarEnLista) {
+        await onlineService.publicarSalaPublica({
+          codigo: code,
+          nombre: `Sala de ${nombre}`,
+          anfitrion: nombre,
+          color,
+          hat,
+          maxJugadores,
+          creadoEn: Date.now(),
+        });
+      }
       setTab('en_sala');
-      onShowToast(`¡Sala ${code} creada! Comparte el enlace con tus amigos.`);
+      onShowToast(`¡Sala ${code} creada! ${publicarEnLista ? 'Publicada en la lista.' : 'Privada lista.'}`);
     } catch {
       setErrorMsg('No se pudo crear la sala. Verifica tu conexión.');
       setConectando(false);
@@ -302,49 +334,101 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
 
           {/* TAB 1: Salas Públicas (Matchmaking Abierto) */}
           {tab === 'publicas' && (
-            <div className="p-3.5 bg-white rounded-2xl border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140] flex flex-col gap-2">
-              <div className="text-left">
-                <h3 className="text-sm font-black text-[#2b2140]">
-                  🌍 Salas Públicas de Encuentro
-                </h3>
-                <p className="text-xs text-[#86542d] mt-0.5 leading-snug">
-                  Entra a una sala para jugar contra otros jugadores conectados. Si la sala está vacía, esperarás como anfitrión hasta que alguien entre.
-                </p>
+            <div className="p-3.5 bg-white rounded-2xl border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140] flex flex-col gap-2.5">
+              <div className="flex items-center justify-between">
+                <div className="text-left">
+                  <h3 className="text-sm font-black text-[#2b2140]">
+                    🌍 Salas Públicas en Vivo
+                  </h3>
+                  <p className="text-[11px] text-[#86542d] leading-snug">
+                    Únete a una partida pública creada por otros jugadores o a una de las arenas fijas.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={recargarSalasPublicas}
+                  disabled={cargandoSalas}
+                  className="py-1 px-2.5 bg-[#f1f3f5] rounded-xl border border-[#2b2140] text-xs font-bold text-[#2b2140] hover:bg-[#e9ecef] cursor-pointer flex items-center gap-1 shrink-0"
+                >
+                  <span className={cargandoSalas ? 'animate-spin' : ''}>🔄</span>
+                  <span className="hidden sm:inline">Actualizar</span>
+                </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
-                {SALAS_PUBLICAS.map((s) => (
-                  <button
-                    key={s.id}
-                    disabled={conectando}
-                    onClick={() => handleEntrarSalaPublica(s.id, s.max)}
-                    className="p-3 rounded-xl border-2 border-[#2b2140] bg-[#fff8e7] hover:bg-[#fff3bf] active:translate-y-0.5 shadow-[0_2px_0_#2b2140] flex flex-col text-left transition-all cursor-pointer group"
-                  >
-                    <div className="flex items-center justify-between w-full">
-                      <span className="font-black text-sm text-[#2b2140] group-hover:text-[#d9480f]">
-                        {s.nombre}
+              {/* Salas Comunitarias Dinámicas */}
+              {salasDinamicas.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[10px] font-black uppercase text-[#2b8a3e] tracking-wider">
+                    🟢 Salas Abiertas por Jugadores ({salasDinamicas.length})
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {salasDinamicas.map((sala) => (
+                      <button
+                        key={sala.codigo}
+                        disabled={conectando}
+                        onClick={() => {
+                          setCodigoInput(sala.codigo);
+                          handleEntrarSalaPublica(sala.codigo, sala.maxJugadores);
+                        }}
+                        className="p-2.5 rounded-xl border-2 border-[#2b2140] bg-[#e7f5ff] hover:bg-[#d0ebff] active:translate-y-0.5 shadow-[0_2px_0_#2b2140] flex items-center gap-2.5 text-left transition-all cursor-pointer"
+                      >
+                        <CartoonCharacter color={sala.color} hat={sala.hat} size={36} showShadow={false} />
+                        <div className="min-w-0 flex-1">
+                          <span className="font-extrabold text-xs text-[#2b2140] block truncate">
+                            {sala.nombre}
+                          </span>
+                          <span className="text-[10px] text-[#1864ab] font-bold block">
+                            Anfitrión: {sala.anfitrion} • {sala.maxJugadores}P
+                          </span>
+                        </div>
+                        <span className="text-[10px] bg-[#ffd43b] text-[#5c3c00] font-black px-1.5 py-0.5 rounded border border-[#2b2140] shrink-0">
+                          Entrar ▶
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Arenas fijas */}
+              <div className="flex flex-col gap-1.5 mt-1">
+                <span className="text-[10px] font-black uppercase text-[#593922] tracking-wider">
+                  🏟️ Arenas de Encuentro Rápido
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {SALAS_PUBLICAS.map((s) => (
+                    <button
+                      key={s.id}
+                      disabled={conectando}
+                      onClick={() => handleEntrarSalaPublica(s.id, s.max)}
+                      className="p-3 rounded-xl border-2 border-[#2b2140] bg-[#fff8e7] hover:bg-[#fff3bf] active:translate-y-0.5 shadow-[0_2px_0_#2b2140] flex flex-col text-left transition-all cursor-pointer group"
+                    >
+                      <div className="flex items-center justify-between w-full">
+                        <span className="font-black text-sm text-[#2b2140] group-hover:text-[#d9480f]">
+                          {s.nombre}
+                        </span>
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-[#dee2e6] border border-[#2b2140]">
+                          {s.max}P
+                        </span>
+                      </div>
+                      <span className="text-[11px] font-semibold text-[#86542d] mt-1">
+                        {s.desc}
                       </span>
-                      <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-[#dee2e6] border border-[#2b2140]">
-                        {s.max}P
+                      <span className="text-[10px] text-[#2b8a3e] font-bold mt-1.5 flex items-center gap-1">
+                        ▶ Clic para entrar o esperar
                       </span>
-                    </div>
-                    <span className="text-[11px] font-semibold text-[#86542d] mt-1">
-                      {s.desc}
-                    </span>
-                    <span className="text-[10px] text-[#2b8a3e] font-bold mt-1.5 flex items-center gap-1">
-                      ▶ Clic para entrar o esperar
-                    </span>
-                  </button>
-                ))}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           )}
 
-          {/* TAB 2: Crear Sala Privada */}
+          {/* TAB 2: Crear Sala */}
           {tab === 'crear' && (
             <div className="p-3.5 bg-white rounded-2xl border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140] flex flex-col gap-3">
               <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
-                Capacidad de la Sala Privada
+                Capacidad de la Sala
               </span>
               <div className="flex gap-2">
                 {[2, 4].map((num) => (
@@ -366,6 +450,35 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                 ))}
               </div>
 
+              {/* Toggle Public / Private */}
+              <div
+                onClick={() => {
+                  sounds.playClick();
+                  setPublicarEnLista(!publicarEnLista);
+                }}
+                className={`p-2.5 rounded-xl border-2 border-[#2b2140] flex items-center justify-between gap-2 cursor-pointer transition-colors ${
+                  publicarEnLista ? 'bg-[#d3f9d8]' : 'bg-[#f8f9fa]'
+                }`}
+              >
+                <div className="text-left">
+                  <span className="text-xs font-black text-[#2b2140] block">
+                    📢 Sala Pública (Visible en la lista)
+                  </span>
+                  <span className="text-[11px] font-medium text-[#495057]">
+                    {publicarEnLista
+                      ? 'Cualquier jugador podrá verla y unirse directamente.'
+                      : 'Privada: sólo podrán unirse con tu código o enlace directo.'}
+                  </span>
+                </div>
+                <div
+                  className={`w-11 h-6 rounded-full border-2 border-[#2b2140] p-0.5 flex items-center shrink-0 ${
+                    publicarEnLista ? 'bg-[#51cf66] justify-end' : 'bg-[#ced4da] justify-start'
+                  }`}
+                >
+                  <div className="w-4 h-4 rounded-full bg-white border border-[#2b2140]" />
+                </div>
+              </div>
+
               <button
                 type="button"
                 disabled={conectando}
@@ -373,7 +486,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                 className="w-full py-3 rounded-2xl font-black text-base bg-[#ffd43b] text-[#5c3c00] border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140] hover:bg-[#fcc419] active:translate-y-1 cursor-pointer flex items-center justify-center gap-2"
               >
                 <span>👑</span>
-                <span>{conectando ? 'Creando sala...' : 'Crear Sala y Obtener Enlace'}</span>
+                <span>{conectando ? 'Creando sala...' : 'Crear Sala y Abrir Lobby'}</span>
               </button>
             </div>
           )}

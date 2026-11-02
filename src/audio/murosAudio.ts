@@ -127,6 +127,10 @@ class SoundSystem {
     } catch {}
   }
 
+  public playWallPlace() {
+    this.playWall();
+  }
+
   public playError() {
     if (!this.enabled) return;
     this.initCtx();
