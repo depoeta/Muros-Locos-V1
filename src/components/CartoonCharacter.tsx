@@ -260,6 +260,62 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
             />
           </g>
         )}
+
+        {hat === 'mago' && (
+          <g transform="translate(50, 24)">
+            {/* Wizard Hat Brim */}
+            <ellipse cx="0" cy="2" rx="24" ry="6" fill="#5f3dc4" stroke="#2b2140" strokeWidth="3.5" />
+            {/* Wizard Cone */}
+            <path
+              d="M -16 1 Q -8 -22 14 -30 Q 8 -16 16 1 Z"
+              fill="#7950f2"
+              stroke="#2b2140"
+              strokeWidth="3.5"
+              strokeLinejoin="round"
+            />
+            {/* Hat Band */}
+            <path d="M -15 0 Q 0 -4 15 0" fill="none" stroke="#ffd43b" strokeWidth="3" />
+            {/* Gold Star at Tip */}
+            <path
+              d="M 14 -32 L 15.5 -29 L 19 -29 L 16.5 -27 L 17.5 -24 L 14 -26 L 10.5 -24 L 11.5 -27 L 9 -29 L 12.5 -29 Z"
+              fill="#ffd43b"
+              stroke="#2b2140"
+              strokeWidth="1.5"
+            />
+          </g>
+        )}
+
+        {hat === 'gatito' && (
+          <g>
+            {/* Left Cat Ear */}
+            <path
+              d="M 24 35 L 20 12 L 39 25 Z"
+              fill="#f06595"
+              stroke="#2b2140"
+              strokeWidth="3.5"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M 25 31 L 22 17 L 35 25 Z"
+              fill="#ffdeeb"
+            />
+            {/* Right Cat Ear */}
+            <path
+              d="M 76 35 L 80 12 L 61 25 Z"
+              fill="#f06595"
+              stroke="#2b2140"
+              strokeWidth="3.5"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M 75 31 L 78 17 L 65 25 Z"
+              fill="#ffdeeb"
+            />
+            {/* Whiskers */}
+            <path d="M 16 57 L 27 58 M 15 62 L 27 61" stroke="#2b2140" strokeWidth="2.5" strokeLinecap="round" />
+            <path d="M 84 57 L 73 58 M 85 62 L 73 61" stroke="#2b2140" strokeWidth="2.5" strokeLinecap="round" />
+          </g>
+        )}
       </svg>
     </div>
   );

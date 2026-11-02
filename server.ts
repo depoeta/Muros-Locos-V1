@@ -118,12 +118,14 @@ app.post('/api/ranking', (req, res) => {
 
 // 3. Salas Públicas API
 app.get('/api/salas', (req, res) => {
+  salasPublicas = readJsonFile(SALAS_FILE, {});
   cleanExpiredRooms();
   res.setHeader('X-KV-Bound', 'true');
   res.json(Object.values(salasPublicas));
 });
 
 app.post('/api/salas', (req, res) => {
+  salasPublicas = readJsonFile(SALAS_FILE, {});
   cleanExpiredRooms();
   const room = req.body;
   if (room && room.codigo) {
@@ -138,6 +140,7 @@ app.post('/api/salas', (req, res) => {
 });
 
 app.delete('/api/salas/:codigo', (req, res) => {
+  salasPublicas = readJsonFile(SALAS_FILE, {});
   const code = req.params.codigo;
   if (code && salasPublicas[code]) {
     delete salasPublicas[code];

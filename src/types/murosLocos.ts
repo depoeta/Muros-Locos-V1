@@ -4,7 +4,7 @@
  */
 
 export type PlayerType = 'humano' | 'bot_facil' | 'bot_normal' | 'bot_dificil';
-export type HatType = 'corona' | 'pompon' | 'antena' | 'brote';
+export type HatType = 'corona' | 'pompon' | 'antena' | 'brote' | 'mago' | 'gatito';
 export type WallOrientation = 'H' | 'V';
 
 export interface Coord {
@@ -284,6 +284,14 @@ export interface UserAccount {
   creadoEn: string;
   ultimaConexion: string;
   temaTablero?: BoardTheme;
+  historialPartidas?: {
+    id: string;
+    fecha: string;
+    resultado: 'victoria' | 'derrota' | 'empate';
+    puntos: number;
+    rivales: string;
+    duracionSegundos: number;
+  }[];
 }
 
 export type Screen = 'menu' | 'config' | 'juego' | 'ranking' | 'logros' | 'como_jugar' | 'ajustes' | 'online_lobby';

@@ -250,7 +250,7 @@ export function normalizarRankEntry(raw: Partial<RankEntry>, fallbackName: strin
     fechaUltimaPartida: typeof raw.fechaUltimaPartida === 'string' ? raw.fechaUltimaPartida : new Date().toISOString(),
     logros: Array.isArray(raw.logros) ? raw.logros.filter((x): x is string => typeof x === 'string') : [],
     avatarColor: typeof raw.avatarColor === 'string' ? raw.avatarColor : '#ff6b6b',
-    avatarHat: (['corona', 'pompon', 'antena', 'brote'].includes(raw.avatarHat as string)
+    avatarHat: (['corona', 'pompon', 'antena', 'brote', 'mago', 'gatito'].includes(raw.avatarHat as string)
       ? raw.avatarHat
       : 'corona') as RankEntry['avatarHat'],
   };
@@ -555,6 +555,33 @@ export function actualizarDespuesDePartida(
     matchingAcc.victorias = entry.victorias;
     matchingAcc.elo = entry.elo;
     matchingAcc.ultimaConexion = new Date().toISOString();
+
+    if (!matchingAcc.historialPartidas) {
+      matchingAcc.historialPartidas = [];
+    }
+    const rivalesNombres = estado.jugadores
+      .filter((rj) => rj.id !== j.id)
+      .map((rj) => rj.nombre)
+      .join(', ');
+
+    const resultadoJ: 'victoria' | 'derrota' | 'empate' = esGanador
+      ? 'victoria'
+      : estado.ganador === -1
+      ? 'empate'
+      : 'derrota';
+
+    matchingAcc.historialPartidas.unshift({
+      id: `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      fecha: new Date().toISOString(),
+      resultado: resultadoJ,
+      puntos,
+      rivales: rivalesNombres || 'Bot',
+      duracionSegundos,
+    });
+    if (matchingAcc.historialPartidas.length > 20) {
+      matchingAcc.historialPartidas = matchingAcc.historialPartidas.slice(0, 20);
+    }
+
     cuentas[matchingAcc.id] = matchingAcc;
     guardarCuentas(cuentas);
     const cur = obtenerUsuarioActual();
@@ -912,6 +939,36 @@ export function adminActualizarUsuario(
   }
 
   return true;
+}
+
+export function actualizarCuentaUsuario(
+  id: string,
+  patch: Partial<UserAccount>
+): UserAccount | null {
+  const cuentas = cargarCuentas();
+  if (!cuentas[id]) return null;
+  const current = cuentas[id];
+  const updated: UserAccount = { ...current, ...patch };
+  cuentas[id] = updated;
+  guardarCuentas(cuentas);
+  const cur = obtenerUsuarioActual();
+  if (cur && cur.id === id) {
+    guardarUsuarioActual(updated);
+  }
+  const ranking = cargarRanking();
+  const rankKey = updated.nombre.trim().toLowerCase();
+  if (ranking[rankKey]) {
+    if (patch.avatarColor) ranking[rankKey].avatarColor = patch.avatarColor;
+    if (patch.avatarHat) ranking[rankKey].avatarHat = patch.avatarHat;
+    guardarRanking(ranking);
+  }
+  return updated;
+}
+
+export async function actualizarCuentaAsync(usuario: UserAccount): Promise<UserAccount> {
+  const res = actualizarCuentaUsuario(usuario.id, usuario);
+  await sincronizarConNube(true);
+  return res || usuario;
 }
 
 export function adminEliminarUsuario(id: string): boolean {

@@ -10,6 +10,7 @@ import {
   AppSettings,
   BoardTheme,
   GameState,
+  HatType,
   LevelInfo,
   MatchConfig,
   ScoreBreakdown,
@@ -226,6 +227,19 @@ export const App: React.FC = () => {
   // Wire Online Game Listeners
   useEffect(() => {
     onlineService.setCallbacks({
+      onGameStart: (remoteState) => {
+        setTiempoPartida(0);
+        setEstado(remoteState);
+        setMostrarBarraPostPartida(false);
+        setModalActivo(null);
+        setScreen('juego');
+        if (remoteState.miJugadorId === 1) {
+          setPerspectivaInvertida(true);
+        } else {
+          setPerspectivaInvertida(false);
+        }
+        showToast('🚀 ¡Comienza la partida online!');
+      },
       onStateSync: (remoteState) => {
         setEstado(remoteState);
         if (remoteState.terminada) {
@@ -424,6 +438,7 @@ export const App: React.FC = () => {
   // Start Online Match from Lobby
   const handleIniciarPartidaOnline = (maxJugadores: 2 | 4) => {
     const session = onlineService.getActiveSession();
+    const lobby = onlineService.getLobbyPlayers();
     const num = maxJugadores;
 
     const myId = session?.myPlayerId ?? 0;
@@ -434,27 +449,28 @@ export const App: React.FC = () => {
       setPerspectivaInvertida(false);
     }
 
+    const defaultColors = ['#ff6b6b', '#4dabf7', '#ffd43b', '#51cf66'];
+    const defaultHats: HatType[] = ['corona', 'pompon', 'antena', 'brote'];
+
+    const configJugadores = Array.from({ length: num }).map((_, idx) => {
+      const p = lobby[idx];
+      return {
+        nombre: p ? p.nombre : (idx === 0 ? 'Anfitrión' : `Jugador ${idx + 1}`),
+        tipo: 'humano' as const,
+        color: p ? p.color : defaultColors[idx] || '#ff6b6b',
+        hat: p ? p.hat : defaultHats[idx] || 'corona',
+      };
+    });
+
     const config: MatchConfig = {
       numJugadores: num,
-      jugadores: [
-        {
-          nombre: session?.role === 'host' ? session.myName : 'Anfitrión',
-          tipo: 'humano',
-          color: session?.role === 'host' ? session.myColor : '#ff6b6b',
-          hat: session?.role === 'host' ? session.myHat : 'corona',
-        },
-        {
-          nombre: session?.role === 'client' ? session.myName : 'Rival',
-          tipo: 'humano',
-          color: session?.role === 'client' ? session.myColor : '#4dabf7',
-          hat: session?.role === 'client' ? session.myHat : 'pompon',
-        },
-      ],
+      jugadores: configJugadores,
       empiezaAlAzar: false,
       permitirDeshacer: false,
       permitirPistas: false,
       modoConTiempo: true,
       segundosPorTurno: 30,
+      temaTablero: temaTableroActivo,
     };
 
     const nuevo = iniciarPartida(config);
@@ -470,7 +486,7 @@ export const App: React.FC = () => {
     setScreen('juego');
 
     if (session?.role === 'host') {
-      onlineService.syncState(nuevo);
+      onlineService.startGameAsHost(nuevo);
     }
   };
 
@@ -719,24 +735,14 @@ export const App: React.FC = () => {
               )}
             </div>
 
-            {/* Quick in-game settings & view toggle */}
+            {/* Quick in-game settings */}
             <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setPerspectivaInvertida((p) => !p)}
-                className={`py-1 px-2 rounded-xl text-xs font-black border border-[#2b2140] cursor-pointer transition-all ${
-                  perspectivaInvertida ? 'bg-[#ffd43b] text-[#5c3c00]' : 'bg-white text-[#2b2140]'
-                }`}
-                title="Girar perspectiva del tablero 180°"
-              >
-                🔄 Girar
-              </button>
               <button
                 onClick={() => {
                   setModalPrevio(modalActivo);
                   setModalActivo('ajustes');
                 }}
-                className="w-7 h-7 rounded-xl bg-white border border-[#2b2140] flex items-center justify-center text-xs font-black text-[#2b2140] hover:bg-[#f1f3f5] cursor-pointer"
+                className="w-7 h-7 rounded-xl bg-white border border-[#2b2140] flex items-center justify-center text-xs font-black text-[#2b2140] hover:bg-[#f1f3f5] cursor-pointer shadow-xs"
                 title="Ajustes rápidos"
               >
                 ⚙️

@@ -21,6 +21,7 @@ import {
 } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
 import {
+  actualizarCuentaAsync,
   adminActualizarUsuario,
   adminActualizarUsuarioAsync,
   adminEliminarUsuario,
@@ -141,49 +142,6 @@ export const AjustesModal: React.FC<AjustesModalProps> = ({
               </div>
             );
           })}
-          {/* Selector de Tema del Tablero */}
-          <div className="p-3 rounded-2xl border-2 border-[#2b2140] bg-white flex flex-col gap-2">
-            <div className="flex items-center gap-2">
-              <span className="text-xl">🎨</span>
-              <div>
-                <span className="font-extrabold text-xs sm:text-sm text-[#2b2140] block">
-                  Tema Visual del Tablero
-                </span>
-                <span className="text-[11px] font-medium text-[#86542d] block leading-tight">
-                  Estilo de madera, neón futurista, hielo ártico o lava volcánica
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 pt-1">
-              {[
-                { id: 'madera' as BoardTheme, label: '🪵 Madera Clásica', border: 'border-[#86542d]', bg: 'bg-[#ffec99]' },
-                { id: 'neon' as BoardTheme, label: '⚡ Neón Cyber', border: 'border-[#0c8599]', bg: 'bg-[#c5f6fa]' },
-                { id: 'hielo' as BoardTheme, label: '❄️ Hielo Ártico', border: 'border-[#1971c2]', bg: 'bg-[#d0ebff]' },
-                { id: 'lava' as BoardTheme, label: '🌋 Volcán Lava', border: 'border-[#c92a2a]', bg: 'bg-[#ffe3e3]' },
-              ].map((theme) => {
-                const isSelected = (localAjustes.temaTablero || 'madera') === theme.id;
-                return (
-                  <button
-                    key={theme.id}
-                    type="button"
-                    onClick={() => {
-                      sounds.playClick();
-                      setLocalAjustes((prev) => ({ ...prev, temaTablero: theme.id }));
-                    }}
-                    className={`p-2 rounded-xl border-2 text-xs font-black cursor-pointer transition-all flex items-center justify-center gap-1.5 ${theme.border} ${
-                      isSelected
-                        ? `${theme.bg} shadow-[0_2px_0_#2b2140] scale-[1.02]`
-                        : 'bg-white opacity-70 hover:opacity-100 hover:bg-slate-50'
-                    }`}
-                  >
-                    <span>{theme.label}</span>
-                    {isSelected && <span className="text-xs">✓</span>}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
         </div>
 
         <div className="pt-3 border-t-2 border-[#2b2140]/15 flex items-center justify-end gap-2">
@@ -405,7 +363,7 @@ interface RankingModalProps {
   onAbrirPerfil?: () => void;
 }
 
-type TabType = 'global' | 'local' | 'este_mes' | 'mes_pasado';
+type TabType = 'global' | 'esta_semana' | 'semana_pasada' | 'local';
 
 interface DisplayRankEntry {
   nombre: string;
@@ -434,16 +392,32 @@ export const RankingModal: React.FC<RankingModalProps> = ({
   };
 
   const entries: DisplayRankEntry[] = useMemo(() => {
+    function getMonday(d: Date): number {
+      const date = new Date(d);
+      const day = date.getDay();
+      const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+      date.setDate(diff);
+      date.setHours(0, 0, 0, 0);
+      return date.getTime();
+    }
+
+    const nowTime = Date.now();
+    const mondayThisWeek = getMonday(new Date(nowTime));
+    const mondayLastWeek = mondayThisWeek - 7 * 24 * 60 * 60 * 1000;
+
     if (tab === 'global') {
-      const list = Object.values(rankingData).map((r) => ({
-        nombre: r.nombre,
-        puntosTotales: r.puntosTotales,
-        partidas: r.partidas,
-        victorias: r.victorias,
-        elo: r.elo || 1000,
-        avatarColor: r.avatarColor || '#ff6b6b',
-        avatarHat: r.avatarHat || 'corona',
-      }));
+      // Only registered accounts with games played (partidas > 0)
+      const list = Object.values(rankingData)
+        .filter((r) => r.partidas > 0)
+        .map((r) => ({
+          nombre: r.nombre,
+          puntosTotales: r.puntosTotales,
+          partidas: r.partidas,
+          victorias: r.victorias,
+          elo: r.elo || 1000,
+          avatarColor: r.avatarColor || '#ff6b6b',
+          avatarHat: r.avatarHat || 'corona',
+        }));
 
       list.sort((a, b) => {
         if (b.puntosTotales !== a.puntosTotales) return b.puntosTotales - a.puntosTotales;
@@ -454,15 +428,17 @@ export const RankingModal: React.FC<RankingModalProps> = ({
     }
 
     if (tab === 'local') {
-      const list = Object.values(localRankingData).map((r) => ({
-        nombre: r.nombre,
-        puntosTotales: r.puntosTotales,
-        partidas: r.partidas,
-        victorias: r.victorias,
-        elo: r.elo || 1000,
-        avatarColor: r.avatarColor || '#ff6b6b',
-        avatarHat: r.avatarHat || 'corona',
-      }));
+      const list = Object.values(localRankingData)
+        .filter((r) => r.partidas > 0)
+        .map((r) => ({
+          nombre: r.nombre,
+          puntosTotales: r.puntosTotales,
+          partidas: r.partidas,
+          victorias: r.victorias,
+          elo: r.elo || 1000,
+          avatarColor: r.avatarColor || '#ff6b6b',
+          avatarHat: r.avatarHat || 'corona',
+        }));
 
       list.sort((a, b) => {
         if (b.puntosTotales !== a.puntosTotales) return b.puntosTotales - a.puntosTotales;
@@ -472,22 +448,15 @@ export const RankingModal: React.FC<RankingModalProps> = ({
       return list;
     }
 
-    // Filtros de fecha para Este Mes y Mes Pasado
-    const now = new Date();
-    const curYear = now.getFullYear();
-    const curMonth = now.getMonth();
-
-    const prevYear = curMonth === 0 ? curYear - 1 : curYear;
-    const prevMonth = curMonth === 0 ? 11 : curMonth - 1;
-
+    // Weekly filters: Esta Semana & Semana Pasada
     const filteredMatches = historial.filter((m) => {
-      const d = new Date(m.fecha);
-      if (isNaN(d.getTime())) return false;
-      if (tab === 'este_mes') {
-        return d.getFullYear() === curYear && d.getMonth() === curMonth;
+      const t = new Date(m.fecha).getTime();
+      if (isNaN(t)) return false;
+      if (tab === 'esta_semana') {
+        return t >= mondayThisWeek;
       }
-      if (tab === 'mes_pasado') {
-        return d.getFullYear() === prevYear && d.getMonth() === prevMonth;
+      if (tab === 'semana_pasada') {
+        return t >= mondayLastWeek && t < mondayThisWeek;
       }
       return true;
     });
@@ -500,7 +469,10 @@ export const RankingModal: React.FC<RankingModalProps> = ({
     for (const match of filteredMatches) {
       for (const pj of match.puntosPorJugador) {
         if (!pj.esHumano) continue;
-        const key = pj.nombre.trim();
+        const key = pj.nombre.trim().toLowerCase();
+        // Only include registered cloud accounts in weekly leaderboards
+        if (!rankingData[key]) continue;
+
         const current = playerAgg.get(key) || {
           puntos: 0,
           partidas: 0,
@@ -517,16 +489,17 @@ export const RankingModal: React.FC<RankingModalProps> = ({
     }
 
     const list: DisplayRankEntry[] = [];
-    playerAgg.forEach((val, name) => {
-      const globalRec = rankingData[name.toLowerCase()] || localRankingData[name.toLowerCase()];
+    playerAgg.forEach((val, key) => {
+      const globalRec = rankingData[key];
+      if (!globalRec || val.partidas === 0) return;
       list.push({
-        nombre: name,
+        nombre: globalRec.nombre,
         puntosTotales: val.puntos,
         partidas: val.partidas,
         victorias: val.victorias,
-        elo: globalRec?.elo || 1000,
-        avatarColor: val.color || '#ff6b6b',
-        avatarHat: globalRec?.avatarHat || 'corona',
+        elo: globalRec.elo || 1000,
+        avatarColor: globalRec.avatarColor || val.color || '#ff6b6b',
+        avatarHat: globalRec.avatarHat || 'corona',
       });
     });
 
@@ -597,13 +570,13 @@ export const RankingModal: React.FC<RankingModalProps> = ({
           </button>
         </div>
 
-        {/* Tab Filters: Local, Global, Este Mes, Mes Pasado */}
+        {/* Tab Filters: Global, Esta Semana, Semana Pasada, Local */}
         <div className="grid grid-cols-4 gap-1 p-1 bg-[#ede4d0] rounded-2xl border-2 border-[#2b2140] my-2">
           {[
             { id: 'global', label: '🌍 Global' },
+            { id: 'esta_semana', label: '📅 Esta Semana' },
+            { id: 'semana_pasada', label: '⏮️ Sem. Pasada' },
             { id: 'local', label: '📍 Local' },
-            { id: 'este_mes', label: '📅 Este Mes' },
-            { id: 'mes_pasado', label: '⏮️ Mes Pasado' },
           ].map((t) => (
             <button
               key={t.id}
@@ -668,8 +641,8 @@ export const RankingModal: React.FC<RankingModalProps> = ({
           {entries.length === 0 ? (
             <div className="p-8 text-center text-[#86542d] font-bold text-sm bg-white rounded-2xl border-2 border-dashed border-[#2b2140]/30 my-4">
               <span className="text-3xl block mb-2">🏁</span>
-              {tab === 'mes_pasado'
-                ? 'Aún no hay registros del mes pasado en este historial.'
+              {tab === 'semana_pasada'
+                ? 'Aún no hay registros de la semana pasada en este historial.'
                 : 'Aún no hay partidas registradas en esta categoría. ¡Juega una partida para inaugurar el ranking!'}
             </div>
           ) : (
@@ -709,6 +682,11 @@ export const RankingModal: React.FC<RankingModalProps> = ({
                         <span>{lvl.icono}</span>
                         <span>{lvl.titulo}</span>
                       </span>
+                      {(tab === 'esta_semana' || tab === 'semana_pasada') && index === 0 && (
+                        <span className="text-[10px] bg-[#ffd43b] text-[#5c3c00] font-black px-1.5 py-0.2 rounded border border-[#2b2140] animate-pulse">
+                          👑 Líder Semanal (+50 pts)
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-2 text-[11px] text-[#86542d] font-semibold mt-0.5">
@@ -1223,6 +1201,10 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
   const [hat, setHat] = useState<HatType>('corona');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
+  const [perfilHat, setPerfilHat] = useState<HatType>(() => usuarioActual?.avatarHat || 'corona');
+  const [perfilColor, setPerfilColor] = useState<string>(() => usuarioActual?.avatarColor || '#ff6b6b');
+  const [guardandoPersonaje, setGuardandoPersonaje] = useState(false);
+  const [personajeGuardadoMsg, setPersonajeGuardadoMsg] = useState(false);
 
   const todasLasCuentas = useMemo(() => cargarCuentas(), [usuarioActual, cargando]);
   const comunidadLista = useMemo(() => {
@@ -1370,6 +1352,142 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                     <span className="text-[11px] font-bold text-[#86542d] block">Puntos Elo</span>
                     <span className="text-lg font-black text-[#2b2140]">{usuarioActual.elo}</span>
                   </div>
+                </div>
+
+                {/* Personalizar Personaje del Usuario */}
+                <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] flex flex-col gap-2 shadow-sm text-left">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
+                      Tu Personaje Favorito
+                    </span>
+                    {personajeGuardadoMsg && (
+                      <span className="text-[10px] text-[#2b8a3e] font-black animate-bounce">
+                        ✓ ¡Guardado!
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <CartoonCharacter color={perfilColor} hat={perfilHat} size={46} showShadow={false} />
+                    <div className="flex-1">
+                      <span className="text-[11px] font-bold text-[#86542d] block leading-tight">
+                        Este personaje se equipará automáticamente en todas tus partidas.
+                      </span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-6 gap-1 mt-1">
+                    {[
+                      { id: 'corona' as HatType, label: 'Corona', icon: '👑', color: '#ff6b6b' },
+                      { id: 'pompon' as HatType, label: 'Pompón', icon: '❄️', color: '#4dabf7' },
+                      { id: 'antena' as HatType, label: 'Antena', icon: '⚡', color: '#ffd43b' },
+                      { id: 'brote' as HatType, label: 'Brote', icon: '🌱', color: '#51cf66' },
+                      { id: 'mago' as HatType, label: 'Mago', icon: '🧙', color: '#9775fa' },
+                      { id: 'gatito' as HatType, label: 'Gatito', icon: '🐱', color: '#f06595' },
+                    ].map((h) => (
+                      <button
+                        key={h.id}
+                        type="button"
+                        onClick={() => {
+                          sounds.playClick();
+                          setPerfilHat(h.id);
+                          setPerfilColor(h.color);
+                        }}
+                        className={`py-1 rounded-xl text-sm border-2 border-[#2b2140] cursor-pointer flex flex-col items-center gap-0.5 transition-all ${
+                          perfilHat === h.id ? 'bg-[#ffd43b] shadow-sm -translate-y-0.5' : 'bg-[#fff8e7] hover:bg-white'
+                        }`}
+                        title={h.label}
+                      >
+                        <span>{h.icon}</span>
+                        <span className="text-[8px] font-bold">{h.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={guardandoPersonaje}
+                    onClick={async () => {
+                      sounds.playClick();
+                      setGuardandoPersonaje(true);
+                      try {
+                        const actualizado: UserAccount = {
+                          ...usuarioActual,
+                          avatarHat: perfilHat,
+                          avatarColor: perfilColor,
+                        };
+                        await actualizarCuentaAsync(actualizado);
+                        onLoginSuccess(actualizado);
+                        setPersonajeGuardadoMsg(true);
+                        setTimeout(() => setPersonajeGuardadoMsg(false), 2500);
+                      } catch {
+                        // ignore
+                      } finally {
+                        setGuardandoPersonaje(false);
+                      }
+                    }}
+                    className="w-full py-1.5 rounded-xl font-black text-xs bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer mt-1 flex items-center justify-center gap-1.5"
+                  >
+                    <span>💾</span>
+                    <span>{guardandoPersonaje ? 'Guardando...' : 'Guardar Mi Personaje'}</span>
+                  </button>
+                </div>
+
+                {/* Historial de Partidas */}
+                <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] flex flex-col gap-2 shadow-sm text-left">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
+                      📜 Historial de Partidas
+                    </span>
+                    <span className="text-[10px] font-bold text-[#86542d]">
+                      Últimas {usuarioActual.historialPartidas?.length || 0}
+                    </span>
+                  </div>
+
+                  {usuarioActual.historialPartidas && usuarioActual.historialPartidas.length > 0 ? (
+                    <div className="flex flex-col gap-1.5 max-h-40 overflow-y-auto pr-1">
+                      {usuarioActual.historialPartidas.map((item) => {
+                        const esVictoria = item.resultado === 'victoria';
+                        const esEmpate = item.resultado === 'empate';
+                        const badgeColor = esVictoria
+                          ? 'bg-[#d3f9d8] text-[#134e20] border-[#2b8a3e]'
+                          : esEmpate
+                          ? 'bg-[#fff3bf] text-[#8f4b00] border-[#f59f00]'
+                          : 'bg-[#ffe3e3] text-[#c92a2a] border-[#e03131]';
+                        const d = new Date(item.fecha);
+                        const fechaStr = !isNaN(d.getTime())
+                          ? `${d.getDate()}/${d.getMonth() + 1}`
+                          : '';
+
+                        return (
+                          <div
+                            key={item.id}
+                            className="p-1.5 rounded-xl border border-[#2b2140]/20 bg-[#f8f9fa] flex items-center justify-between gap-2 text-xs"
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span
+                                className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${badgeColor} shrink-0`}
+                              >
+                                {esVictoria ? '🏆 Victoria' : esEmpate ? '🤝 Empate' : '❌ Derrota'}
+                              </span>
+                              <div className="min-w-0 truncate">
+                                <span className="font-bold text-[#2b2140] text-[11px] block truncate">
+                                  vs {item.rivales || 'Rival'}
+                                </span>
+                                <span className="text-[9px] text-[#868e96] block">
+                                  {fechaStr} • {item.duracionSegundos}s
+                                </span>
+                              </div>
+                            </div>
+                            <span className="font-mono-num font-black text-[11px] text-[#2b8a3e] shrink-0">
+                              +{item.puntos} pts
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-[#f8f9fa] rounded-xl border border-dashed border-[#2b2140]/30 text-center text-xs text-[#868e96]">
+                      Aún no tienes partidas registradas. ¡Juega una partida para ver tu récord aquí!
+                    </div>
+                  )}
                 </div>
 
                 {usuarioActual.rol === 'admin' && (
@@ -1576,27 +1694,31 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
 
               {tab === 'registro' && (
                 <div>
-                  <label className="text-xs font-bold text-[#86542d] block mb-1">Color y Sombrero:</label>
-                  <div className="grid grid-cols-4 gap-1">
+                  <label className="text-xs font-bold text-[#86542d] block mb-1">Elige tu Personaje (6 Disponibles):</label>
+                  <div className="grid grid-cols-6 gap-1">
                     {[
-                      { id: 'corona', icon: '👑', color: '#ff6b6b' },
-                      { id: 'pompon', icon: '❄️', color: '#4dabf7' },
-                      { id: 'antena', icon: '⚡', color: '#ffd43b' },
-                      { id: 'brote', icon: '🌱', color: '#51cf66' },
+                      { id: 'corona' as HatType, icon: '👑', color: '#ff6b6b', label: 'Corona' },
+                      { id: 'pompon' as HatType, icon: '❄️', color: '#4dabf7', label: 'Pompón' },
+                      { id: 'antena' as HatType, icon: '⚡', color: '#ffd43b', label: 'Antena' },
+                      { id: 'brote' as HatType, icon: '🌱', color: '#51cf66', label: 'Brote' },
+                      { id: 'mago' as HatType, icon: '🧙', color: '#9775fa', label: 'Mago' },
+                      { id: 'gatito' as HatType, icon: '🐱', color: '#f06595', label: 'Gatito' },
                     ].map((item) => (
                       <button
                         key={item.id}
                         type="button"
                         onClick={() => {
                           sounds.playClick();
-                          setHat(item.id as HatType);
+                          setHat(item.id);
                           setColor(item.color);
                         }}
-                        className={`py-1 rounded-xl text-base border-2 border-[#2b2140] cursor-pointer ${
-                          hat === item.id ? 'bg-[#ffd43b] shadow-sm' : 'bg-white'
+                        className={`py-1 rounded-xl text-sm border-2 border-[#2b2140] cursor-pointer flex flex-col items-center gap-0.5 ${
+                          hat === item.id ? 'bg-[#ffd43b] shadow-sm -translate-y-0.5' : 'bg-white'
                         }`}
+                        title={item.label}
                       >
-                        {item.icon}
+                        <span>{item.icon}</span>
+                        <span className="text-[8px] font-bold">{item.label}</span>
                       </button>
                     ))}
                   </div>

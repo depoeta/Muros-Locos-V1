@@ -9,7 +9,6 @@ import {
   formatRoomPeerId,
   generarCodigoSala,
   onlineService,
-  SALAS_PUBLICAS,
 } from '../game/onlineService';
 import { HatType, OnlinePlayerInfo, PublicRoomInfo, UserAccount } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
@@ -58,6 +57,10 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
   useEffect(() => {
     if (tab === 'publicas') {
       recargarSalasPublicas();
+      const interval = setInterval(() => {
+        recargarSalasPublicas();
+      }, 4000);
+      return () => clearInterval(interval);
     }
   }, [tab]);
 
@@ -65,7 +68,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
   useEffect(() => {
     onlineService.setCallbacks({
       onLobbyUpdate: (players, max) => {
-        setJugadoresEnLobby(players);
+        setJugadoresEnLobby([...players]);
         setMaxJugadores(max);
         setTab('en_sala');
         setConectando(false);
@@ -182,11 +185,23 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
   const isHost = onlineService.getRole() === 'host';
   const puedeEmpezar = isHost && jugadoresEnLobby.length >= 2;
 
+  // Auto-start when lobby reaches required capacity
+  useEffect(() => {
+    if (isHost && tab === 'en_sala' && jugadoresEnLobby.length >= maxJugadores) {
+      const timer = setTimeout(() => {
+        onIniciarPartidaOnline(maxJugadores);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [isHost, tab, jugadoresEnLobby.length, maxJugadores, onIniciarPartidaOnline]);
+
   const hatsList: { id: HatType; label: string; icon: string; defaultColor: string }[] = [
     { id: 'corona', label: 'Corona', icon: '👑', defaultColor: '#ff6b6b' },
     { id: 'pompon', label: 'Pompón', icon: '❄️', defaultColor: '#4dabf7' },
     { id: 'antena', label: 'Antena', icon: '⚡', defaultColor: '#ffd43b' },
     { id: 'brote', label: 'Brote', icon: '🌱', defaultColor: '#51cf66' },
+    { id: 'mago', label: 'Mago', icon: '🧙', defaultColor: '#9775fa' },
+    { id: 'gatito', label: 'Gatito', icon: '🐱', defaultColor: '#f06595' },
   ];
 
   return (
@@ -308,8 +323,8 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
               </div>
             </div>
 
-            {/* Hat Selection */}
-            <div className="grid grid-cols-4 gap-1.5 mt-1">
+            {/* Hat Selection (6 characters) */}
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mt-1">
               {hatsList.map((h) => (
                 <button
                   key={h.id}
@@ -355,11 +370,11 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                 </button>
               </div>
 
-              {/* Salas Comunitarias Dinámicas */}
-              {salasDinamicas.length > 0 && (
+              {/* Salas Públicas Abiertas Dinámicas */}
+              {salasDinamicas.length > 0 ? (
                 <div className="flex flex-col gap-1.5">
                   <span className="text-[10px] font-black uppercase text-[#2b8a3e] tracking-wider">
-                    🟢 Salas Abiertas por Jugadores ({salasDinamicas.length})
+                    🟢 Salas Públicas Abiertas ({salasDinamicas.length})
                   </span>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {salasDinamicas.map((sala) => (
@@ -388,39 +403,28 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                     ))}
                   </div>
                 </div>
-              )}
-
-              {/* Arenas fijas */}
-              <div className="flex flex-col gap-1.5 mt-1">
-                <span className="text-[10px] font-black uppercase text-[#593922] tracking-wider">
-                  🏟️ Arenas de Encuentro Rápido
-                </span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {SALAS_PUBLICAS.map((s) => (
-                    <button
-                      key={s.id}
-                      disabled={conectando}
-                      onClick={() => handleEntrarSalaPublica(s.id, s.max)}
-                      className="p-3 rounded-xl border-2 border-[#2b2140] bg-[#fff8e7] hover:bg-[#fff3bf] active:translate-y-0.5 shadow-[0_2px_0_#2b2140] flex flex-col text-left transition-all cursor-pointer group"
-                    >
-                      <div className="flex items-center justify-between w-full">
-                        <span className="font-black text-sm text-[#2b2140] group-hover:text-[#d9480f]">
-                          {s.nombre}
-                        </span>
-                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-[#dee2e6] border border-[#2b2140]">
-                          {s.max}P
-                        </span>
-                      </div>
-                      <span className="text-[11px] font-semibold text-[#86542d] mt-1">
-                        {s.desc}
-                      </span>
-                      <span className="text-[10px] text-[#2b8a3e] font-bold mt-1.5 flex items-center gap-1">
-                        ▶ Clic para entrar o esperar
-                      </span>
-                    </button>
-                  ))}
+              ) : (
+                <div className="p-6 rounded-xl border-2 border-dashed border-[#2b2140]/30 bg-[#f8f9fa] flex flex-col items-center justify-center text-center gap-2">
+                  <span className="text-3xl">🏜️</span>
+                  <span className="text-xs font-bold text-[#86542d]">
+                    No hay salas públicas abiertas en este momento.
+                  </span>
+                  <span className="text-[11px] text-[#868e96]">
+                    ¡Crea una sala y márcala como pública para que otros jugadores puedan unirse!
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sounds.playClick();
+                      setPublicarEnLista(true);
+                      setTab('crear');
+                    }}
+                    className="mt-1 py-1.5 px-3 bg-[#ffd43b] text-[#5c3c00] rounded-xl border-2 border-[#2b2140] text-xs font-black shadow-[0_2px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer"
+                  >
+                    👑 Crear Sala Pública Ahora
+                  </button>
                 </div>
-              </div>
+              )}
             </div>
           )}
 
@@ -626,9 +630,20 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
 
           {/* Status & Instant Start Info */}
           {jugadoresEnLobby.length >= maxJugadores ? (
-            <div className="p-3.5 bg-[#d3f9d8] text-[#134e20] rounded-2xl border-3 border-[#2b2140] text-sm font-black text-center shadow-[0_4px_0_#2b2140] animate-bounce flex items-center justify-center gap-2">
-              <span>🚀</span>
-              <span>¡Rival conectado! Iniciando partida automáticamente...</span>
+            <div className="flex flex-col gap-2">
+              <div className="p-3 bg-[#d3f9d8] text-[#134e20] rounded-2xl border-3 border-[#2b2140] text-sm font-black text-center shadow-[0_4px_0_#2b2140] animate-bounce flex items-center justify-center gap-2">
+                <span>🚀</span>
+                <span>¡Rival conectado! Iniciando partida automáticamente...</span>
+              </div>
+              {isHost && (
+                <button
+                  type="button"
+                  onClick={() => onIniciarPartidaOnline(maxJugadores)}
+                  className="w-full py-2.5 bg-[#ffd43b] text-[#5c3c00] rounded-xl border-2 border-[#2b2140] font-black text-sm shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer"
+                >
+                  ▶ Iniciar Partida Ahora Mismo
+                </button>
+              )}
             </div>
           ) : (
             <div className="p-3 bg-[#e7f5ff] text-[#1864ab] rounded-2xl border-2 border-[#2b2140] text-xs font-bold text-center shadow-sm flex items-center justify-center gap-2 animate-pulse">

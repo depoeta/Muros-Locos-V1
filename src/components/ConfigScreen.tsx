@@ -5,9 +5,18 @@
 
 import React, { useState } from 'react';
 import { sounds } from '../audio/murosAudio';
-import { AppSettings, BoardTheme, MatchConfig, PlayerType, UserAccount } from '../types/murosLocos';
+import { AppSettings, BoardTheme, HatType, MatchConfig, PlayerType, UserAccount } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
 import { actualizarNombreInvitadoLocal } from '../game/storage';
+
+const ALL_HATS: { hat: HatType; color: string }[] = [
+  { hat: 'corona', color: '#ff6b6b' },
+  { hat: 'pompon', color: '#4dabf7' },
+  { hat: 'antena', color: '#ffd43b' },
+  { hat: 'brote', color: '#51cf66' },
+  { hat: 'mago', color: '#9775fa' },
+  { hat: 'gatito', color: '#f06595' },
+];
 
 interface ConfigScreenProps {
   ajustes?: AppSettings;
@@ -29,13 +38,13 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
     () => usuarioActual?.temaTablero || ajustes?.temaTablero || 'madera'
   );
   const [jugadores, setJugadores] = useState<
-    { nombre: string; tipo: PlayerType; color: string; hat: 'corona' | 'pompon' | 'antena' | 'brote' }[]
+    { nombre: string; tipo: PlayerType; color: string; hat: HatType }[]
   >(() => [
     {
       nombre: usuarioActual?.nombre || 'Tú',
       tipo: 'humano',
       color: usuarioActual?.avatarColor || '#ff6b6b',
-      hat: (usuarioActual?.avatarHat as any) || 'corona',
+      hat: usuarioActual?.avatarHat || 'corona',
     },
     { nombre: 'Bot Normal', tipo: 'bot_normal', color: '#4dabf7', hat: 'pompon' },
     { nombre: 'Bot Fácil', tipo: 'bot_facil', color: '#ffd43b', hat: 'antena' },
@@ -289,12 +298,24 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
               key={idx}
               className="p-2.5 bg-white rounded-2xl border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] flex items-center gap-3 animate-[slideDown_0.2s_ease-out]"
             >
-              <CartoonCharacter
-                color={j.color}
-                hat={j.hat}
-                size={44}
-                showShadow={false}
-              />
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  const curIdx = ALL_HATS.findIndex((h) => h.hat === j.hat);
+                  const nextH = ALL_HATS[(curIdx + 1) % ALL_HATS.length];
+                  updateJugador(idx, { hat: nextH.hat, color: nextH.color });
+                }}
+                className="hover:scale-110 active:scale-95 transition-transform cursor-pointer shrink-0"
+                title="Clic para cambiar personaje"
+              >
+                <CartoonCharacter
+                  color={j.color}
+                  hat={j.hat}
+                  size={44}
+                  showShadow={false}
+                />
+              </button>
 
               <div className="flex-1 min-w-0">
                 <input

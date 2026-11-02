@@ -13,15 +13,9 @@ import {
   OnlinePlayerInfo,
   WallOrientation,
 } from '../types/murosLocos';
+import { getApiBaseUrl } from './storage';
 
 export const SESSION_STORAGE_KEY = 'muros_locos_active_online_session';
-
-export const SALAS_PUBLICAS = [
-  { id: 'PUB-ALFA', nombre: 'Sala Alfa 🌟', desc: 'Partida Rápida 1 vs 1', max: 2 as const },
-  { id: 'PUB-BETA', nombre: 'Sala Beta ⚡', desc: 'Partida Rápida 1 vs 1', max: 2 as const },
-  { id: 'PUB-DUELO', nombre: 'Duelo de Titanes 👑', desc: 'Reto Estratégico 1 vs 1', max: 2 as const },
-  { id: 'PUB-FIESTA', nombre: 'Gran Fiesta 4P 🎉', desc: 'Todos contra Todos (4 Jugadores)', max: 4 as const },
-];
 
 export function generarCodigoSala(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -273,7 +267,7 @@ class OnlineManager {
         this.startHeartbeat();
 
         if (this.callbacks.onLobbyUpdate) {
-          this.callbacks.onLobbyUpdate(this.lobbyPlayers, this.maxPlayers);
+          this.callbacks.onLobbyUpdate([...this.lobbyPlayers], this.maxPlayers);
         }
         resolve(this.roomCode);
       });
@@ -400,15 +394,16 @@ class OnlineManager {
   }
 
   private broadcastLobbyUpdate() {
+    const list = [...this.lobbyPlayers];
     const updateMsg: OnlineMessage = {
       type: 'LOBBY_UPDATE',
       roomCode: this.roomCode,
       maxJugadores: this.maxPlayers,
-      jugadores: this.lobbyPlayers,
+      jugadores: list,
     };
     this.broadcast(updateMsg);
     if (this.callbacks.onLobbyUpdate) {
-      this.callbacks.onLobbyUpdate(this.lobbyPlayers, this.maxPlayers);
+      this.callbacks.onLobbyUpdate(list, this.maxPlayers);
     }
   }
 
@@ -800,7 +795,7 @@ class OnlineManager {
   // ===================== SALAS PÚBLICAS DINÁMICAS =====================
   public async obtenerSalasPublicas(): Promise<any[]> {
     try {
-      const res = await fetch('/api/salas');
+      const res = await fetch(getApiBaseUrl('/api/salas'));
       if (res.ok) {
         const list = await res.json();
         if (Array.isArray(list)) return list;
@@ -817,7 +812,7 @@ class OnlineManager {
     if (!code) return false;
     const nombre = typeof input === 'string' ? input : info.nombre || `Sala ${code}`;
     try {
-      const res = await fetch('/api/salas', {
+      const res = await fetch(getApiBaseUrl('/api/salas'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -839,7 +834,7 @@ class OnlineManager {
   public async eliminarSalaPublica(): Promise<void> {
     if (!this.roomCode) return;
     try {
-      await fetch(`/api/salas/${this.roomCode}`, {
+      await fetch(getApiBaseUrl(`/api/salas/${encodeURIComponent(this.roomCode)}`), {
         method: 'DELETE',
       });
     } catch {}
