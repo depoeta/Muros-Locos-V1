@@ -1,11 +1,14 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * Modales unificados: AspectoModal, AjustesModal, ComoJugarModal, LogrosModal,
+ * RankingModal, TorneoModal, VictoryModal, PerfilModal y AdminPanelModal.
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
 import confetti from 'canvas-confetti';
-import { sounds } from '../audio/murosAudio';
+import { sounds } from '../game/murosLocosEngine';
 import {
   AchievementDef,
   AppSettings,
@@ -13,41 +16,289 @@ import {
   GameState,
   HatType,
   LevelInfo,
-  MatchResultRecord,
+  PERSONAJES_REGISTRO,
   RankEntry,
   ScoreBreakdown,
-  PERSONAJES_REGISTRO,
   TorneoState,
   UserAccount,
+  WeeklyRankingResponse,
 } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
+import { PWAInstallButton } from './PWAInstallControl';
 import {
   actualizarCuentaAsync,
-  adminActualizarUsuario,
   adminActualizarUsuarioAsync,
-  adminEliminarUsuario,
   adminEliminarUsuarioAsync,
-  adminResetearRanking,
   adminResetearRankingAsync,
   borrarRankingLocal,
   cargarCuentas,
-  cargarHistorial,
   cargarRanking,
   cargarRankingLocal,
   cerrarSesion,
   darDeBajaUsuarioAsync,
-  estaKvConectado,
   exportarDatosJSON,
-  getApiBaseUrl,
-  guardarCuentas,
-  guardarRanking,
-  importarDatosJSON,
+  importarDatosJSONAsync,
   iniciarSesionAsync,
+  restablecerClaveUsuarioAsync,
   LOGROS_LISTA,
+  NetworkDiagnostic,
+  obtenerDiagnosticoRed,
   obtenerNivelYTitulo,
+  obtenerRankingSemanalAsync,
+  pingServidor,
   registrarUsuarioAsync,
   sincronizarConNube,
+  suscribirCambiosNube,
+  suscribirDiagnostico,
+  verificarAccionAdminEnKV,
 } from '../game/storage';
+
+export const TEMAS_LISTA: {
+  id: BoardTheme;
+  label: string;
+  desc: string;
+  border: string;
+  bg: string;
+}[] = [
+  { id: 'madera', label: '🪵 Madera', desc: 'Clásica de bosque', border: 'border-[#86542d]', bg: 'bg-[#ffec99]' },
+  { id: 'neon', label: '⚡ Neón', desc: 'Cyberpunk brillante', border: 'border-[#0c8599]', bg: 'bg-[#c5f6fa]' },
+  { id: 'hielo', label: '❄️ Hielo', desc: 'Escarcha ártica', border: 'border-[#1971c2]', bg: 'bg-[#d0ebff]' },
+  { id: 'lava', label: '🌋 Lava', desc: 'Magma volcánico', border: 'border-[#c92a2a]', bg: 'bg-[#ffe3e3]' },
+];
+
+// =========================================================================
+// 0. ASPECTO MODAL (Unificado aquí para reducir archivos)
+// =========================================================================
+interface AspectoModalProps {
+  onCerrar: () => void;
+  personajeActual: { hat: HatType; color: string };
+  temaActual: BoardTheme;
+  usuarioActual?: UserAccount | null;
+  onAplicar: (nuevoPersonaje: { hat: HatType; color: string }, nuevoTema: BoardTheme) => void;
+  onUsuarioActualizado?: (u: UserAccount) => void;
+  onShowToast?: (msg: string) => void;
+}
+
+export const AspectoModal: React.FC<AspectoModalProps> = ({
+  onCerrar,
+  personajeActual,
+  temaActual,
+  usuarioActual,
+  onAplicar,
+  onUsuarioActualizado,
+  onShowToast,
+}) => {
+  const [selectedHat, setSelectedHat] = useState<HatType>(personajeActual.hat || 'corona');
+  const [selectedColor, setSelectedColor] = useState<string>(personajeActual.color || '#ff6b6b');
+  const [selectedTema, setSelectedTema] = useState<BoardTheme>(temaActual || 'madera');
+  const [guardarEnPerfil, setGuardarEnPerfil] = useState(Boolean(usuarioActual));
+  const [guardando, setGuardando] = useState(false);
+
+  const userPoints = usuarioActual?.puntos || 0;
+  const esAdmin = Boolean(usuarioActual && (usuarioActual.rol === 'admin' || usuarioActual.id === 'admin'));
+
+  const isPersonajeDesbloqueado = (puntosReq: number) => {
+    if (puntosReq === 0) return true;
+    if (esAdmin) return true;
+    return userPoints >= puntosReq;
+  };
+
+  const handleSeleccionarPersonaje = (p: (typeof PERSONAJES_REGISTRO)[0]) => {
+    if (!isPersonajeDesbloqueado(p.puntosRequeridos)) {
+      sounds.playError();
+      onShowToast?.(`🔒 ${p.label} se desbloquea al alcanzar ${p.puntosRequeridos} puntos`);
+      return;
+    }
+    sounds.playClick();
+    setSelectedHat(p.id);
+    setSelectedColor(p.defaultColor);
+  };
+
+  const handleGuardarYAplicar = async () => {
+    sounds.playClick();
+    setGuardando(true);
+
+    try {
+      if (usuarioActual && guardarEnPerfil) {
+        const updated: UserAccount = {
+          ...usuarioActual,
+          avatarHat: selectedHat,
+          avatarColor: selectedColor,
+          temaTablero: selectedTema,
+        };
+        const freshSaved = await actualizarCuentaAsync(updated);
+        onUsuarioActualizado?.(freshSaved);
+        onShowToast?.('⭐ Personaje y terreno guardados como predeterminados en tu perfil');
+      }
+
+      onAplicar({ hat: selectedHat, color: selectedColor }, selectedTema);
+      onCerrar();
+    } catch {
+      onAplicar({ hat: selectedHat, color: selectedColor }, selectedTema);
+      onCerrar();
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  const activeCharDef =
+    PERSONAJES_REGISTRO.find((p) => p.id === selectedHat) || PERSONAJES_REGISTRO[0];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+      <div className="relative w-full max-w-md bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-4 sm:p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col max-h-[92vh] overflow-y-auto">
+        <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">🎨</span>
+            <div>
+              <h3 className="text-lg sm:text-xl font-black text-[#2b2140] leading-none">
+                Aspecto y Terreno
+              </h3>
+              <span className="text-[11px] font-bold text-[#86542d]">
+                {usuarioActual
+                  ? `⭐ Tus puntos: ${userPoints}`
+                  : '💡 Modo Invitado (Crea perfil para desbloquear más)'}
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onCerrar();
+            }}
+            className="w-8 h-8 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-sm font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] flex items-center justify-center cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex items-center gap-3 mb-3">
+          <CartoonCharacter color={selectedColor} hat={selectedHat} size={54} showShadow={false} />
+          <div className="flex-1 min-w-0">
+            <span className="text-[10px] font-black text-[#593922] uppercase tracking-wider block">
+              Vista Previa Activa
+            </span>
+            <span className="font-extrabold text-sm text-[#2b2140] flex items-center gap-1.5">
+              <span>{activeCharDef.icon}</span>
+              <span>{activeCharDef.label}</span>
+            </span>
+            <span className="text-[11px] font-bold text-[#86542d] block truncate">
+              Terreno: {TEMAS_LISTA.find((t) => t.id === selectedTema)?.label}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-1.5 mb-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
+              1. Elige tu Personaje
+            </span>
+            <span className="text-[10px] font-bold text-[#2b8a3e]">
+              {PERSONAJES_REGISTRO.filter((p) => isPersonajeDesbloqueado(p.puntosRequeridos)).length}/10 Desbloqueados
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+            {PERSONAJES_REGISTRO.map((p) => {
+              const isSelected = selectedHat === p.id;
+              const unlocked = isPersonajeDesbloqueado(p.puntosRequeridos);
+
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => handleSeleccionarPersonaje(p)}
+                  className={`relative p-2 rounded-2xl border-2 border-[#2b2140] cursor-pointer flex flex-col items-center gap-1 transition-all ${
+                    !unlocked
+                      ? 'bg-[#f1f3f5] opacity-70 hover:opacity-90'
+                      : isSelected
+                      ? 'bg-[#ffd43b] shadow-[0_3px_0_#2b2140] -translate-y-0.5'
+                      : 'bg-white hover:bg-[#f8f9fa]'
+                  }`}
+                  title={unlocked ? p.label : `Requiere ${p.puntosRequeridos} puntos`}
+                >
+                  {!unlocked && (
+                    <div className="absolute top-1 right-1 bg-[#2b2140] text-[#ffd43b] text-[9px] font-black rounded-full w-4 h-4 flex items-center justify-center">
+                      🔒
+                    </div>
+                  )}
+
+                  <div className={!unlocked ? 'grayscale' : ''}>
+                    <CartoonCharacter color={p.defaultColor} hat={p.id} size={36} showShadow={false} />
+                  </div>
+                  <span className="text-[10px] font-extrabold text-[#2b2140] text-center leading-tight">
+                    {p.label}
+                  </span>
+                  {!unlocked && (
+                    <span className="text-[8px] font-black text-[#e03131] leading-none">
+                      {p.puntosRequeridos} pts
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-1.5 mb-3">
+          <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
+            2. Terreno de la Arena / Tablero
+          </span>
+          <div className="grid grid-cols-2 gap-2">
+            {TEMAS_LISTA.map((theme) => {
+              const isSelected = selectedTema === theme.id;
+              return (
+                <button
+                  key={theme.id}
+                  type="button"
+                  onClick={() => {
+                    sounds.playClick();
+                    setSelectedTema(theme.id);
+                  }}
+                  className={`p-2 rounded-xl border-2 text-xs font-black cursor-pointer transition-all flex flex-col items-center gap-0.5 ${theme.border} ${
+                    isSelected
+                      ? `${theme.bg} shadow-[0_3px_0_#2b2140] scale-[1.02]`
+                      : 'bg-white opacity-80 hover:opacity-100 hover:bg-slate-50'
+                  }`}
+                >
+                  <span className="text-sm font-bold">{theme.label}</span>
+                  <span className="text-[9px] font-medium text-[#495057]">{theme.desc}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {usuarioActual ? (
+          <label className="flex items-center gap-2 p-2 bg-[#e7f5ff] rounded-xl border border-[#2b2140]/30 cursor-pointer mb-3 select-none">
+            <input
+              type="checkbox"
+              checked={guardarEnPerfil}
+              onChange={(e) => setGuardarEnPerfil(e.target.checked)}
+              className="w-4 h-4 rounded text-[#1971c2] cursor-pointer"
+            />
+            <span className="text-[11px] font-bold text-[#1864ab] leading-tight">
+              ⭐ Guardar como mi personaje y terreno predeterminados en mi Perfil
+            </span>
+          </label>
+        ) : (
+          <div className="p-2 bg-[#fff9db] rounded-xl border border-[#2b2140]/20 mb-3 text-[11px] text-[#8f4b00] font-semibold leading-tight">
+            💡 <strong>Modo Invitado:</strong> Inicia sesión en Mi Perfil para dejar tu personaje y terreno guardados de forma predeterminada.
+          </div>
+        )}
+
+        <button
+          type="button"
+          disabled={guardando}
+          onClick={handleGuardarYAplicar}
+          className="w-full py-2.5 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-1.5"
+        >
+          <span>✓</span>
+          <span>{guardando ? 'Guardando...' : 'Aplicar Aspecto'}</span>
+        </button>
+      </div>
+    </div>
+  );
+};
 
 // =========================================================================
 // 1. AJUSTES MODAL
@@ -58,11 +309,7 @@ interface AjustesModalProps {
   onCerrar: () => void;
 }
 
-export const AjustesModal: React.FC<AjustesModalProps> = ({
-  ajustes,
-  onGuardar,
-  onCerrar,
-}) => {
+export const AjustesModal: React.FC<AjustesModalProps> = ({ ajustes, onGuardar, onCerrar }) => {
   const [localAjustes, setLocalAjustes] = useState<AppSettings>({ ...ajustes });
 
   const toggle = (key: keyof AppSettings) => {
@@ -70,7 +317,7 @@ export const AjustesModal: React.FC<AjustesModalProps> = ({
     setLocalAjustes((prev) => {
       const next = { ...prev, [key]: !prev[key] };
       if (key === 'sonido') {
-        sounds.setEnabled(next.sonido);
+        sounds.setEnabled(Boolean(next.sonido));
       }
       return next;
     });
@@ -84,11 +331,13 @@ export const AjustesModal: React.FC<AjustesModalProps> = ({
 
   const opciones: { key: keyof AppSettings; label: string; desc: string; icon: string }[] = [
     { key: 'sonido', label: 'Efectos de Sonido', desc: 'Sonidos retro y efectos en cada jugada', icon: '🔊' },
-    { key: 'animacionesReducidas', label: 'Animaciones Reducidas', desc: 'Desactiva efectos visuales continuos', icon: '⚡' },
-    { key: 'mostrarDistancia', label: 'Mostrar Distancia a Meta', desc: 'Indica los pasos mínimos en la tarjeta del jugador', icon: '📏' },
-    { key: 'permitirDeshacer', label: 'Permitir Deshacer', desc: 'Permite retroceder turnos con penalización (-10 pts)', icon: '↩️' },
-    { key: 'permitirPistas', label: 'Permitir Pistas', desc: 'Muestra el camino óptimo hacia la meta (-5 pts)', icon: '💡' },
-    { key: 'modoDaltonico', label: 'Modo Alto Contraste / Daltónico', desc: 'Iconos y patrones geométricos distintivos', icon: '👁️' },
+    { key: 'cambiarVistaPorTurno', label: 'Cambiar Vista en Turno Local', desc: 'Cambia al lado del jugador activo sin girar (2+ humanos)', icon: '🔄' },
+    { key: 'vistaPropiaOnline', label: 'Mi Lado Abajo en Online', desc: 'Muestra tu ficha abajo de forma fija sin girar', icon: '🧭' },
+    { key: 'animacionesReducidas', label: 'Animaciones Reducidas', desc: 'Simplifica transiciones visuales del juego', icon: '⚡' },
+    { key: 'mostrarDistancia', label: 'Mostrar Distancia a Meta', desc: 'Indica los pasos mínimos en la tarjeta', icon: '📏' },
+    { key: 'permitirDeshacer', label: 'Permitir Deshacer', desc: 'Permite retroceder turnos (-2 pts)', icon: '↩️' },
+    { key: 'permitirPistas', label: 'Permitir Pistas', desc: 'Muestra el camino óptimo a la meta (-1 pt)', icon: '💡' },
+    { key: 'modoDaltonico', label: 'Modo Alto Contraste / Daltónico', desc: 'Iconos distintivos en las metas', icon: '👁️' },
   ];
 
   return (
@@ -110,8 +359,10 @@ export const AjustesModal: React.FC<AjustesModalProps> = ({
         </div>
 
         <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-2.5 my-2">
+          <PWAInstallButton variant="card" />
+
           {opciones.map((op) => {
-            const activo = localAjustes[op.key];
+            const activo = Boolean(localAjustes[op.key]);
             return (
               <div
                 key={op.key}
@@ -162,11 +413,7 @@ export const AjustesModal: React.FC<AjustesModalProps> = ({
 // =========================================================================
 // 2. CÓMO SE JUEGA MODAL
 // =========================================================================
-interface ComoSeJuegaModalProps {
-  onCerrar: () => void;
-}
-
-export const ComoSeJuegaModal: React.FC<ComoSeJuegaModalProps> = ({ onCerrar }) => {
+export const ComoJugarModal: React.FC<{ onCerrar: () => void }> = ({ onCerrar }) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
       <div className="relative w-full max-w-lg bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 sm:p-6 shadow-[0_10px_0_#2b2140,0_20px_30px_rgba(0,0,0,0.3)] flex flex-col max-h-[90vh]">
@@ -191,21 +438,20 @@ export const ComoSeJuegaModal: React.FC<ComoSeJuegaModalProps> = ({ onCerrar }) 
               <span>🎯</span> Objetivo del Juego
             </h4>
             <p className="leading-relaxed">
-              Sé el primero en llevar tu ficha hasta cualquier casilla del extremo opuesto del tablero.
-              En partidas de 2 jugadores, cruzas de arriba a abajo o viceversa. En 4 jugadores, cada uno cruza hacia su lado opuesto.
+              Sé el primero en llevar tu personaje hasta cualquier casilla del extremo opuesto del tablero.
             </p>
           </div>
 
           <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm">
             <h4 className="font-black text-sm text-[#2b2140] flex items-center gap-1.5 mb-1">
-              <span>🎲</span> En tu turno puedes elegir UNA acción:
+              <span>🎲</span> En tu turno elige UNA acción:
             </h4>
             <ul className="list-disc list-inside space-y-1 pl-1 leading-relaxed">
               <li>
-                <strong>Mover tu ficha:</strong> 1 paso ortogonal (arriba, abajo, izquierda, derecha) a una casilla libre.
+                <strong>Mover tu ficha:</strong> 1 paso ortogonal (arriba, abajo, izquierda, derecha).
               </li>
               <li>
-                <strong>Colocar un muro:</strong> Pon un muro de 2 casillas de largo (Horizontal o Vertical) entre las intersecciones.
+                <strong>Colocar un muro:</strong> Pon un muro de 2 casillas (Horizontal o Vertical) entre intersecciones.
               </li>
             </ul>
           </div>
@@ -215,17 +461,40 @@ export const ComoSeJuegaModal: React.FC<ComoSeJuegaModalProps> = ({ onCerrar }) 
               <span>🦘</span> Saltos sobre rivales
             </h4>
             <p className="leading-relaxed">
-              Si estás frente a un rival y no hay un muro detrás de él, ¡puedes saltar sobre él hacia la casilla posterior! Si hay un muro o el borde detrás, puedes saltar en diagonal a los lados.
+              Si estás frente a un rival y no hay un muro detrás, puedes saltarlo. Si hay un muro detrás, puedes saltar en diagonal a los lados.
             </p>
           </div>
 
           <div className="p-3 bg-[#fff3bf] rounded-2xl border-2 border-[#2b2140] shadow-sm">
             <h4 className="font-black text-sm text-[#8f4b00] flex items-center gap-1.5 mb-1">
-              <span>⚠️</span> ¡La Regla de Oro de los Muros!
+              <span>⚠️</span> Regla de Oro de los Muros
             </h4>
             <p className="leading-relaxed text-[#744210]">
-              <strong>NUNCA</strong> puedes encerrar totalmente a un jugador. Siempre debe quedar al menos un camino libre hacia la meta para todos los participantes.
+              <strong>NUNCA</strong> puedes encerrar por completo a un jugador. Siempre debe quedar al menos un camino libre hasta su meta.
             </p>
+          </div>
+
+          <div className="p-3 bg-[#d3f9d8] rounded-2xl border-2 border-[#2b2140] shadow-sm">
+            <h4 className="font-black text-sm text-[#134e20] flex items-center gap-1.5 mb-1">
+              <span>⭐</span> Sistema de Puntos
+            </h4>
+            <ul className="list-disc list-inside space-y-1 pl-1 leading-relaxed text-[#1b4332]">
+              <li>
+                <strong>Victoria en partida:</strong> <strong>+5 pts</strong> por ganar.
+              </li>
+              <li>
+                <strong>Uso de muros:</strong> <strong>+1 pt</strong> por cada muro colocado.
+              </li>
+              <li>
+                <strong>¡Por los pelos!:</strong> <strong>+5 pts extra</strong> si ganas cuando un rival estaba a solo <strong>1 cuadro</strong> de su meta.
+              </li>
+              <li>
+                <strong>Torneos:</strong> <strong>+5 pts</strong> por cada ronda ganada (más muros y final ajustado) y <strong>+10 pts adicionales</strong> si ganas el torneo completo.
+              </li>
+              <li>
+                <strong>Penalizaciones:</strong> Pista (<strong>-1 pt</strong>), Deshacer (<strong>-2 pts</strong>), Tiempo agotado (<strong>-1 pt</strong>) y Abandonar (<strong>-5 pts</strong>).
+              </li>
+            </ul>
           </div>
         </div>
 
@@ -245,27 +514,22 @@ export const ComoSeJuegaModal: React.FC<ComoSeJuegaModalProps> = ({ onCerrar }) 
   );
 };
 
-export const ComoJugarModal = ComoSeJuegaModal;
-
 // =========================================================================
 // 3. LOGROS MODAL
 // =========================================================================
-interface LogrosModalProps {
-  onCerrar: () => void;
-}
-
-export const LogrosModal: React.FC<LogrosModalProps> = ({ onCerrar }) => {
+export const LogrosModal: React.FC<{ onCerrar: () => void }> = ({ onCerrar }) => {
   const ranking = useMemo(() => cargarRanking(), []);
+  const rankingLocal = useMemo(() => cargarRankingLocal(), []);
 
   const misLogros = useMemo(() => {
     const set = new Set<string>();
-    Object.values(ranking).forEach((entry) => {
+    [...Object.values(ranking), ...Object.values(rankingLocal)].forEach((entry) => {
       if (entry.logros && Array.isArray(entry.logros)) {
         entry.logros.forEach((l) => set.add(l));
       }
     });
     return set;
-  }, [ranking]);
+  }, [ranking, rankingLocal]);
 
   const totalLogros = LOGROS_LISTA.length;
   const desbloqueados = misLogros.size;
@@ -298,7 +562,6 @@ export const LogrosModal: React.FC<LogrosModalProps> = ({ onCerrar }) => {
           </button>
         </div>
 
-        {/* Progress Bar */}
         <div className="w-full bg-[#f1f3f5] h-3.5 rounded-full border-2 border-[#2b2140] my-2 overflow-hidden shadow-inner">
           <div
             className="h-full bg-gradient-to-r from-[#ffd43b] to-[#51cf66] transition-all duration-500"
@@ -306,7 +569,6 @@ export const LogrosModal: React.FC<LogrosModalProps> = ({ onCerrar }) => {
           />
         </div>
 
-        {/* Achievements Grid */}
         <div className="flex-1 overflow-y-auto pr-1 grid grid-cols-1 sm:grid-cols-2 gap-2.5 my-2">
           {LOGROS_LISTA.map((logro) => {
             const conseguido = misLogros.has(logro.id);
@@ -357,7 +619,7 @@ export const LogrosModal: React.FC<LogrosModalProps> = ({ onCerrar }) => {
 };
 
 // =========================================================================
-// 4. RANKING MODAL (PROTECTED - NO DESTRUCTIVE RESET)
+// 4. RANKING MODAL
 // =========================================================================
 interface RankingModalProps {
   onCerrar: () => void;
@@ -382,11 +644,21 @@ export const RankingModal: React.FC<RankingModalProps> = ({
   usuarioActual,
   onAbrirPerfil,
 }) => {
+  // Orden solicitado: Local siempre primero, luego Global, Esta Semana y Sem. Pasada
   const [tab, setTab] = useState<TabType>('local');
   const [rankingData, setRankingData] = useState<Record<string, RankEntry>>(() => cargarRanking());
-  const [localRankingData, setLocalRankingData] = useState<Record<string, RankEntry>>(() => cargarRankingLocal());
-  const [historial, setHistorial] = useState(() => cargarHistorial());
+  const [localRankingData, setLocalRankingData] = useState<Record<string, RankEntry>>(() =>
+    cargarRankingLocal()
+  );
+  const [semanalData, setSemanalData] = useState<WeeklyRankingResponse | null>(null);
   const [mensajeToast, setMensajeToast] = useState<string | null>(null);
+  const [sincronizando, setSincronizando] = useState(false);
+  const [confirmandoBorrarLocal, setConfirmandoBorrarLocal] = useState(false);
+  const [diag, setDiag] = useState<NetworkDiagnostic>(() => obtenerDiagnosticoRed());
+
+  useEffect(() => {
+    return suscribirDiagnostico(setDiag);
+  }, []);
 
   const showToast = (msg: string) => {
     setMensajeToast(msg);
@@ -394,41 +666,6 @@ export const RankingModal: React.FC<RankingModalProps> = ({
   };
 
   const entries: DisplayRankEntry[] = useMemo(() => {
-    function getMonday(d: Date): number {
-      const date = new Date(d);
-      const day = date.getDay();
-      const diff = date.getDate() - day + (day === 0 ? -6 : 1);
-      date.setDate(diff);
-      date.setHours(0, 0, 0, 0);
-      return date.getTime();
-    }
-
-    const nowTime = Date.now();
-    const mondayThisWeek = getMonday(new Date(nowTime));
-    const mondayLastWeek = mondayThisWeek - 7 * 24 * 60 * 60 * 1000;
-
-    if (tab === 'global') {
-      // Only registered accounts with games played (partidas > 0)
-      const list = Object.values(rankingData)
-        .filter((r) => r.partidas > 0)
-        .map((r) => ({
-          nombre: r.nombre,
-          puntosTotales: r.puntosTotales,
-          partidas: r.partidas,
-          victorias: r.victorias,
-          elo: r.elo || 1000,
-          avatarColor: r.avatarColor || '#ff6b6b',
-          avatarHat: r.avatarHat || 'corona',
-        }));
-
-      list.sort((a, b) => {
-        if (b.puntosTotales !== a.puntosTotales) return b.puntosTotales - a.puntosTotales;
-        if (b.elo !== a.elo) return b.elo - a.elo;
-        return b.partidas - a.partidas;
-      });
-      return list;
-    }
-
     if (tab === 'local') {
       const list = Object.values(localRankingData)
         .filter((r) => r.partidas > 0)
@@ -450,100 +687,83 @@ export const RankingModal: React.FC<RankingModalProps> = ({
       return list;
     }
 
-    // Weekly filters: Esta Semana & Semana Pasada
-    const filteredMatches = historial.filter((m) => {
-      const t = new Date(m.fecha).getTime();
-      if (isNaN(t)) return false;
-      if (tab === 'esta_semana') {
-        return t >= mondayThisWeek;
-      }
-      if (tab === 'semana_pasada') {
-        return t >= mondayLastWeek && t < mondayThisWeek;
-      }
-      return true;
-    });
+    if (tab === 'global') {
+      const list = Object.values(rankingData)
+        .filter((r) => r.partidas > 0 || r.puntosTotales > 0)
+        .map((r) => ({
+          nombre: r.nombre,
+          puntosTotales: r.puntosTotales,
+          partidas: r.partidas,
+          victorias: r.victorias,
+          elo: r.elo || 1000,
+          avatarColor: r.avatarColor || '#ff6b6b',
+          avatarHat: r.avatarHat || 'corona',
+        }));
 
-    const playerAgg = new Map<
-      string,
-      { puntos: number; partidas: number; victorias: number; color: string }
-    >();
-
-    for (const match of filteredMatches) {
-      for (const pj of match.puntosPorJugador) {
-        if (!pj.esHumano) continue;
-        const key = pj.nombre.trim().toLowerCase();
-        // Only include registered cloud accounts in weekly leaderboards
-        if (!rankingData[key]) continue;
-
-        const current = playerAgg.get(key) || {
-          puntos: 0,
-          partidas: 0,
-          victorias: 0,
-          color: pj.color,
-        };
-        current.puntos += pj.puntos;
-        current.partidas += 1;
-        if (pj.puesto === 1) {
-          current.victorias += 1;
-        }
-        playerAgg.set(key, current);
-      }
+      list.sort((a, b) => {
+        if (b.puntosTotales !== a.puntosTotales) return b.puntosTotales - a.puntosTotales;
+        if (b.elo !== a.elo) return b.elo - a.elo;
+        return b.partidas - a.partidas;
+      });
+      return list;
     }
 
-    const list: DisplayRankEntry[] = [];
-    playerAgg.forEach((val, key) => {
-      const globalRec = rankingData[key];
-      if (!globalRec || val.partidas === 0) return;
-      list.push({
-        nombre: globalRec.nombre,
-        puntosTotales: val.puntos,
-        partidas: val.partidas,
-        victorias: val.victorias,
-        elo: globalRec.elo || 1000,
-        avatarColor: globalRec.avatarColor || val.color || '#ff6b6b',
-        avatarHat: globalRec.avatarHat || 'corona',
-      });
+    const board = tab === 'esta_semana' ? semanalData?.actual : semanalData?.pasada;
+    if (!board || !board.jugadores) return [];
+
+    const list: DisplayRankEntry[] = Object.values(board.jugadores)
+      .filter((p) => p && p.partidas > 0)
+      .map((p) => ({
+        nombre: p.nombre,
+        puntosTotales: p.puntos,
+        partidas: p.partidas,
+        victorias: p.victorias,
+        elo: p.elo || 1000,
+        avatarColor: p.avatarColor || '#ff6b6b',
+        avatarHat: p.avatarHat || 'corona',
+      }));
+
+    list.sort((a, b) => {
+      if (b.puntosTotales !== a.puntosTotales) return b.puntosTotales - a.puntosTotales;
+      if (b.victorias !== a.victorias) return b.victorias - a.victorias;
+      return b.partidas - a.partidas;
     });
-
-    list.sort((a, b) => b.puntosTotales - a.puntosTotales);
     return list;
-  }, [tab, rankingData, localRankingData, historial]);
-
-  const [sincronizando, setSincronizando] = useState(false);
+  }, [tab, rankingData, localRankingData, semanalData]);
 
   const refrescarRanking = async (forzar: boolean = false) => {
     setSincronizando(true);
     try {
-      await sincronizarConNube(forzar);
+      const [res, sem] = await Promise.all([
+        sincronizarConNube(forzar),
+        obtenerRankingSemanalAsync(),
+      ]);
       setRankingData(cargarRanking());
       setLocalRankingData(cargarRankingLocal());
-      setHistorial(cargarHistorial());
+      setSemanalData(sem);
       if (forzar) {
-        showToast('🔄 Ranking sincronizado con la nube');
+        showToast(res.kvConectado ? '🔄 Sincronizado con Cloudflare KV' : '⚠️ Sin conexión al KV');
       }
     } catch {
-      showToast('⚠️ No se pudo sincronizar');
+      showToast('⚠️ No se pudo sincronizar con el KV');
     } finally {
       setSincronizando(false);
-    }
-  };
-
-  const handleBorrarRankingLocal = () => {
-    sounds.playClick();
-    if (
-      window.confirm(
-        '⚠️ ¿Estás seguro de que deseas borrar tu ranking local?\n\nEsta acción borrará únicamente los récords guardados en este navegador. NO afectará al ranking global.'
-      )
-    ) {
-      borrarRankingLocal();
-      setLocalRankingData({});
-      showToast('🧹 Tu ranking local ha sido borrado');
     }
   };
 
   useEffect(() => {
     refrescarRanking(false);
   }, []);
+
+  const textoCuentaAtrasSemana = useMemo(() => {
+    const ms = semanalData?.cierraEnMs ?? 0;
+    if (ms <= 0) return 'Cerrando semana...';
+    const dias = Math.floor(ms / 86400000);
+    const horas = Math.floor((ms % 86400000) / 3600000);
+    return dias > 0 ? `${dias}d ${horas}h restantes` : `${horas}h restantes`;
+  }, [semanalData?.cierraEnMs]);
+
+  const bonosSemanal = [25, 15, 10];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
@@ -556,7 +776,9 @@ export const RankingModal: React.FC<RankingModalProps> = ({
                 Salón de la Fama
               </h3>
               <span className="text-[11px] font-bold text-[#2b8a3e]">
-                {tab === 'local' ? '📍 Ranking Local en este Dispositivo' : '🛡️ Clasificaciones y Récords'}
+                {tab === 'local'
+                  ? '📍 Ranking Local en este Dispositivo'
+                  : '🌍 Clasificación en Cloudflare KV'}
               </span>
             </div>
           </div>
@@ -572,7 +794,20 @@ export const RankingModal: React.FC<RankingModalProps> = ({
           </button>
         </div>
 
-        {/* Tab Filters: Local, Global, Esta Semana, Semana Pasada */}
+        {/* KV Disconnected Warning inside Ranking */}
+        {diag.checkedOnce && !diag.kvConnected && tab !== 'local' && (
+          <div className="p-2.5 bg-[#ffe3e3] rounded-2xl border-2 border-[#c92a2a] mb-2 text-[11px] font-bold text-[#c92a2a] flex items-center justify-between gap-2">
+            <span>⚠️ Sin conexión al KV: mostrando últimos datos guardados localmente.</span>
+            <button
+              type="button"
+              onClick={() => refrescarRanking(true)}
+              className="py-1 px-2 rounded-lg bg-white border border-[#c92a2a] text-[10px] font-black cursor-pointer shrink-0"
+            >
+              🔄 Reintentar
+            </button>
+          </div>
+        )}
+
         <div className="grid grid-cols-4 gap-1 p-1 bg-[#ede4d0] rounded-2xl border-2 border-[#2b2140] my-2">
           {[
             { id: 'local', label: '📍 Local' },
@@ -586,7 +821,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
                 sounds.playClick();
                 setTab(t.id as TabType);
               }}
-              className={`py-1.5 rounded-xl font-black text-[11px] sm:text-xs transition-all cursor-pointer whitespace-nowrap ${
+              className={`py-1.5 px-1 rounded-xl font-black text-[10px] sm:text-xs transition-all cursor-pointer truncate ${
                 tab === t.id
                   ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-sm'
                   : 'text-[#86542d] hover:text-[#2b2140]'
@@ -597,14 +832,35 @@ export const RankingModal: React.FC<RankingModalProps> = ({
           ))}
         </div>
 
-        {/* Guest Warning Banner if not logged in (for Global and Monthly tabs) */}
+        {tab === 'esta_semana' && (
+          <div className="p-2.5 bg-[#fff3bf] rounded-2xl border-2 border-[#2b2140] mb-2 flex flex-col gap-1 shadow-sm text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-black text-[#8f4b00]">
+                👑 ¡Quien termine encima gana puntos extra!
+              </span>
+              <span className="text-[10px] font-black bg-white px-2 py-0.5 rounded-full border border-[#2b2140] text-[#2b2140] shrink-0">
+                ⏳ {textoCuentaAtrasSemana}
+              </span>
+            </div>
+            <span className="text-[11px] font-bold text-[#5c3c00]">
+              Recompensas al cierre semanal: 🥇 +25 pts · 🥈 +15 pts · 🥉 +10 pts
+            </span>
+          </div>
+        )}
+
+        {tab === 'semana_pasada' && semanalData?.pasada?.premiados && semanalData.pasada.premiados.length > 0 && (
+          <div className="p-2.5 bg-[#d3f9d8] rounded-2xl border-2 border-[#2b2140] mb-2 text-[11px] font-black text-[#134e20]">
+            🏆 Premios entregados:{' '}
+            {semanalData.pasada.premiados
+              .map((p) => `${p.puesto}º ${p.nombre} (+${p.bono} pts)`)
+              .join(' · ')}
+          </div>
+        )}
+
         {!usuarioActual && tab !== 'local' && (
-          <div className="p-2.5 bg-[#fff3bf] rounded-2xl border-2 border-[#2b2140] mb-2 flex items-center justify-between gap-2 shadow-sm text-xs animate-[fadeIn_0.2s_ease-out]">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-xl shrink-0">ℹ️</span>
-              <div className="text-[11px] font-bold text-[#8f4b00] leading-tight">
-                Estás jugando como <strong>Invitado</strong>. Para clasificar en el Ranking Global y mensual, debes iniciar sesión. Tus partidas se guardan en la pestaña <strong>Local</strong>.
-              </div>
+          <div className="p-2.5 bg-[#fff3bf] rounded-2xl border-2 border-[#2b2140] mb-2 flex items-center justify-between gap-2 shadow-sm text-xs">
+            <div className="text-[11px] font-bold text-[#8f4b00] leading-tight">
+              Juegas como <strong>Invitado</strong>. Inicia sesión para competir en Global y Esta Semana.
             </div>
             {onAbrirPerfil && (
               <button
@@ -613,7 +869,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
                   sounds.playClick();
                   onAbrirPerfil();
                 }}
-                className="py-1 px-2.5 rounded-xl bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] font-black text-xs shrink-0 shadow-sm hover:bg-[#fcc419] cursor-pointer whitespace-nowrap"
+                className="py-1 px-2.5 rounded-xl bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] font-black text-xs shrink-0 shadow-sm hover:bg-[#fcc419] cursor-pointer"
               >
                 👤 Entrar
               </button>
@@ -621,31 +877,62 @@ export const RankingModal: React.FC<RankingModalProps> = ({
           </div>
         )}
 
-        {/* Local Tab Special Notice & Wipe Button */}
         {tab === 'local' && (
-          <div className="p-2.5 bg-[#e7f5ff] rounded-2xl border-2 border-[#2b2140] mb-2 flex items-center justify-between gap-2 shadow-sm text-xs">
-            <div className="text-[11px] font-bold text-[#1864ab] leading-tight">
-              <span>Récords de partidas guardados solo en este navegador.</span>
+          <div className="p-2.5 bg-[#e7f5ff] rounded-2xl border-2 border-[#2b2140] mb-2 flex flex-col gap-2 shadow-sm text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-bold text-[#1864ab]">
+                Récords guardados únicamente en este dispositivo.
+              </span>
+              {!confirmandoBorrarLocal && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    sounds.playClick();
+                    setConfirmandoBorrarLocal(true);
+                  }}
+                  className="py-1 px-2.5 rounded-xl bg-[#ffe3e3] text-[#c92a2a] border border-[#ff8787] font-black text-[11px] hover:bg-[#ffc9c9] cursor-pointer shrink-0"
+                >
+                  🗑️ Borrar Local
+                </button>
+              )}
             </div>
-            <button
-              type="button"
-              onClick={handleBorrarRankingLocal}
-              className="py-1 px-2.5 rounded-xl bg-[#ffe3e3] text-[#c92a2a] border border-[#ff8787] font-black text-[11px] hover:bg-[#ffc9c9] cursor-pointer shrink-0"
-              title="Borrar ranking local de este navegador"
-            >
-              🗑️ Borrar mi Ranking Local
-            </button>
+            {confirmandoBorrarLocal && (
+              <div className="p-2 bg-white rounded-xl border border-[#c92a2a] flex items-center justify-between gap-2">
+                <span className="text-[11px] font-black text-[#c92a2a]">
+                  ¿Confirmas borrar tu ranking local?
+                </span>
+                <div className="flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmandoBorrarLocal(false)}
+                    className="py-1 px-2 rounded-lg bg-[#f1f3f5] text-[#495057] font-bold text-[11px] cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sounds.playClick();
+                      borrarRankingLocal();
+                      setLocalRankingData({});
+                      setConfirmandoBorrarLocal(false);
+                      showToast('🧹 Ranking local borrado');
+                    }}
+                    className="py-1 px-2.5 rounded-lg bg-[#c92a2a] text-white font-black text-[11px] cursor-pointer"
+                  >
+                    Sí, borrar
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        {/* Ranking List */}
         <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-2 my-1">
           {entries.length === 0 ? (
             <div className="p-8 text-center text-[#86542d] font-bold text-sm bg-white rounded-2xl border-2 border-dashed border-[#2b2140]/30 my-4">
               <span className="text-3xl block mb-2">🏁</span>
-              {tab === 'semana_pasada'
-                ? 'Aún no hay registros de la semana pasada en este historial.'
-                : 'Aún no hay partidas registradas en esta categoría. ¡Juega una partida para inaugurar el ranking!'}
+              Aún no hay partidas registradas en esta categoría.
             </div>
           ) : (
             entries.map((entry, index) => {
@@ -654,6 +941,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
                 index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}º`;
               const winRate =
                 entry.partidas > 0 ? Math.round((entry.victorias / entry.partidas) * 100) : 0;
+              const bonoProyectado = tab === 'esta_semana' ? bonosSemanal[index] || 0 : 0;
 
               return (
                 <div
@@ -680,20 +968,19 @@ export const RankingModal: React.FC<RankingModalProps> = ({
                       <span className="font-extrabold text-xs sm:text-sm text-[#2b2140] truncate">
                         {entry.nombre}
                       </span>
-                      <span className="text-[10px] bg-[#fff3bf] text-[#8f4b00] font-black px-1.5 py-0.2 rounded border border-[#2b2140]/30 flex items-center gap-0.5">
-                        <span>{lvl.icono}</span>
-                        <span>{lvl.titulo}</span>
+                      <span className="text-[10px] text-[#8f4b00] font-bold">
+                        · {lvl.icono} {lvl.titulo}
                       </span>
-                      {(tab === 'esta_semana' || tab === 'semana_pasada') && index === 0 && (
-                        <span className="text-[10px] bg-[#ffd43b] text-[#5c3c00] font-black px-1.5 py-0.2 rounded border border-[#2b2140] animate-pulse">
-                          👑 Líder Semanal (+50 pts)
+                      {bonoProyectado > 0 && (
+                        <span className="text-[9px] bg-[#51cf66] text-[#134e20] font-black px-1.5 py-0.5 rounded border border-[#2b2140]">
+                          +{bonoProyectado} pts premio
                         </span>
                       )}
                     </div>
 
                     <div className="flex items-center gap-2 text-[11px] text-[#86542d] font-semibold mt-0.5">
                       <span>Elo: {entry.elo}</span>
-                      <span>•</span>
+                      <span>·</span>
                       <span>
                         {entry.victorias}V / {entry.partidas}P ({winRate}%)
                       </span>
@@ -712,7 +999,6 @@ export const RankingModal: React.FC<RankingModalProps> = ({
           )}
         </div>
 
-        {/* Bottom Actions: Solo refrescar y cerrar */}
         <div className="pt-3 mt-2 border-t-2 border-[#2b2140]/15 flex items-center justify-between gap-2 text-xs">
           <button
             onClick={() => {
@@ -723,7 +1009,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
             className="py-1.5 px-3.5 rounded-xl font-black bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#fff9db] active:translate-y-0.5 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
           >
             <span className={sincronizando ? 'animate-spin' : ''}>🔄</span>
-            <span>{sincronizando ? 'Sincronizando...' : 'Actualizar Ranking'}</span>
+            <span>{sincronizando ? 'Sincronizando...' : 'Actualizar KV'}</span>
           </button>
 
           <button
@@ -747,7 +1033,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
   );
 };
 
-/// =========================================================================
+// =========================================================================
 // 5. TORNEO MODAL
 // =========================================================================
 interface TorneoModalProps {
@@ -765,7 +1051,11 @@ export const TorneoModal: React.FC<TorneoModalProps> = ({
   onFinalizarTorneo,
   onVerTablero,
 }) => {
-  const esFinal = torneo.terminado || torneo.rondaActual >= torneo.totalRondas;
+  const esFinal = torneo.terminado;
+  const ultimaRonda =
+    torneo.historialRondas.length > 0
+      ? torneo.historialRondas[torneo.historialRondas.length - 1]
+      : null;
 
   const standings = [...estado.jugadores].sort((a, b) => {
     const ptsA = torneo.puntosAcumulados[a.id] || 0;
@@ -778,9 +1068,7 @@ export const TorneoModal: React.FC<TorneoModalProps> = ({
 
   const granCampeon = standings[0];
   const ganadorRonda =
-    estado.ganador !== null && estado.ganador >= 0
-      ? estado.jugadores[estado.ganador]
-      : null;
+    estado.ganador !== null && estado.ganador >= 0 ? estado.jugadores[estado.ganador] : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
@@ -793,22 +1081,29 @@ export const TorneoModal: React.FC<TorneoModalProps> = ({
             : `Torneo: Ronda ${torneo.rondaActual} de ${torneo.totalRondas}`}
         </h3>
 
-        <p className="text-xs text-[#593922] font-semibold mb-3">
+        <p className="text-xs text-[#593922] font-semibold mb-2">
           {esFinal
-            ? `¡${granCampeon.nombre} se corona como campeón absoluto!`
+            ? `¡${granCampeon.nombre} gana el torneo y recibe +10 pts extra de campeón!`
             : ganadorRonda
-            ? `¡${ganadorRonda.nombre} ha ganado la ronda ${torneo.rondaActual}!`
-            : `Ronda finalizada.`}
+            ? `¡${ganadorRonda.nombre} ganó la ronda ${torneo.rondaActual}! (+5 pts victoria + muros)`
+            : 'Ronda finalizada.'}
         </p>
 
-        {/* Clasificación de la tabla */}
+        {esFinal && (
+          <div className="p-2 mb-2 rounded-xl bg-[#d3f9d8] border-2 border-[#2b2140] text-xs font-black text-[#134e20]">
+            🏆 Bono Campeón del Torneo: +10 pts sumados al total de {granCampeon.nombre}
+          </div>
+        )}
+
         <div className="bg-white rounded-2xl border-2 border-[#2b2140] p-3 shadow-inner my-2 flex flex-col gap-2 max-h-56 overflow-y-auto">
-          <span className="text-[11px] font-black uppercase tracking-wider text-[#593922] text-left block">
-            Tabla de Puntuación Acumulada
-          </span>
+          <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-[#593922]">
+            <span>Tabla Acumulada</span>
+            <span>Victoria +5 · Muro +1 · Campeón +10</span>
+          </div>
           {standings.map((p, idx) => {
             const pts = torneo.puntosAcumulados[p.id] || 0;
             const vic = torneo.victoriasAcumuladas[p.id] || 0;
+            const ptsEstaRonda = ultimaRonda?.puntosRonda?.[p.id] ?? 0;
             return (
               <div
                 key={p.id}
@@ -819,7 +1114,12 @@ export const TorneoModal: React.FC<TorneoModalProps> = ({
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-sm font-black w-5">{idx === 0 ? '🥇' : `${idx + 1}º`}</span>
                   <CartoonCharacter color={p.color} hat={p.hat} size={30} showShadow={false} />
-                  <span className="text-xs font-bold text-[#2b2140] truncate">{p.nombre}</span>
+                  <div className="text-left min-w-0">
+                    <span className="text-xs font-bold text-[#2b2140] block truncate">{p.nombre}</span>
+                    <span className="text-[10px] text-[#2b8a3e] font-bold block">
+                      Ronda {torneo.rondaActual}: +{ptsEstaRonda} pts
+                    </span>
+                  </div>
                 </div>
                 <div className="text-right flex-shrink-0">
                   <span className="text-xs font-black text-[#2b2140] block">{pts} pts</span>
@@ -880,6 +1180,12 @@ interface VictoryModalProps {
   onVerTablero: () => void;
   onIrAlMenu: () => void;
   onVerRanking: () => void;
+  estadoRevanchaOnline?: 'idle' | 'esperando' | 'recibida' | 'no_disponible';
+  solicitanteRevancha?: string | null;
+  mensajeRevanchaNoDisponible?: string | null;
+  onAceptarRevancha?: () => void;
+  onRechazarRevancha?: () => void;
+  onCancelarEsperaRevancha?: () => void;
 }
 
 export const VictoryModal: React.FC<VictoryModalProps> = ({
@@ -891,6 +1197,12 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
   onVerTablero,
   onIrAlMenu,
   onVerRanking,
+  estadoRevanchaOnline = 'idle',
+  solicitanteRevancha = null,
+  mensajeRevanchaNoDisponible = null,
+  onAceptarRevancha,
+  onRechazarRevancha,
+  onCancelarEsperaRevancha,
 }) => {
   const ganador =
     estado.ganador !== null && estado.ganador >= 0
@@ -902,7 +1214,10 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
   const jugadorSeleccionado =
     estado.jugadores.find((p) => p.id === selectedPlayerId) || ganador;
   const jugadorDesglose = desgloses.get(selectedPlayerId) || {
-    resultado: 100,
+    resultado: selectedPlayerId === ganador.id ? 5 : 0,
+    murosUsados: 0,
+    finalCerrado: 0,
+    bonoTorneo: 0,
     ahorrador: 0,
     rapidez: 0,
     saltador: 0,
@@ -919,15 +1234,23 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
       total: 0,
     },
     multiplicador: 1,
-    total: 100,
+    total: selectedPlayerId === ganador.id ? 5 : 0,
   };
 
-  const misNuevosLogros = nuevosLogros.get(jugadorSeleccionado.nombre.trim().toLowerCase()) || [];
+  const misNuevosLogros =
+    nuevosLogros.get(jugadorSeleccionado.nombre.trim().toLowerCase()) || [];
   const miSubidaNivel = subidasNivel.get(jugadorSeleccionado.nombre.trim().toLowerCase());
 
   const [segundosRestantes, setSegundosRestantes] = useState(30);
+  const enConfirmacionRevancha =
+    Boolean(estado.modoOnline) &&
+    (estadoRevanchaOnline === 'esperando' || estadoRevanchaOnline === 'recibida');
 
-  React.useEffect(() => {
+  useEffect(() => {
+    if (enConfirmacionRevancha) {
+      setSegundosRestantes((prev) => (prev < 20 ? 20 : prev));
+      return;
+    }
     const timer = setInterval(() => {
       setSegundosRestantes((prev) => {
         if (prev <= 1) {
@@ -939,9 +1262,9 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [onIrAlMenu]);
+  }, [onIrAlMenu, enConfirmacionRevancha]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     confetti({
       particleCount: 70,
       spread: 70,
@@ -959,25 +1282,37 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
           ¡<strong className="text-[#2b2140]">{ganador.nombre}</strong> ha ganado la carrera!
         </p>
 
-        {/* 30s Decision Countdown Bar */}
         <div className="w-full bg-[#f1f3f5] rounded-xl border border-[#2b2140] p-1.5 mb-2">
           <div className="flex items-center justify-between text-[11px] font-black text-[#593922] mb-1">
-            <span>⏱️ Decisión automática en:</span>
-            <span className={`font-mono-num font-black ${segundosRestantes <= 5 ? 'text-[#c92a2a] animate-pulse' : 'text-[#2b2140]'}`}>
+            <span>
+              {enConfirmacionRevancha
+                ? '⏸️ Salida pausada durante confirmación:'
+                : '⏱️ Salida automática en:'}
+            </span>
+            <span
+              className={`font-mono-num font-black ${
+                !enConfirmacionRevancha && segundosRestantes <= 5
+                  ? 'text-[#c92a2a] animate-pulse'
+                  : 'text-[#2b2140]'
+              }`}
+            >
               {segundosRestantes}s
             </span>
           </div>
           <div className="w-full bg-[#dee2e6] h-2 rounded-full overflow-hidden">
             <div
               className={`h-full transition-all duration-1000 ease-linear ${
-                segundosRestantes <= 5 ? 'bg-[#ff6b6b]' : segundosRestantes <= 10 ? 'bg-[#ffd43b]' : 'bg-[#51cf66]'
+                segundosRestantes <= 5
+                  ? 'bg-[#ff6b6b]'
+                  : segundosRestantes <= 10
+                  ? 'bg-[#ffd43b]'
+                  : 'bg-[#51cf66]'
               }`}
               style={{ width: `${(segundosRestantes / 30) * 100}%` }}
             />
           </div>
         </div>
 
-        {/* Player selector pills for breakdown if multiple players */}
         <div className="flex items-center justify-center gap-1.5 mb-2 overflow-x-auto p-1 bg-[#ede4d0] rounded-xl border-2 border-[#2b2140]">
           {estado.jugadores.map((p) => (
             <button
@@ -999,39 +1334,40 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
         </div>
 
         <div className="flex justify-center my-1">
-          <CartoonCharacter color={jugadorSeleccionado.color} hat={jugadorSeleccionado.hat} size={60} />
+          <CartoonCharacter
+            color={jugadorSeleccionado.color}
+            hat={jugadorSeleccionado.hat}
+            size={60}
+          />
         </div>
 
-        {/* Desglose de puntos */}
         <div className="bg-white rounded-2xl border-2 border-[#2b2140] p-3 shadow-inner my-2 text-xs flex flex-col gap-1 text-left">
           <span className="text-[10px] font-black uppercase text-[#86542d] mb-0.5 block">
-            Puntuación de {jugadorSeleccionado.nombre}
+            Desglose de Puntos · {jugadorSeleccionado.nombre}
           </span>
           <div className="flex justify-between text-[#86542d] font-semibold">
-            <span>Resultado base:</span>
+            <span>{jugadorDesglose.resultado > 0 ? '🏆 Partida ganada:' : 'Partida jugada:'}</span>
             <span className="font-mono-num font-bold">+{jugadorDesglose.resultado}</span>
           </div>
-          {jugadorDesglose.ahorrador > 0 && (
-            <div className="flex justify-between text-[#86542d] font-semibold">
-              <span>Muros guardados:</span>
-              <span className="font-mono-num font-bold">+{jugadorDesglose.ahorrador}</span>
-            </div>
-          )}
-          {jugadorDesglose.racha > 0 && (
+          <div className="flex justify-between text-[#86542d] font-semibold">
+            <span>🧱 Muros usados ({jugadorSeleccionado.estadisticas.murosColocados} × 1 pt):</span>
+            <span className="font-mono-num font-bold">+{jugadorDesglose.murosUsados}</span>
+          </div>
+          {jugadorDesglose.finalCerrado > 0 && (
             <div className="flex justify-between text-[#d9480f] font-bold">
-              <span>🔥 Bono de racha:</span>
-              <span className="font-mono-num">+{jugadorDesglose.racha}</span>
+              <span>⚡ ¡Por los pelos! (rival a 1 cuadro):</span>
+              <span className="font-mono-num">+{jugadorDesglose.finalCerrado}</span>
             </div>
           )}
-          {jugadorDesglose.saltador > 0 && (
-            <div className="flex justify-between text-[#86542d] font-semibold">
-              <span>Saltos sobre rivales:</span>
-              <span className="font-mono-num font-bold">+{jugadorDesglose.saltador}</span>
+          {jugadorDesglose.bonoTorneo > 0 && (
+            <div className="flex justify-between text-[#2b8a3e] font-bold">
+              <span>👑 Campeón del Torneo:</span>
+              <span className="font-mono-num">+{jugadorDesglose.bonoTorneo}</span>
             </div>
           )}
           {jugadorDesglose.penalizaciones.total > 0 && (
             <div className="flex justify-between text-[#c92a2a] font-semibold">
-              <span>Penalizaciones:</span>
+              <span>Penalizaciones (pistas/deshacer/tiempo):</span>
               <span className="font-mono-num">-{jugadorDesglose.penalizaciones.total}</span>
             </div>
           )}
@@ -1040,7 +1376,6 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
             <span className="font-mono-num text-[#2b8a3e]">+{jugadorDesglose.total} pts</span>
           </div>
         </div>
-
 
         {miSubidaNivel && (
           <div className="p-2 bg-[#d3f9d8] rounded-xl border-2 border-[#2b2140] text-xs font-black text-[#134e20] mb-2 flex items-center justify-center gap-1.5 animate-pulse">
@@ -1055,15 +1390,84 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
         )}
 
         <div className="pt-2 flex flex-col gap-2">
-          <button
-            onClick={() => {
-              sounds.playClick();
-              onRevancha();
-            }}
-            className="w-full py-2.5 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer"
-          >
-            🔄 Jugar Revancha
-          </button>
+          {estado.modoOnline && estadoRevanchaOnline === 'no_disponible' ? (
+            <div className="flex flex-col gap-1.5">
+              <div className="p-2.5 rounded-xl bg-[#ffe3e3] border-2 border-[#c92a2a] text-xs font-black text-[#c92a2a] leading-snug">
+                {mensajeRevanchaNoDisponible ||
+                  '⚠️ Esa opción ya no es válida ya que el jugador acaba de retirarse.'}
+              </div>
+              <button
+                type="button"
+                disabled
+                className="w-full py-2.5 rounded-xl font-black text-xs bg-[#e9ecef] text-[#868e96] border-2 border-[#adb5bd] cursor-not-allowed"
+              >
+                🚫 Revancha no disponible · Jugador retirado
+              </button>
+            </div>
+          ) : estado.modoOnline && estadoRevanchaOnline === 'recibida' ? (
+            <div className="p-2.5 rounded-2xl bg-[#fff3bf] border-2 border-[#2b2140] flex flex-col gap-2 shadow-sm">
+              <p className="text-xs font-black text-[#2b2140] leading-snug">
+                🔄 <strong>{solicitanteRevancha || 'El otro jugador'}</strong> pidió una revancha.
+                ¿Confirmas jugar de nuevo?
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    sounds.playClick();
+                    onAceptarRevancha?.();
+                  }}
+                  className="py-2 rounded-xl font-black text-xs bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer"
+                >
+                  ✓ Sí, jugar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    sounds.playClick();
+                    onRechazarRevancha?.();
+                  }}
+                  className="py-2 rounded-xl font-black text-xs bg-[#ffe3e3] text-[#c92a2a] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#ffc9c9] active:translate-y-0.5 cursor-pointer"
+                >
+                  ✕ Retirarme
+                </button>
+              </div>
+            </div>
+          ) : estado.modoOnline && estadoRevanchaOnline === 'esperando' ? (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled
+                className="flex-1 py-2.5 px-3 rounded-xl font-black text-xs bg-[#fff3bf] text-[#8f4b00] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] flex items-center justify-center gap-2 cursor-wait"
+              >
+                <span className="animate-spin">⏳</span>
+                <span>Esperando confirmación...</span>
+              </button>
+              {onCancelarEsperaRevancha && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    sounds.playClick();
+                    onCancelarEsperaRevancha();
+                  }}
+                  className="py-2.5 px-3 rounded-xl font-black text-xs bg-white text-[#c92a2a] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#ffe3e3] cursor-pointer shrink-0"
+                  title="Cancelar espera de revancha"
+                >
+                  ✕ Cancelar
+                </button>
+              )}
+            </div>
+          ) : (
+            <button
+              onClick={() => {
+                sounds.playClick();
+                onRevancha();
+              }}
+              className="w-full py-2.5 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer"
+            >
+              🔄 Jugar Revancha
+            </button>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={() => {
@@ -1099,84 +1503,8 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
   );
 };
 
-
 // =========================================================================
-// 7. ONLINE DISCONNECT MODAL (10 SECONDS GRACE PERIOD & ABANDONMENT VICTORY)
-// =========================================================================
-interface OnlineDisconnectModalProps {
-  segundosRestantes: number;
-  esAnfitrion: boolean;
-  onVolverAlMenu: () => void;
-}
-
-export const OnlineDisconnectModal: React.FC<OnlineDisconnectModalProps> = ({
-  segundosRestantes,
-  esAnfitrion,
-  onVolverAlMenu,
-}) => {
-  const tiempoTerminado = segundosRestantes <= 0;
-  const progresoPct = Math.max(0, Math.min(100, (segundosRestantes / 120) * 100));
-  const minutos = Math.floor(segundosRestantes / 60);
-  const segundos = segundosRestantes % 60;
-  const tiempoStr = `${minutos}:${segundos < 10 ? '0' : ''}${segundos}`;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-      <div className="relative w-full max-w-sm bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col text-center">
-        <div className="text-4xl mb-2 animate-bounce">
-          {tiempoTerminado ? '🏆' : '⏳'}
-        </div>
-
-        <h3 className="text-xl font-black text-[#2b2140] mb-1">
-          {tiempoTerminado
-            ? '¡Victoria por abandono!'
-            : '⚠️ Esperando reconexión del rival...'}
-        </h3>
-
-        <p className="text-xs text-[#593922] mb-3 leading-relaxed">
-          {tiempoTerminado
-            ? 'El rival no ha regresado en 2 minutos. Has ganado la partida automáticamente (+100 pts).'
-            : 'Tu oponente se ha ausentado o desconectado. El reloj de turno se ha pausado. Tiene 2 minutos para reconectarse.'}
-        </p>
-
-        {!tiempoTerminado && (
-          <div className="mb-4">
-            <div className="text-3xl font-black text-[#c92a2a] font-mono-num animate-pulse">
-              {tiempoStr}
-            </div>
-            <div className="w-full bg-[#f1f3f5] h-3.5 rounded-full border-2 border-[#2b2140] mt-2 overflow-hidden">
-              <div
-                className="h-full bg-[#ff922b] transition-all duration-1000 ease-linear"
-                style={{ width: `${progresoPct}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        <div className="flex flex-col gap-2 mt-2">
-          {tiempoTerminado ? (
-            <button
-              onClick={onVolverAlMenu}
-              className="w-full py-2.5 px-4 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer"
-            >
-              🎉 Reclamar Victoria y Volver al Menú
-            </button>
-          ) : (
-            <button
-              onClick={onVolverAlMenu}
-              className="w-full py-2 px-3 rounded-xl font-bold text-xs bg-white text-[#c92a2a] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#ffe3e3] active:translate-y-0.5 cursor-pointer"
-            >
-              Salir al Menú ahora
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// =========================================================================
-// 8. PERFIL Y CUENTA DE USUARIO MODAL
+// 7. PERFIL Y CUENTA DE USUARIO MODAL (Login único + Personaje y Terreno Predeterminados)
 // =========================================================================
 interface PerfilModalProps {
   usuarioActual: UserAccount | null;
@@ -1201,15 +1529,55 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
   const [clave, setClave] = useState('');
   const [color, setColor] = useState('#ff6b6b');
   const [hat, setHat] = useState<HatType>('corona');
+  const [temaRegistro, setTemaRegistro] = useState<BoardTheme>('madera');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
-  const [perfilHat, setPerfilHat] = useState<HatType>(() => usuarioActual?.avatarHat || 'corona');
-  const [perfilColor, setPerfilColor] = useState<string>(() => usuarioActual?.avatarColor || '#ff6b6b');
-  const [guardandoPersonaje, setGuardandoPersonaje] = useState(false);
-  const [personajeGuardadoMsg, setPersonajeGuardadoMsg] = useState(false);
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
 
-  const todasLasCuentas = useMemo(() => cargarCuentas(), [usuarioActual, cargando]);
+  const [perfilHat, setPerfilHat] = useState<HatType>(() => usuarioActual?.avatarHat || 'corona');
+  const [perfilColor, setPerfilColor] = useState<string>(
+    () => usuarioActual?.avatarColor || '#ff6b6b'
+  );
+  const [perfilTema, setPerfilTema] = useState<BoardTheme>(
+    () => usuarioActual?.temaTablero || 'madera'
+  );
+  const [guardandoPreferencias, setGuardandoPreferencias] = useState(false);
+  const [guardadoOkMsg, setGuardadoOkMsg] = useState(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [diag, setDiag] = useState<NetworkDiagnostic>(() => obtenerDiagnosticoRed());
+
+  const [todasLasCuentas, setTodasLasCuentas] = useState<Record<string, UserAccount>>(() =>
+    cargarCuentas()
+  );
+
+  useEffect(() => {
+    const unsubDiag = suscribirDiagnostico(setDiag);
+    const unsubNube = suscribirCambiosNube(({ cuentas: nuevas }) => {
+      setTodasLasCuentas(nuevas);
+    });
+    sincronizarConNube(false).then(() => setTodasLasCuentas(cargarCuentas())).catch(() => {});
+    return () => {
+      unsubDiag();
+      unsubNube();
+    };
+  }, []);
+
+  useEffect(() => {
+    setTodasLasCuentas(cargarCuentas());
+  }, [usuarioActual, cargando]);
+
+  useEffect(() => {
+    if (usuarioActual) {
+      setPerfilHat(usuarioActual.avatarHat || 'corona');
+      setPerfilColor(usuarioActual.avatarColor || '#ff6b6b');
+      setPerfilTema(usuarioActual.temaTablero || 'madera');
+    }
+  }, [
+    usuarioActual?.id,
+    usuarioActual?.avatarHat,
+    usuarioActual?.avatarColor,
+    usuarioActual?.temaTablero,
+  ]);
+
   const comunidadLista = useMemo(() => {
     return Object.values(todasLasCuentas).sort((a, b) => {
       if (b.puntos !== a.puntos) return b.puntos - a.puntos;
@@ -1244,7 +1612,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
     setErrorMsg(null);
     setCargando(true);
     try {
-      const res = await registrarUsuarioAsync(nombre, clave, color, hat);
+      const res = await registrarUsuarioAsync(nombre, clave, color, hat, temaRegistro);
       if (res.ok && res.user) {
         onLoginSuccess(res.user);
         onCerrar();
@@ -1253,7 +1621,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
         setErrorMsg(res.error || 'No se pudo crear la cuenta');
       }
     } catch {
-      setErrorMsg('Error al sincronizar con la nube');
+      setErrorMsg('Error al sincronizar con Cloudflare KV');
     } finally {
       setCargando(false);
     }
@@ -1277,10 +1645,25 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
           </button>
         </div>
 
-        {/* If logged in: Show User Dashboard */}
+        {/* Estado KV en Perfil */}
+        {diag.checkedOnce && !diag.kvConnected && (
+          <div className="p-2.5 mb-2 bg-[#ffe3e3] rounded-xl border-2 border-[#c92a2a] text-[11px] font-bold text-[#c92a2a] flex items-center justify-between gap-2">
+            <span>⚠️ Sin conexión al KV: no se pueden enviar o recibir cambios.</span>
+            <button
+              type="button"
+              onClick={() => {
+                pingServidor();
+                sincronizarConNube(true);
+              }}
+              className="py-1 px-2 bg-white rounded-lg border border-[#c92a2a] text-[10px] font-black cursor-pointer shrink-0"
+            >
+              🔄 Conectar
+            </button>
+          </div>
+        )}
+
         {usuarioActual ? (
           <div className="flex flex-col gap-3 py-1">
-            {/* Sub-tabs: Mi Perfil vs Comunidad */}
             <div className="grid grid-cols-2 p-1 bg-[#ede4d0] rounded-xl border-2 border-[#2b2140]">
               <button
                 type="button"
@@ -1316,9 +1699,9 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
               <>
                 <div className="flex items-center gap-3 p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm">
                   <CartoonCharacter
-                    color={usuarioActual.avatarColor}
-                    hat={usuarioActual.avatarHat}
-                    size={54}
+                    color={perfilColor}
+                    hat={perfilHat}
+                    size={56}
                     showShadow={false}
                   />
                   <div className="flex-1 min-w-0">
@@ -1326,21 +1709,25 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                       <span className="font-black text-base text-[#2b2140] truncate">
                         {usuarioActual.nombre}
                       </span>
-                      {usuarioActual.rol === 'admin' && (
-                        <span className="text-[9px] bg-[#ffd43b] text-[#5c3c00] font-black px-1.5 py-0.5 rounded border border-[#2b2140]">
-                          👑 ADMIN
+                      {(usuarioActual.rol === 'admin' || usuarioActual.id === 'admin') && (
+                        <span className="text-[10px] font-black text-[#8f4b00]">
+                          · 👑 {usuarioActual.id === 'admin' ? 'Admin Supremo' : 'Admin'}
                         </span>
                       )}
-                      <span className="text-[10px] bg-[#f1f3f5] text-[#495057] font-extrabold px-1.5 py-0.5 rounded border border-[#2b2140]/30 shadow-xs">
-                        ID: {usuarioActual.id}
-                      </span>
                     </div>
-                    <span className="text-xs font-bold text-[#86542d] block">
-                      {obtenerNivelYTitulo(usuarioActual.puntos).titulo}
+                    <span className="text-[11px] font-semibold text-[#495057] block">
+                      ID: {usuarioActual.id} · {obtenerNivelYTitulo(usuarioActual.puntos).titulo}
                     </span>
                     <span className="text-xs font-black text-[#2b8a3e] block">
                       {usuarioActual.puntos} puntos acumulados
                     </span>
+                    {(perfilHat !== usuarioActual.avatarHat ||
+                      perfilColor !== usuarioActual.avatarColor ||
+                      perfilTema !== (usuarioActual.temaTablero || 'madera')) && (
+                      <span className="text-[10px] font-black text-[#d9480f] block mt-0.5">
+                        👀 Vista previa activa · Pulsa Guardar abajo
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -1357,34 +1744,30 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                   </div>
                 </div>
 
-                {/* Personalizar Personaje del Usuario */}
+                {/* Personaje y Terreno Predeterminados */}
                 <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] flex flex-col gap-2 shadow-sm text-left">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
-                      Tu Personaje Favorito
+                      Personaje y Terreno Predeterminados
                     </span>
                     {toastMsg && (
                       <span className="text-[10px] text-[#e03131] font-black animate-pulse">
                         {toastMsg}
                       </span>
                     )}
-                    {personajeGuardadoMsg && (
+                    {guardadoOkMsg && (
                       <span className="text-[10px] text-[#2b8a3e] font-black animate-bounce">
                         ✓ ¡Guardado!
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-3">
-                    <CartoonCharacter color={perfilColor} hat={perfilHat} size={46} showShadow={false} />
-                    <div className="flex-1">
-                      <span className="text-[11px] font-bold text-[#86542d] block leading-tight">
-                        Este personaje se equipará automáticamente en todas tus partidas.
-                      </span>
-                    </div>
-                  </div>
+
                   <div className="grid grid-cols-5 gap-1.5 mt-1">
                     {PERSONAJES_REGISTRO.map((h) => {
-                      const unlocked = (usuarioActual.puntos || 0) >= h.puntosRequeridos || usuarioActual.rol === 'admin';
+                      const unlocked =
+                        (usuarioActual.puntos || 0) >= h.puntosRequeridos ||
+                        usuarioActual.rol === 'admin' ||
+                        usuarioActual.id === 'admin';
                       return (
                         <button
                           key={h.id}
@@ -1392,7 +1775,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                           onClick={() => {
                             if (!unlocked) {
                               sounds.playError();
-                              setToastMsg(`🔒 Se desbloquea con ${h.puntosRequeridos} puntos`);
+                              setToastMsg(`🔒 Requiere ${h.puntosRequeridos} pts`);
                               setTimeout(() => setToastMsg(null), 2500);
                               return;
                             }
@@ -1414,103 +1797,63 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                           )}
                           <span className="text-base">{h.icon}</span>
                           <span className="text-[9px] font-bold truncate max-w-full">{h.label}</span>
-                          {!unlocked && (
-                            <span className="text-[7px] text-[#e03131] font-black">{h.puntosRequeridos}p</span>
-                          )}
                         </button>
                       );
                     })}
                   </div>
+
+                  {/* Selector de Terreno Predeterminado */}
+                  <div className="grid grid-cols-4 gap-1 mt-1">
+                    {TEMAS_LISTA.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => {
+                          sounds.playClick();
+                          setPerfilTema(t.id);
+                        }}
+                        className={`py-1.5 px-1 rounded-xl text-[10px] font-black border-2 border-[#2b2140] cursor-pointer transition-all ${
+                          perfilTema === t.id ? `${t.bg} shadow-xs -translate-y-0.5` : 'bg-[#f8f9fa]'
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+
                   <button
                     type="button"
-                    disabled={guardandoPersonaje}
+                    disabled={guardandoPreferencias}
                     onClick={async () => {
                       sounds.playClick();
-                      setGuardandoPersonaje(true);
+                      setGuardandoPreferencias(true);
                       try {
                         const actualizado: UserAccount = {
                           ...usuarioActual,
                           avatarHat: perfilHat,
                           avatarColor: perfilColor,
+                          temaTablero: perfilTema,
                         };
-                        await actualizarCuentaAsync(actualizado);
-                        onLoginSuccess(actualizado);
-                        setPersonajeGuardadoMsg(true);
-                        setTimeout(() => setPersonajeGuardadoMsg(false), 2500);
+                        const freshSaved = await actualizarCuentaAsync(actualizado);
+                        onLoginSuccess(freshSaved);
+                        setGuardadoOkMsg(true);
+                        setTimeout(() => setGuardadoOkMsg(false), 2500);
                       } catch {
                         // ignore
                       } finally {
-                        setGuardandoPersonaje(false);
+                        setGuardandoPreferencias(false);
                       }
                     }}
                     className="w-full py-1.5 rounded-xl font-black text-xs bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer mt-1 flex items-center justify-center gap-1.5"
                   >
                     <span>💾</span>
-                    <span>{guardandoPersonaje ? 'Guardando...' : 'Guardar Mi Personaje'}</span>
+                    <span>
+                      {guardandoPreferencias ? 'Guardando...' : 'Guardar Predeterminados'}
+                    </span>
                   </button>
                 </div>
 
-                {/* Historial de Partidas */}
-                <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] flex flex-col gap-2 shadow-sm text-left">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
-                      📜 Historial de Partidas
-                    </span>
-                    <span className="text-[10px] font-bold text-[#86542d]">
-                      Últimas {usuarioActual.historialPartidas?.length || 0}
-                    </span>
-                  </div>
-
-                  {usuarioActual.historialPartidas && usuarioActual.historialPartidas.length > 0 ? (
-                    <div className="flex flex-col gap-1.5 max-h-40 overflow-y-auto pr-1">
-                      {usuarioActual.historialPartidas.map((item) => {
-                        const esVictoria = item.resultado === 'victoria';
-                        const esEmpate = item.resultado === 'empate';
-                        const badgeColor = esVictoria
-                          ? 'bg-[#d3f9d8] text-[#134e20] border-[#2b8a3e]'
-                          : esEmpate
-                          ? 'bg-[#fff3bf] text-[#8f4b00] border-[#f59f00]'
-                          : 'bg-[#ffe3e3] text-[#c92a2a] border-[#e03131]';
-                        const d = new Date(item.fecha);
-                        const fechaStr = !isNaN(d.getTime())
-                          ? `${d.getDate()}/${d.getMonth() + 1}`
-                          : '';
-
-                        return (
-                          <div
-                            key={item.id}
-                            className="p-1.5 rounded-xl border border-[#2b2140]/20 bg-[#f8f9fa] flex items-center justify-between gap-2 text-xs"
-                          >
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <span
-                                className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${badgeColor} shrink-0`}
-                              >
-                                {esVictoria ? '🏆 Victoria' : esEmpate ? '🤝 Empate' : '❌ Derrota'}
-                              </span>
-                              <div className="min-w-0 truncate">
-                                <span className="font-bold text-[#2b2140] text-[11px] block truncate">
-                                  vs {item.rivales || 'Rival'}
-                                </span>
-                                <span className="text-[9px] text-[#868e96] block">
-                                  {fechaStr} • {item.duracionSegundos}s
-                                </span>
-                              </div>
-                            </div>
-                            <span className="font-mono-num font-black text-[11px] text-[#2b8a3e] shrink-0">
-                              +{item.puntos} pts
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="p-3 bg-[#f8f9fa] rounded-xl border border-dashed border-[#2b2140]/30 text-center text-xs text-[#868e96]">
-                      Aún no tienes partidas registradas. ¡Juega una partida para ver tu récord aquí!
-                    </div>
-                  )}
-                </div>
-
-                {usuarioActual.rol === 'admin' && (
+                {(usuarioActual.rol === 'admin' || usuarioActual.id === 'admin') && (
                   <button
                     onClick={() => {
                       sounds.playClick();
@@ -1518,8 +1861,8 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                     }}
                     className="w-full py-2.5 rounded-xl font-black text-xs bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer flex items-center justify-center gap-1.5"
                   >
-                    <span>⚙️</span>
-                    <span>Panel de Administración Secreto</span>
+                    <span>👑</span>
+                    <span>Abrir Panel de Administración</span>
                   </button>
                 )}
 
@@ -1552,15 +1895,11 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                       </button>
                     ) : (
                       <div className="p-3 bg-[#ffe3e3] rounded-2xl border-2 border-[#ff8787] flex flex-col gap-2 text-left animate-[fadeIn_0.2s_ease-out]">
-                        <div className="flex items-center gap-1.5 text-xs font-black text-[#c92a2a]">
-                          <span>⚠️</span>
-                          <span>¿Confirmas darte de baja?</span>
+                        <div className="text-xs font-black text-[#c92a2a]">
+                          ⚠️ ¿Confirmas eliminar tu cuenta permanentemente?
                         </div>
-                        <p className="text-[11px] text-[#495057] font-medium leading-tight">
-                          Tu cuenta y tu récord del Ranking Global se eliminarán permanentemente de la base de datos.
-                        </p>
                         <p className="text-[11px] font-bold text-[#c92a2a]">
-                          Escribe <strong>{usuarioActual.nombre}</strong> o <strong>BORRAR</strong> para confirmar:
+                          Escribe <strong>{usuarioActual.nombre}</strong> o <strong>BORRAR</strong>:
                         </p>
                         <input
                           type="text"
@@ -1573,7 +1912,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                           <button
                             type="button"
                             onClick={() => setConfirmandoBaja(false)}
-                            className="flex-1 py-1.5 rounded-xl font-bold text-xs bg-white text-[#495057] border border-[#ced4da] hover:bg-[#f8f9fa] cursor-pointer"
+                            className="flex-1 py-1.5 rounded-xl font-bold text-xs bg-white text-[#495057] border border-[#ced4da] cursor-pointer"
                           >
                             Cancelar
                           </button>
@@ -1582,18 +1921,24 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                             disabled={
                               cargando ||
                               (textoBajaConfirmacion.trim().toUpperCase() !== 'BORRAR' &&
-                                textoBajaConfirmacion.trim().toLowerCase() !== usuarioActual.nombre.trim().toLowerCase())
+                                textoBajaConfirmacion.trim().toLowerCase() !==
+                                  usuarioActual.nombre.trim().toLowerCase())
                             }
                             onClick={async () => {
                               sounds.playClick();
                               setCargando(true);
-                              await darDeBajaUsuarioAsync(usuarioActual.id);
-                              onLogout();
-                              onCerrar();
+                              const ok = await darDeBajaUsuarioAsync(usuarioActual.id);
+                              setCargando(false);
+                              if (ok) {
+                                onLogout();
+                                onCerrar();
+                              } else {
+                                setToastMsg('⚠️ Sin conexión al KV para eliminar');
+                              }
                             }}
-                            className="flex-1 py-1.5 rounded-xl font-black text-xs bg-[#c92a2a] text-white border border-[#a61e1e] hover:bg-[#b02525] disabled:opacity-40 cursor-pointer"
+                            className="flex-1 py-1.5 rounded-xl font-black text-xs bg-[#c92a2a] text-white border border-[#a61e1e] disabled:opacity-40 cursor-pointer"
                           >
-                            {cargando ? 'Eliminando...' : 'Sí, darme de baja'}
+                            {cargando ? 'Eliminando...' : 'Sí, eliminar'}
                           </button>
                         </div>
                       </div>
@@ -1602,7 +1947,6 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                 )}
               </>
             ) : (
-              /* Comunidad Tab: List of all registered players */
               <div className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
                 <span className="text-[11px] font-black uppercase text-[#86542d]">
                   Jugadores Registrados ({comunidadLista.length})
@@ -1618,25 +1962,22 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                       }`}
                     >
                       <span className="text-xs font-black text-[#86542d] w-4">{idx + 1}º</span>
-                      <CartoonCharacter color={u.avatarColor} hat={u.avatarHat} size={34} showShadow={false} />
+                      <CartoonCharacter
+                        color={u.avatarColor}
+                        hat={u.avatarHat}
+                        size={34}
+                        showShadow={false}
+                      />
                       <div className="min-w-0 flex-1 text-left">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-xs font-extrabold text-[#2b2140] truncate">
                             {u.nombre}
                           </span>
-                          {esYo && (
-                            <span className="text-[9px] bg-[#d3f9d8] text-[#134e20] font-black px-1.5 py-0.2 rounded">
-                              TÚ
-                            </span>
-                          )}
-                          {u.rol === 'admin' && (
-                            <span className="text-[9px] bg-[#ffd43b] text-[#5c3c00] font-black px-1 py-0.2 rounded border border-[#2b2140]/30">
-                              👑
-                            </span>
-                          )}
+                          {esYo && <span className="text-[10px] font-black text-[#2b8a3e]">· TÚ</span>}
+                          {u.rol === 'admin' && <span className="text-[10px]">👑</span>}
                         </div>
                         <span className="text-[10px] text-[#86542d] font-semibold block">
-                          {lvl.icono} {lvl.titulo} • ID: {u.id}
+                          {lvl.icono} {lvl.titulo} · {u.id}
                         </span>
                       </div>
                       <div className="text-right flex-shrink-0">
@@ -1650,7 +1991,6 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
             )}
           </div>
         ) : (
-          /* If not logged in: Login or Register */
           <div className="flex flex-col gap-3 py-1">
             <div className="grid grid-cols-2 p-1 bg-[#ede4d0] rounded-xl border-2 border-[#2b2140]">
               <button
@@ -1685,23 +2025,30 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
               </button>
             </div>
 
-            <form onSubmit={tab === 'login' ? handleLogin : handleRegistro} className="flex flex-col gap-2.5">
+            <form
+              onSubmit={tab === 'login' ? handleLogin : handleRegistro}
+              className="flex flex-col gap-2.5"
+            >
               <div>
-                <label className="text-xs font-bold text-[#86542d] block mb-0.5">Nombre de usuario (3-15 letras/números):</label>
+                <label className="text-xs font-bold text-[#86542d] block mb-0.5">
+                  Nombre de usuario:
+                </label>
                 <input
                   type="text"
                   minLength={3}
-                  maxLength={15}
+                  maxLength={20}
                   required
                   value={nombre}
                   onChange={(e) => setNombre(e.target.value)}
-                  placeholder="Tu nombre (3-15 caracteres)"
+                  placeholder={tab === 'login' ? 'Tu usuario o Admin Supremo' : 'Tu nombre (3-15 caracteres)'}
                   className="w-full text-xs font-bold text-[#2b2140] bg-white border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-[#ffd43b]"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-bold text-[#86542d] block mb-0.5">Clave / Contraseña:</label>
+                <label className="text-xs font-bold text-[#86542d] block mb-0.5">
+                  Clave / Contraseña:
+                </label>
                 <input
                   type="password"
                   required
@@ -1713,41 +2060,71 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
               </div>
 
               {tab === 'registro' && (
-                <div>
-                  <label className="text-xs font-bold text-[#86542d] block mb-1">Elige tu Personaje (6 Disponibles):</label>
-                  <div className="grid grid-cols-6 gap-1">
-                    {[
-                      { id: 'corona' as HatType, icon: '👑', color: '#ff6b6b', label: 'Corona' },
-                      { id: 'pompon' as HatType, icon: '❄️', color: '#4dabf7', label: 'Pompón' },
-                      { id: 'antena' as HatType, icon: '⚡', color: '#ffd43b', label: 'Antena' },
-                      { id: 'brote' as HatType, icon: '🌱', color: '#51cf66', label: 'Brote' },
-                      { id: 'mago' as HatType, icon: '🧙', color: '#9775fa', label: 'Mago' },
-                      { id: 'gatito' as HatType, icon: '🐱', color: '#f06595', label: 'Gatito' },
-                    ].map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => {
-                          sounds.playClick();
-                          setHat(item.id);
-                          setColor(item.color);
-                        }}
-                        className={`py-1 rounded-xl text-sm border-2 border-[#2b2140] cursor-pointer flex flex-col items-center gap-0.5 ${
-                          hat === item.id ? 'bg-[#ffd43b] shadow-sm -translate-y-0.5' : 'bg-white'
-                        }`}
-                        title={item.label}
-                      >
-                        <span>{item.icon}</span>
-                        <span className="text-[8px] font-bold">{item.label}</span>
-                      </button>
-                    ))}
+                <>
+                  <div>
+                    <label className="text-xs font-bold text-[#86542d] block mb-1">
+                      Personaje Predeterminado (Vista Previa):
+                    </label>
+                    <div className="p-2 mb-1.5 bg-white rounded-xl border-2 border-[#2b2140] flex items-center gap-2.5">
+                      <CartoonCharacter color={color} hat={hat} size={46} showShadow={false} />
+                      <div className="text-left min-w-0">
+                        <span className="text-xs font-black text-[#2b2140] block truncate">
+                          {PERSONAJES_REGISTRO.find((p) => p.id === hat)?.label || 'Corona'}
+                        </span>
+                        <span className="text-[10px] font-semibold text-[#86542d] block">
+                          Terreno: {TEMAS_LISTA.find((t) => t.id === temaRegistro)?.label}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-6 gap-1">
+                      {PERSONAJES_REGISTRO.filter((p) => p.puntosRequeridos === 0).map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => {
+                            sounds.playClick();
+                            setHat(item.id);
+                            setColor(item.defaultColor);
+                          }}
+                          className={`py-1 rounded-xl text-sm border-2 border-[#2b2140] cursor-pointer flex flex-col items-center gap-0.5 ${
+                            hat === item.id ? 'bg-[#ffd43b] shadow-sm -translate-y-0.5' : 'bg-white'
+                          }`}
+                        >
+                          <span>{item.icon}</span>
+                          <span className="text-[8px] font-bold">{item.label}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-[#86542d] block mb-1">
+                      Terreno Predeterminado:
+                    </label>
+                    <div className="grid grid-cols-4 gap-1">
+                      {TEMAS_LISTA.map((t) => (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => {
+                            sounds.playClick();
+                            setTemaRegistro(t.id);
+                          }}
+                          className={`py-1 rounded-xl text-[10px] font-black border-2 border-[#2b2140] cursor-pointer ${
+                            temaRegistro === t.id ? `${t.bg} -translate-y-0.5` : 'bg-white'
+                          }`}
+                        >
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
               )}
 
               {errorMsg && (
                 <div className="p-2 bg-[#ffe3e3] text-[#c92a2a] text-xs font-bold rounded-xl border border-[#2b2140] text-center">
-                  ⚠️ {errorMsg}
+                  {errorMsg}
                 </div>
               )}
 
@@ -1759,7 +2136,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                 {cargando && <span className="animate-spin">⏳</span>}
                 <span>
                   {cargando
-                    ? 'Sincronizando con la nube...'
+                    ? 'Verificando en Cloudflare KV...'
                     : tab === 'login'
                     ? 'Entrar a mi Cuenta'
                     : 'Registrar y Guardar'}
@@ -1774,13 +2151,14 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
 };
 
 // =========================================================================
-// 9. PANEL DE ADMINISTRADOR SECRETO MODAL
+// 8. PANEL DE ADMINISTRACIÓN (Sin pedir clave por segunda vez + Verificación KV en cada acción)
 // =========================================================================
 interface AdminPanelModalProps {
   onCerrar: () => void;
   onShowToast?: (msg: string) => void;
   usuarioActual?: UserAccount | null;
   onUsuarioActualizado?: (usuario: UserAccount | null) => void;
+  onAbrirLogin?: () => void;
 }
 
 export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
@@ -1788,138 +2166,183 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   onShowToast = () => {},
   usuarioActual,
   onUsuarioActualizado,
+  onAbrirLogin,
 }) => {
-  const [autenticado, setAutenticado] = useState<boolean>(() => {
-    return Boolean(usuarioActual && (usuarioActual.rol === 'admin' || usuarioActual.id === 'admin'));
-  });
-  const [esAdminCloud, setEsAdminCloud] = useState<boolean>(() => Boolean(usuarioActual?.rol === 'admin'));
-  const [adminKeyIngresada, setAdminKeyIngresada] = useState<string>('');
-  const [claveInput, setClaveInput] = useState('');
+  const tieneRolAdmin = Boolean(
+    usuarioActual && (usuarioActual.rol === 'admin' || usuarioActual.id === 'admin')
+  );
+  const esYoSupremo = Boolean(usuarioActual && usuarioActual.id === 'admin');
+
   const [cuentas, setCuentas] = useState<Record<string, UserAccount>>(() => cargarCuentas());
   const [filtro, setFiltro] = useState('');
   const [editandoId, setEditandoId] = useState<string | null>(null);
   const [sincronizando, setSincronizando] = useState(false);
   const [guardando, setGuardando] = useState(false);
-  const [kvActivo, setKvActivo] = useState(() => estaKvConectado());
+  const [diag, setDiag] = useState<NetworkDiagnostic>(() => obtenerDiagnosticoRed());
 
-  // Edit fields
+  // Estados de confirmación en pantalla (sin window.confirm bloqueado)
+  const [confirmandoResetRanking, setConfirmandoResetRanking] = useState(false);
+  const [confirmandoEliminarId, setConfirmandoEliminarId] = useState<string | null>(null);
+
+  // Campos de edición
   const [editNombre, setEditNombre] = useState('');
   const [editClave, setEditClave] = useState('');
   const [editRol, setEditRol] = useState<'jugador' | 'admin'>('jugador');
   const [editPuntos, setEditPuntos] = useState<number>(0);
   const [editVictorias, setEditVictorias] = useState<number>(0);
 
-  const sincronizar = async (forzar: boolean = false) => {
-    setSincronizando(true);
-    try {
-      const res = await sincronizarConNube(forzar);
-      setKvActivo(res.kvConectado);
-      const accs = cargarCuentas();
-      setCuentas(accs);
-      if (usuarioActual && accs[usuarioActual.id]) {
-        onUsuarioActualizado?.(accs[usuarioActual.id]);
-      }
-      if (forzar) {
-        onShowToast(res.kvConectado ? '🟢 Sincronizado con Cloudflare KV' : '🟡 Datos locales actualizados');
-      }
-    } catch {
-      onShowToast('⚠️ Error al contactar la API');
-    } finally {
-      setSincronizando(false);
-    }
-  };
+  const eraAdminRef = React.useRef<boolean>(tieneRolAdmin);
+  const revocadoNotificadoRef = React.useRef<boolean>(false);
+  const usuarioActualRef = React.useRef<UserAccount | null | undefined>(usuarioActual);
+  usuarioActualRef.current = usuarioActual;
+
+  // Refs estables para callbacks del padre (evita bucle infinito de peticiones al re-renderizar App)
+  const onCerrarRef = React.useRef(onCerrar);
+  onCerrarRef.current = onCerrar;
+  const onShowToastRef = React.useRef(onShowToast);
+  onShowToastRef.current = onShowToast;
+  const onUsuarioActualizadoRef = React.useRef(onUsuarioActualizado);
+  onUsuarioActualizadoRef.current = onUsuarioActualizado;
 
   useEffect(() => {
-    sincronizar(false);
+    return suscribirDiagnostico(setDiag);
   }, []);
 
-  const handleAdminLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    sounds.playClick();
-    const key = claveInput.trim();
-
-    try {
-      const res = await fetch(getApiBaseUrl('/api/admin/verify'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clave: key, usuario: usuarioActual?.id }),
-      });
-
-      if (res.ok) {
-        const info = await res.json();
-        setAutenticado(true);
-        setEsAdminCloud(Boolean(info.isCloudAdmin));
-        setAdminKeyIngresada(key);
-        if (info.isCloudAdmin) {
-          onShowToast('👑 Modo Administrador Cloudflare KV Verificado');
-        } else {
-          onShowToast('🟡 Acceso Local (muros2026). Solo datos de este dispositivo.');
-        }
-        return;
-      }
-    } catch {}
-
-    // Fallback if offline
-    const adminAcc = cuentas['admin'];
-    if (adminAcc && key === adminAcc.clave) {
-      setAutenticado(true);
-      setEsAdminCloud(false);
-      setAdminKeyIngresada(key);
-      onShowToast('🟡 Acceso Local concedido (Modo Offline)');
-    } else {
-      sounds.playError();
-      onShowToast('❌ Clave de administrador incorrecta');
+  // Si tenía el panel abierto como admin y su rol cambia a jugador o se cierra sesión, cerrar de inmediato
+  useEffect(() => {
+    if (eraAdminRef.current && !tieneRolAdmin && !revocadoNotificadoRef.current) {
+      revocadoNotificadoRef.current = true;
+      onCerrarRef.current();
     }
+    if (tieneRolAdmin) {
+      eraAdminRef.current = true;
+    }
+  }, [tieneRolAdmin]);
+
+  const verificarRevocacionYActualizarLista = React.useCallback(
+    (accs: Record<string, UserAccount>) => {
+      setCuentas(accs);
+      setEditandoId((prevEdit) => (prevEdit && !accs[prevEdit] ? null : prevEdit));
+      setConfirmandoEliminarId((prevDel) => (prevDel && !accs[prevDel] ? null : prevDel));
+
+      const cur = usuarioActualRef.current;
+      if (cur && cur.id !== 'admin') {
+        const fresh = accs[cur.id];
+        if (!fresh) {
+          if (!revocadoNotificadoRef.current) {
+            revocadoNotificadoRef.current = true;
+            onUsuarioActualizadoRef.current?.(null);
+            onShowToastRef.current('⚠️ Tu cuenta ya no existe en la Base de Datos.');
+            onCerrarRef.current();
+          }
+          return false;
+        }
+        if (
+          fresh.rol !== cur.rol ||
+          fresh.puntos !== cur.puntos ||
+          fresh.victorias !== cur.victorias ||
+          fresh.nombre !== cur.nombre
+        ) {
+          onUsuarioActualizadoRef.current?.(fresh);
+        }
+        if (fresh.rol !== 'admin') {
+          if (!revocadoNotificadoRef.current) {
+            revocadoNotificadoRef.current = true;
+            sounds.playError();
+            onShowToastRef.current('⛔ Tus permisos de administrador fueron revocados.');
+            onCerrarRef.current();
+          }
+          return false;
+        }
+      }
+      return true;
+    },
+    []
+  );
+
+  const sincronizar = React.useCallback(
+    async (mostrarToastManual: boolean = false) => {
+      if (mostrarToastManual) setSincronizando(true);
+      try {
+        const res = await sincronizarConNube(true);
+        const accs = cargarCuentas();
+        const sigueActivo = verificarRevocacionYActualizarLista(accs);
+        if (!sigueActivo) return;
+
+        if (mostrarToastManual) {
+          onShowToastRef.current(
+            res.kvConectado
+              ? '🟢 Sincronizado con la Base de Datos (Database)'
+              : '⚠️ Sin conexión con la Base de Datos (Database)'
+          );
+        }
+      } catch {
+        if (mostrarToastManual) {
+          onShowToastRef.current('⚠️ Error al contactar la Base de Datos');
+        }
+      } finally {
+        if (mostrarToastManual) setSincronizando(false);
+      }
+    },
+    [verificarRevocacionYActualizarLista]
+  );
+
+  // Carga única al abrir el panel + ping ligero cada 8s (descarga cuentas solo si hubo cambios en KV)
+  useEffect(() => {
+    sincronizar(false);
+
+    const unsubNube = suscribirCambiosNube(({ cuentas: cloudAccs }) => {
+      verificarRevocacionYActualizarLista(cloudAccs);
+    });
+
+    const liveInterval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      pingServidor().catch(() => {});
+    }, 25000);
+
+    return () => {
+      unsubNube();
+      clearInterval(liveInterval);
+    };
+  }, [sincronizar, verificarRevocacionYActualizarLista]);
+
+  // Verifica siempre en el KV si el usuario sigue siendo Admin antes de ejecutar cualquier acción
+  const verificarPermisoAccion = async (requiereSupremo: boolean = false): Promise<boolean> => {
+    const check = await verificarAccionAdminEnKV(usuarioActual || null, requiereSupremo);
+    if (!check.ok) {
+      sounds.playError();
+      onShowToast(check.error || '⛔ Acción no autorizada');
+      if (check.revocado) {
+        const accs = cargarCuentas();
+        const updated = usuarioActual ? accs[usuarioActual.id] || null : null;
+        onUsuarioActualizado?.(updated);
+        onCerrar();
+      }
+      return false;
+    }
+    return true;
   };
 
-  // Security Gate: Checked before EVERY admin action
-  const verificarAdminAntesDeAccion = async (requiereCloud: boolean = true): Promise<boolean> => {
-    // 1. If trying to do cloud changes while offline
-    if (requiereCloud && !kvActivo) {
+  const [claveTemporalInfo, setClaveTemporalInfo] = useState<{ nombre: string; clave: string } | null>(null);
+
+  const handleRestablecerClave = async (id: string, nombre: string) => {
+    sounds.playClick();
+    onShowToast('⏳ Generando clave temporal...');
+    const res = await restablecerClaveUsuarioAsync(id);
+    if (res.ok && res.claveTemporal) {
+      setClaveTemporalInfo({ nombre, clave: res.claveTemporal });
+      onShowToast(`🔑 Clave restablecida para ${nombre}`);
+    } else {
       sounds.playError();
-      onShowToast('⚠️ El modo Admin en la nube no funciona sin conexión a Cloudflare KV.');
-      return false;
+      onShowToast(res.error || 'No se pudo restablecer la clave');
     }
-
-    if (requiereCloud && !esAdminCloud) {
-      sounds.playError();
-      onShowToast('🔒 La clave "muros2026" sólo tiene acceso local. Para modificar Cloudflare KV se requiere la clave maestra.');
-      return false;
-    }
-
-    // 2. Query server/KV to verify if user is STILL an admin
-    try {
-      const res = await fetch(getApiBaseUrl('/api/admin/verify-action'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          usuarioId: usuarioActual?.id,
-          adminKey: adminKeyIngresada,
-        }),
-      });
-
-      if (!res.ok) {
-        sounds.playError();
-        alert('⛔ Acción denegada: Tu acceso de administrador ha sido revocado en la base de datos. La página se reiniciará por seguridad.');
-        cerrarSesion();
-        window.location.reload();
-        return false;
-      }
-    } catch {
-      if (requiereCloud) {
-        onShowToast('⚠️ Error de conexión al verificar privilegios de administrador con Cloudflare KV.');
-        return false;
-      }
-    }
-
-    return true;
   };
 
   const iniciarEdicion = (acc: UserAccount) => {
     sounds.playClick();
     setEditandoId(acc.id);
     setEditNombre(acc.nombre);
-    setEditClave(acc.clave);
+    setEditClave(''); // Nunca precargar claves
     setEditRol(acc.rol || 'jugador');
     setEditPuntos(acc.puntos);
     setEditVictorias(acc.victorias);
@@ -1927,7 +2350,12 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
   const guardarEdicion = async (id: string) => {
     sounds.playClick();
-    const autorizado = await verificarAdminAntesDeAccion(true);
+    const targetOriginal = cuentas[id];
+    if (!targetOriginal) return;
+
+    const cambioDeRol = editRol !== (targetOriginal.rol || 'jugador');
+    // Solo el Admin Supremo puede dar o quitar el rol de Admin a otros
+    const autorizado = await verificarPermisoAccion(cambioDeRol);
     if (!autorizado) return;
 
     const nombreLimpio = editNombre.trim();
@@ -1937,55 +2365,90 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     }
 
     setGuardando(true);
-    onShowToast('⏳ Guardando cambios en Cloudflare KV...');
     try {
-      const ok = await adminActualizarUsuarioAsync(id, {
+      const patchData: any = {
         nombre: nombreLimpio,
-        clave: editClave.trim(),
-        rol: editRol,
+        rol: esYoSupremo ? editRol : targetOriginal.rol,
         puntos: editPuntos,
         victorias: editVictorias,
-      });
-      if (ok) {
+      };
+      // Solo enviar clave si el admin la escribió expresamente para cambiarla
+      if (editClave.trim()) {
+        patchData.clave = editClave.trim();
+      }
+
+      const res = await adminActualizarUsuarioAsync(id, patchData);
+
+      if (res.ok) {
         const actualizadas = cargarCuentas();
         setCuentas(actualizadas);
         setEditandoId(null);
         if (usuarioActual && usuarioActual.id === id) {
           onUsuarioActualizado?.(actualizadas[id] || null);
         }
-        onShowToast(`✅ Perfil "${nombreLimpio}" actualizado con éxito`);
+        onShowToast(`✅ Cambios de "${nombreLimpio}" enviados a la Base de Datos`);
       } else {
-        onShowToast('⚠️ No se pudo actualizar el perfil (nombre duplicado o reservado)');
+        sounds.playError();
+        onShowToast(res.error || '⚠️ No se pudo actualizar el perfil');
       }
     } catch {
-      onShowToast('❌ Error de conexión al guardar cambios');
+      onShowToast('❌ Error de red al guardar en la Base de Datos');
     } finally {
       setGuardando(false);
     }
   };
 
-  const handleEliminar = async (id: string, nombre: string) => {
+  const ejecutarEliminarUsuario = async (id: string, nombre: string) => {
     sounds.playClick();
-    const autorizado = await verificarAdminAntesDeAccion(true);
+    const targetAcc = cuentas[id];
+    // Si el objetivo es otro admin, solo el Admin Supremo puede eliminarlo
+    const requiereSup = targetAcc?.rol === 'admin';
+    const autorizado = await verificarPermisoAccion(requiereSup);
     if (!autorizado) return;
 
-    if (window.confirm(`¿Seguro que deseas eliminar el usuario "${nombre}"? Esta acción borrará también su puntuación en el ranking global.`)) {
-      setGuardando(true);
-      onShowToast('⏳ Eliminando usuario de Cloudflare KV...');
-      try {
-        await adminEliminarUsuarioAsync(id);
+    setGuardando(true);
+    try {
+      const res = await adminEliminarUsuarioAsync(id);
+      if (res.ok) {
         const actualizadas = cargarCuentas();
         setCuentas(actualizadas);
-        if (usuarioActual && usuarioActual.id === id) {
-          onUsuarioActualizado?.(null);
-          onCerrar();
-        }
-        onShowToast(`🗑️ Perfil "${nombre}" eliminado definitivamente`);
-      } catch {
-        onShowToast('❌ Error al eliminar el usuario');
-      } finally {
-        setGuardando(false);
+        setConfirmandoEliminarId(null);
+        onShowToast(`🗑️ Usuario "${nombre}" eliminado de la Base de Datos`);
+      } else {
+        sounds.playError();
+        onShowToast(res.error || '⚠️ No se pudo eliminar el usuario');
       }
+    } catch {
+      onShowToast('❌ Error al eliminar en la Base de Datos');
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  const ejecutarResetRankingGlobal = async () => {
+    sounds.playClick();
+    const autorizado = await verificarPermisoAccion(false);
+    if (!autorizado) return;
+
+    setGuardando(true);
+    try {
+      const res = await adminResetearRankingAsync();
+      if (res.ok) {
+        const actualizadas = cargarCuentas();
+        setCuentas(actualizadas);
+        setConfirmandoResetRanking(false);
+        if (usuarioActual && usuarioActual.id !== 'admin' && actualizadas[usuarioActual.id]) {
+          onUsuarioActualizado?.(actualizadas[usuarioActual.id]);
+        }
+        onShowToast('🧹 Ranking Global borrado y reiniciado a cero en la Base de Datos');
+      } else {
+        sounds.playError();
+        onShowToast(res.error || '⚠️ No se pudo reiniciar el Ranking Global');
+      }
+    } catch {
+      onShowToast('❌ Error al reiniciar el Ranking Global');
+    } finally {
+      setGuardando(false);
     }
   };
 
@@ -1999,17 +2462,20 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     a.download = `muros_locos_backup_${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    onShowToast('💾 Respaldo oficial descargado');
+    onShowToast('💾 Copia de seguridad descargada');
   };
 
-  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     sounds.playClick();
+    const autorizado = await verificarPermisoAccion(true);
+    if (!autorizado) return;
+
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       const content = ev.target?.result as string;
-      const ok = importarDatosJSON(content);
+      const ok = await importarDatosJSONAsync(content);
       if (ok) {
         setCuentas(cargarCuentas());
         onShowToast('✅ Base de datos restaurada');
@@ -2029,7 +2495,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       <div className="relative w-full max-w-lg bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col max-h-[92vh]">
         <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
           <h3 className="text-xl font-black text-[#2b2140] flex items-center gap-2">
-            <span>🛡️</span> Panel de Control y Administración
+            <span>🛡️</span> Panel de Administración
           </h3>
           <button
             onClick={() => {
@@ -2042,53 +2508,60 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           </button>
         </div>
 
-        {!autenticado ? (
-          <form onSubmit={handleAdminLogin} className="flex flex-col gap-3 my-4">
-            <p className="text-xs text-[#593922] font-semibold leading-relaxed">
-              Introduce la clave secreta de administración para gestionar perfiles, otorgar permisos de administrador, modificar el ranking y realizar respaldos:
+        {!tieneRolAdmin ? (
+          <div className="flex flex-col items-center gap-3 my-6 text-center">
+            <span className="text-4xl">🔒</span>
+            <p className="text-xs sm:text-sm text-[#593922] font-bold leading-relaxed">
+              Para acceder al Panel de Administración, inicia sesión una sola vez desde <strong>Mi Perfil</strong> con tu cuenta de Administrador o con las credenciales del Admin Supremo del Worker.
             </p>
-            <input
-              type="password"
-              required
-              value={claveInput}
-              onChange={(e) => setClaveInput(e.target.value)}
-              placeholder="Clave maestra (por defecto: muros2026)"
-              className="w-full text-center text-sm font-black tracking-widest text-[#2b2140] bg-white border-2 border-[#2b2140] rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-[#ffd43b]"
-            />
-            <button
-              type="submit"
-              className="w-full py-2.5 rounded-xl font-black text-sm bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer"
-            >
-              🔓 Desbloquear Panel de Administrador
-            </button>
-          </form>
+            {onAbrirLogin && (
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  onAbrirLogin();
+                }}
+                className="w-full py-2.5 rounded-xl font-black text-sm bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer"
+              >
+                👤 Ir a Iniciar Sesión
+              </button>
+            )}
+          </div>
         ) : (
           <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 my-1">
-            {/* Cloud Status Banner */}
-            {!kvActivo ? (
-              <div className="p-3 rounded-2xl border-2 border-[#2b2140] bg-[#fff3bf] text-[#8f4b00] text-xs font-bold flex flex-col gap-1 shadow-sm">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-base">⚠️</span>
-                  <span className="font-black text-[#5c3c00]">Modo Desconectado (Sin conexión a Cloudflare KV)</span>
+            {/* Estado de Conexión Base de Datos en tiempo real */}
+            {!diag.kvConnected ? (
+              <div className="p-3 rounded-2xl border-2 border-[#c92a2a] bg-[#ffe3e3] text-[#c92a2a] text-xs font-bold flex items-center justify-between gap-2 shadow-sm">
+                <div className="flex-1">
+                  <div className="font-black text-[#a61e1e] flex items-center gap-1">
+                    <span>⚠️</span>
+                    <span>NO CONECTADO A LA BASE DE DATOS (DATABASE)</span>
+                  </div>
+                  <p className="text-[11px] leading-tight mt-0.5">
+                    No se pueden enviar ni recibir cambios globales hasta restablecer la conexión con la Base de Datos.
+                  </p>
                 </div>
-                <p className="text-[11px] leading-tight text-[#8f4b00]">
-                  El modo admin en la nube no funcionará porque para modificar algo se requiere conectar con Cloudflare KV. En modo offline no se pueden aplicar cambios globales.
-                </p>
-              </div>
-            ) : !esAdminCloud ? (
-              <div className="p-2.5 rounded-2xl border-2 border-[#2b2140] bg-[#e7f5ff] text-[#1864ab] text-xs font-bold flex items-center justify-between gap-2 shadow-sm">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="text-base">🟡</span>
-                  <span className="text-[11px] leading-tight">
-                    <strong>Administrador Local (muros2026):</strong> Gestión limitada a este navegador. Para modificar Cloudflare KV se requiere la clave maestra del Worker.
-                  </span>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => sincronizar(true)}
+                  disabled={sincronizando}
+                  className="py-1.5 px-2.5 rounded-xl bg-white border-2 border-[#c92a2a] text-[11px] font-black text-[#c92a2a] cursor-pointer shrink-0"
+                >
+                  {sincronizando ? '⏳...' : '🔄 Conectar'}
+                </button>
               </div>
             ) : (
               <div className="p-2.5 rounded-2xl border-2 border-[#2b2140] bg-[#d3f9d8] text-[#134e20] text-xs font-black flex items-center justify-between gap-2 shadow-sm">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="text-base">👑</span>
-                  <span>Administrador Global: Conectado a Cloudflare KV</span>
+                  <span className="text-base">{esYoSupremo ? '👑' : '🛡️'}</span>
+                  <div className="leading-tight truncate">
+                    <span className="block truncate">
+                      {esYoSupremo ? 'Admin Supremo Activo' : `Admin: ${usuarioActual?.nombre}`}
+                    </span>
+                    <span className="text-[10px] font-bold text-[#2b8a3e]">
+                      🟢 Conectado a la Base de Datos (Database) ({diag.serverPingMs} ms)
+                    </span>
+                  </div>
                 </div>
                 <button
                   onClick={() => sincronizar(true)}
@@ -2096,12 +2569,12 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   className="py-1 px-2.5 rounded-lg bg-white border border-[#2b2140] text-[11px] font-black text-[#2b2140] shadow-sm hover:bg-[#f1f3f5] cursor-pointer flex items-center gap-1 shrink-0"
                 >
                   <span className={sincronizando ? 'animate-spin' : ''}>🔄</span>
-                  <span>{sincronizando ? 'Sincronizando...' : 'Sincronizar'}</span>
+                  <span>Sincronizar</span>
                 </button>
               </div>
             )}
 
-            {/* User Search Bar */}
+            {/* Buscador */}
             <div className="flex items-center justify-between gap-2">
               <input
                 type="text"
@@ -2111,15 +2584,56 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 className="w-full text-xs font-bold bg-white border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none"
               />
               <span className="text-xs font-bold text-[#86542d] whitespace-nowrap">
-                {cuentasFiltradas.length} perfiles
+                {cuentasFiltradas.length} cuentas
               </span>
             </div>
 
-            {/* User Accounts List */}
+            {/* Alerta de Clave Temporal */}
+            {claveTemporalInfo && (
+              <div className="p-3 bg-[#e7f5ff] border-2 border-[#1971c2] rounded-2xl flex items-start justify-between gap-3 text-xs shadow-sm">
+                <div className="flex-1 min-w-0">
+                  <div className="font-black text-[#1864ab] flex items-center gap-1.5">
+                    <span>🔑</span>
+                    <span>Nueva clave temporal generada para <strong>{claveTemporalInfo.nombre}</strong></span>
+                  </div>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <code className="px-2 py-1 bg-white border border-[#1971c2]/40 rounded font-mono font-black text-sm text-[#0c8599] select-all">
+                      {claveTemporalInfo.clave}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(claveTemporalInfo.clave);
+                        alert(`Clave copiada al portapapeles: ${claveTemporalInfo.clave}`);
+                      }}
+                      className="px-2 py-1 bg-[#1971c2] text-white rounded text-[11px] font-bold cursor-pointer hover:bg-[#1864ab]"
+                    >
+                      Copiar
+                    </button>
+                  </div>
+                  <p className="mt-1 text-[11px] text-[#495057]">
+                    Comparte esta clave con el jugador. El servidor la ha protegido y no se volverá a mostrar.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setClaveTemporalInfo(null)}
+                  className="p-1 rounded text-[#1971c2] hover:bg-[#d0ebff] font-bold cursor-pointer"
+                  title="Cerrar aviso"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* Lista de Usuarios */}
             <div className="flex flex-col gap-2">
               {cuentasFiltradas.map((acc) => {
                 const isEditing = editandoId === acc.id;
                 const isSupreme = acc.id === 'admin';
+                const isConfirmingDelete = confirmandoEliminarId === acc.id;
+                const puedeGestionarEstaCuenta =
+                  !isSupreme && (esYoSupremo || acc.rol !== 'admin' || acc.id === usuarioActual?.id);
 
                 return (
                   <div
@@ -2127,63 +2641,102 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     className="p-3 rounded-2xl border-2 border-[#2b2140] bg-white shadow-sm flex flex-col gap-2"
                   >
                     {!isEditing ? (
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <CartoonCharacter
-                            color={acc.avatarColor}
-                            hat={acc.avatarHat}
-                            size={34}
-                            showShadow={false}
-                          />
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-black text-xs sm:text-sm text-[#2b2140] truncate">
-                                {acc.nombre}
-                              </span>
-                              {acc.rol === 'admin' && (
-                                <span className="text-[9px] bg-[#ffd43b] text-[#5c3c00] font-black px-1 rounded border border-[#2b2140]">
-                                  ADMIN
+                      <>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <CartoonCharacter
+                              color={acc.avatarColor}
+                              hat={acc.avatarHat}
+                              size={34}
+                              showShadow={false}
+                            />
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-black text-xs sm:text-sm text-[#2b2140] truncate">
+                                  {acc.nombre}
                                 </span>
-                              )}
-                              <span className="text-[10px] bg-[#f1f3f5] text-[#495057] font-extrabold px-1.5 py-0.2 rounded border border-[#2b2140]/25">
-                                ID: {acc.id}
+                                {acc.rol === 'admin' && (
+                                  <span className="text-[10px] font-black text-[#8f4b00]">
+                                    · 👑 {isSupreme ? 'SUPREMO' : 'ADMIN'}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[11px] text-[#86542d] font-semibold block truncate">
+                                {acc.puntos} pts · {acc.victorias} vic · ELO {acc.elo || 1000}
                               </span>
                             </div>
-                            <span className="text-[11px] text-[#86542d] font-semibold block truncate">
-                              Clave: {acc.clave} • {acc.puntos} pts • {acc.victorias} vic
-                            </span>
                           </div>
+
+                          {isSupreme ? (
+                            <span className="text-[10px] font-black text-[#5c3c00] whitespace-nowrap">
+                              👑 Supremo
+                            </span>
+                          ) : puedeGestionarEstaCuenta ? (
+                            <div className="flex items-center gap-1 shrink-0">
+                              {esYoSupremo && acc.id !== 'admin' && (
+                                <button
+                                  onClick={() => handleRestablecerClave(acc.id, acc.nombre)}
+                                  className="p-1.5 rounded-lg border border-[#2b2140] bg-[#e7f5ff] text-xs hover:bg-[#d0ebff] cursor-pointer"
+                                  title="Restablecer clave temporal"
+                                >
+                                  🔑
+                                </button>
+                              )}
+                              <button
+                                onClick={() => iniciarEdicion(acc)}
+                                className="p-1.5 rounded-lg border border-[#2b2140] bg-[#fff9db] text-xs hover:bg-[#fff3bf] cursor-pointer"
+                                title="Editar usuario"
+                              >
+                                ✏️
+                              </button>
+                              {acc.id !== usuarioActual?.id && (
+                                <button
+                                  onClick={() => {
+                                    sounds.playClick();
+                                    setConfirmandoEliminarId(acc.id);
+                                  }}
+                                  className="p-1.5 rounded-lg border border-[#2b2140] bg-[#ffe3e3] text-xs hover:bg-[#ffc9c9] cursor-pointer"
+                                  title="Eliminar usuario"
+                                >
+                                  🗑️
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-[10px] font-bold text-[#868e96]">Protegido</span>
+                          )}
                         </div>
 
-                        {isSupreme ? (
-                          <span className="text-[10px] font-black bg-[#ffd43b]/60 text-[#5c3c00] px-2.5 py-1 rounded-xl border border-[#2b2140] whitespace-nowrap shadow-sm">
-                            👑 Supremo (Intocable)
-                          </span>
-                        ) : (
-                          <div className="flex items-center gap-1 shrink-0">
-                            <button
-                              onClick={() => iniciarEdicion(acc)}
-                              className="p-1.5 rounded-lg border border-[#2b2140] bg-[#fff9db] text-xs hover:bg-[#fff3bf] cursor-pointer"
-                              title="Editar usuario o rol de administrador"
-                            >
-                              ✏️
-                            </button>
-                            <button
-                              onClick={() => handleEliminar(acc.id, acc.nombre)}
-                              className="p-1.5 rounded-lg border border-[#2b2140] bg-[#ffe3e3] text-xs hover:bg-[#ffc9c9] cursor-pointer"
-                              title="Eliminar usuario"
-                            >
-                              🗑️
-                            </button>
+                        {isConfirmingDelete && (
+                          <div className="p-2.5 bg-[#ffe3e3] rounded-xl border border-[#c92a2a] flex items-center justify-between gap-2 text-xs">
+                            <span className="font-black text-[#c92a2a]">
+                              ¿Eliminar a "{acc.nombre}" de la Base de Datos?
+                            </span>
+                            <div className="flex gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => setConfirmandoEliminarId(null)}
+                                className="py-1 px-2 rounded-lg bg-white border border-[#ced4da] font-bold text-[11px] cursor-pointer"
+                              >
+                                Cancelar
+                              </button>
+                              <button
+                                type="button"
+                                disabled={guardando}
+                                onClick={() => ejecutarEliminarUsuario(acc.id, acc.nombre)}
+                                className="py-1 px-2.5 rounded-lg bg-[#c92a2a] text-white font-black text-[11px] cursor-pointer"
+                              >
+                                {guardando ? 'Borrando...' : 'Sí, eliminar'}
+                              </button>
+                            </div>
                           </div>
                         )}
-                      </div>
+                      </>
                     ) : (
-                      /* Formulario de Edición con Asignación de Rol */
                       <div className="flex flex-col gap-2 pt-1 border-t border-[#2b2140]/10">
                         <div className="grid grid-cols-2 gap-2 text-xs">
                           <div>
-                            <label className="font-bold text-[#86542d] block">Nombre (3-15 chars):</label>
+                            <label className="font-bold text-[#86542d] block">Nombre:</label>
                             <input
                               type="text"
                               minLength={3}
@@ -2194,12 +2747,13 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             />
                           </div>
                           <div>
-                            <label className="font-bold text-[#86542d] block">Clave:</label>
+                            <label className="font-bold text-[#86542d] block">Nueva clave (opcional):</label>
                             <input
-                              type="text"
+                              type="password"
+                              placeholder="Dejar vacío para no cambiar"
                               value={editClave}
                               onChange={(e) => setEditClave(e.target.value)}
-                              className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
+                              className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs"
                             />
                           </div>
                         </div>
@@ -2225,17 +2779,28 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                           </div>
                         </div>
 
-                        <div className="text-xs">
-                          <label className="font-bold text-[#86542d] block">Rol del Usuario:</label>
-                          <select
-                            value={editRol}
-                            onChange={(e) => setEditRol(e.target.value as 'jugador' | 'admin')}
-                            className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs"
-                          >
-                            <option value="jugador">🎮 Jugador Normal</option>
-                            <option value="admin">👑 Administrador (Acceso al Panel)</option>
-                          </select>
-                        </div>
+                        {/* Solo el Admin Supremo puede dar o quitar el rol de Admin a los demás */}
+                        {esYoSupremo ? (
+                          <div className="text-xs">
+                            <label className="font-bold text-[#86542d] block">
+                              Rol del Usuario (exclusivo Admin Supremo):
+                            </label>
+                            <select
+                              value={editRol}
+                              onChange={(e) => setEditRol(e.target.value as 'jugador' | 'admin')}
+                              className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs cursor-pointer"
+                            >
+                              <option value="jugador">🎮 Jugador Normal</option>
+                              <option value="admin">
+                                👑 Administrador (Entra sin clave maestra)
+                              </option>
+                            </select>
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-[#86542d] font-semibold">
+                            ℹ️ Solo el Admin Supremo puede otorgar o quitar el rol de Administrador.
+                          </div>
+                        )}
 
                         <div className="flex justify-end gap-2 mt-1">
                           <button
@@ -2245,10 +2810,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             Cancelar
                           </button>
                           <button
+                            disabled={guardando}
                             onClick={() => guardarEdicion(acc.id)}
                             className="px-3 py-1 rounded bg-[#51cf66] text-[#134e20] border border-[#2b2140] text-xs font-black cursor-pointer shadow-sm"
                           >
-                            Guardar Cambios
+                            {guardando ? 'Guardando...' : 'Guardar en Base de Datos'}
                           </button>
                         </div>
                       </div>
@@ -2258,57 +2824,76 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
               })}
             </div>
 
-            {/* Danger Zone: Reset Global Ranking */}
+            {/* Zona de Peligro: Borrar Ranking Global con Confirmación integrada */}
             <div className="p-3 bg-[#fff5f5] rounded-2xl border-2 border-[#ffc9c9] shadow-sm flex flex-col gap-2 mt-2">
               <span className="font-black text-xs text-[#c92a2a] flex items-center gap-1.5">
                 <span>⚠️</span> Zona de Peligro: Reiniciar Ranking Global
               </span>
               <p className="text-[11px] text-[#e03131] font-medium leading-relaxed">
-                Pone a 0 los puntos, partidas y victorias de todos los jugadores en la base de datos global.
+                Borra todas las entradas del Ranking Global en la Base de Datos y reinicia a 0 los puntos, partidas y victorias de todos los jugadores.
               </p>
-              <button
-                onClick={async () => {
-                  sounds.playClick();
-                  const autorizado = await verificarAdminAntesDeAccion(true);
-                  if (!autorizado) return;
 
-                  if (
-                    window.confirm(
-                      '⚠️ ¿CONFIRMAS que deseas reiniciar TODO el ranking a cero?\n\nEsta acción borrará todas las puntuaciones acumuladas y todos empezarán desde 0.'
-                    )
-                  ) {
-                    onShowToast('⏳ Reiniciando ranking en la nube...');
-                    await adminResetearRankingAsync();
-                    setCuentas(cargarCuentas());
-                    onShowToast('🧹 Todo el ranking ha sido reiniciado a cero con éxito');
-                  }
-                }}
-                className="w-full py-2 px-3 rounded-xl font-black text-xs bg-[#ffe3e3] text-[#c92a2a] border-2 border-[#ffa8a8] hover:bg-[#ffc9c9] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
-              >
-                <span>🧹</span>
-                <span>Reiniciar Todo el Ranking a Cero</span>
-              </button>
+              {!confirmandoResetRanking ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    sounds.playClick();
+                    setConfirmandoResetRanking(true);
+                  }}
+                  className="w-full py-2 px-3 rounded-xl font-black text-xs bg-[#ffe3e3] text-[#c92a2a] border-2 border-[#ffa8a8] hover:bg-[#ffc9c9] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                >
+                  <span>🧹</span>
+                  <span>Reiniciar Todo el Ranking Global a Cero</span>
+                </button>
+              ) : (
+                <div className="p-3 bg-[#ffe3e3] rounded-xl border-2 border-[#c92a2a] flex flex-col gap-2 animate-[fadeIn_0.15s_ease-out]">
+                  <span className="text-xs font-black text-[#a61e1e]">
+                    🚨 ¿CONFIRMAS borrar TODO el Ranking Global en la Base de Datos? Esta acción dejará en 0 puntos a todos los jugadores.
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={guardando}
+                      onClick={() => setConfirmandoResetRanking(false)}
+                      className="flex-1 py-2 rounded-xl bg-white border border-[#2b2140] text-xs font-bold text-[#2b2140] hover:bg-[#f8f9fa] cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={guardando}
+                      onClick={ejecutarResetRankingGlobal}
+                      className="flex-1 py-2 rounded-xl bg-[#c92a2a] border-2 border-[#2b2140] text-xs font-black text-white hover:bg-[#a61e1e] cursor-pointer shadow-sm"
+                    >
+                      {guardando ? '⏳ Borrando en Base de Datos...' : '✓ Sí, borrar Ranking Global'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Exclusive Backup Section: Accessible ONLY to Admin */}
+            {/* Respaldo */}
             <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-2 mt-1">
               <span className="font-black text-xs text-[#2b2140] flex items-center gap-1.5">
-                <span>📦</span> Respaldo y Copia de Seguridad (Solo Administrador)
+                <span>📦</span> Copia de Seguridad JSON
               </span>
-              <p className="text-[11px] text-[#86542d] font-medium leading-relaxed">
-                Descarga una copia completa del ranking y los perfiles, o restaura datos desde un respaldo JSON.
-              </p>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <button
                   onClick={handleExportBackup}
-                  className="py-1.5 px-3 rounded-xl font-bold bg-[#f8f9fa] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#e9ecef] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-1"
+                  className="py-1.5 px-3 rounded-xl font-bold bg-[#f8f9fa] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#e9ecef] cursor-pointer flex items-center justify-center gap-1"
                 >
                   📥 Descargar Copia
                 </button>
-                <label className="py-1.5 px-3 rounded-xl font-bold bg-[#f8f9fa] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#e9ecef] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-1">
-                  📤 Cargar Copia
-                  <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
-                </label>
+                {esYoSupremo ? (
+                  <label className="py-1.5 px-3 rounded-xl font-bold bg-[#f8f9fa] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#e9ecef] cursor-pointer flex items-center justify-center gap-1">
+                    📤 Restaurar Copia
+                    <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
+                  </label>
+                ) : (
+                  <div className="py-1.5 px-3 rounded-xl font-bold bg-[#f1f3f5] text-[#868e96] border border-[#ced4da] flex items-center justify-center text-[11px]">
+                    🔒 Restaurar (Supremo)
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -2317,4 +2902,3 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     </div>
   );
 };
-

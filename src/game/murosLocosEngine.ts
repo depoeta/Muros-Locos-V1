@@ -1,10 +1,11 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * Motor unificado de juego + Sistema de audio (Web Audio API)
  */
 
 import {
-  AccionRegistro,
   Coord,
   GameState,
   MatchConfig,
@@ -15,6 +16,210 @@ import {
   WallOrientation,
 } from '../types/murosLocos';
 
+// =========================================================================
+// SISTEMA DE AUDIO SINTETIZADO (Unificado aquí para reducir archivos)
+// =========================================================================
+class SoundSystem {
+  private ctx: AudioContext | null = null;
+  private enabled: boolean = true;
+
+  constructor() {
+    try {
+      const saved = typeof window !== 'undefined' ? localStorage.getItem('muros_locos_sonido') : null;
+      if (saved !== null) {
+        this.enabled = saved === 'true';
+      }
+    } catch {
+      this.enabled = true;
+    }
+  }
+
+  public setEnabled(enabled: boolean) {
+    this.enabled = enabled;
+    try {
+      localStorage.setItem('muros_locos_sonido', String(enabled));
+    } catch {}
+  }
+
+  public isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  private initCtx() {
+    if (!this.ctx && typeof window !== 'undefined') {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (AudioCtx) {
+        this.ctx = new AudioCtx();
+      }
+    }
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+  }
+
+  public playClick() {
+    if (!this.enabled) return;
+    this.initCtx();
+    if (!this.ctx) return;
+    try {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(650, this.ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(1100, this.ctx.currentTime + 0.05);
+      gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.05);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start();
+      osc.stop(this.ctx.currentTime + 0.05);
+    } catch {}
+  }
+
+  public playMove() {
+    if (!this.enabled) return;
+    this.initCtx();
+    if (!this.ctx) return;
+    try {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(260, this.ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(540, this.ctx.currentTime + 0.12);
+      gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.15);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start();
+      osc.stop(this.ctx.currentTime + 0.15);
+    } catch {}
+  }
+
+  public playWall() {
+    if (!this.enabled) return;
+    this.initCtx();
+    if (!this.ctx) return;
+    try {
+      const t = this.ctx.currentTime;
+      const osc1 = this.ctx.createOscillator();
+      const osc2 = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc1.type = 'triangle';
+      osc1.frequency.setValueAtTime(160, t);
+      osc1.frequency.exponentialRampToValueAtTime(50, t + 0.16);
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(95, t);
+      osc2.frequency.exponentialRampToValueAtTime(40, t + 0.2);
+      gain.gain.setValueAtTime(0.3, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc1.start(t);
+      osc2.start(t);
+      osc1.stop(t + 0.2);
+      osc2.stop(t + 0.2);
+    } catch {}
+  }
+
+  public playWallPlace() {
+    this.playWall();
+  }
+
+  public playError() {
+    if (!this.enabled) return;
+    this.initCtx();
+    if (!this.ctx) return;
+    try {
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(220, t);
+      osc.frequency.linearRampToValueAtTime(110, t + 0.18);
+      gain.gain.setValueAtTime(0.18, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.18);
+    } catch {}
+  }
+
+  public playTurn() {
+    if (!this.enabled) return;
+    this.initCtx();
+    if (!this.ctx) return;
+    try {
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(620, t);
+      osc.frequency.exponentialRampToValueAtTime(880, t + 0.08);
+      gain.gain.setValueAtTime(0.08, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.09);
+    } catch {}
+  }
+
+  public playVictory() {
+    if (!this.enabled) return;
+    this.initCtx();
+    if (!this.ctx) return;
+    try {
+      const notes = [523.25, 659.25, 783.99, 987.77, 1046.5];
+      const now = this.ctx.currentTime;
+      notes.forEach((freq, idx) => {
+        const osc = this.ctx!.createOscillator();
+        const gain = this.ctx!.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, now + idx * 0.1);
+        gain.gain.setValueAtTime(0, now + idx * 0.1);
+        gain.gain.linearRampToValueAtTime(0.25, now + idx * 0.1 + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.1 + 0.35);
+        osc.connect(gain);
+        gain.connect(this.ctx!.destination);
+        osc.start(now + idx * 0.1);
+        osc.stop(now + idx * 0.1 + 0.36);
+      });
+    } catch {}
+  }
+
+  public playAchievement() {
+    if (!this.enabled) return;
+    this.initCtx();
+    if (!this.ctx) return;
+    try {
+      const notes = [659.25, 880.0];
+      const now = this.ctx.currentTime;
+      notes.forEach((freq, idx) => {
+        const osc = this.ctx!.createOscillator();
+        const gain = this.ctx!.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now + idx * 0.12);
+        gain.gain.setValueAtTime(0, now + idx * 0.12);
+        gain.gain.linearRampToValueAtTime(0.2, now + idx * 0.12 + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.12 + 0.32);
+        osc.connect(gain);
+        gain.connect(this.ctx!.destination);
+        osc.start(now + idx * 0.12);
+        osc.stop(now + idx * 0.12 + 0.33);
+      });
+    } catch {}
+  }
+}
+
+export const sounds = new SoundSystem();
+
+// =========================================================================
+// MOTOR DE REGLAS Y BOTS DE MUROS LOCOS
+// =========================================================================
 export const BOARD_SIZE = 9;
 export const WALL_GRID_SIZE = 8;
 
@@ -85,7 +290,7 @@ export function inicializarPartida(config: MatchConfig): GameState {
         nombre: config.jugadores[0]?.nombre || 'Jugador 1',
         tipo: config.jugadores[0]?.tipo || 'humano',
         color: config.jugadores[0]?.color || '#ff6b6b',
-        hat: config.jugadores[0]?.hat || 'corona',
+        hat: (config.jugadores[0]?.tipo || 'humano') !== 'humano' ? 'bot_cpu' : (config.jugadores[0]?.hat || 'corona'),
         r: 8,
         c: 4,
         muros: initialWalls,
@@ -98,7 +303,7 @@ export function inicializarPartida(config: MatchConfig): GameState {
         nombre: config.jugadores[1]?.nombre || 'Bot Normal',
         tipo: config.jugadores[1]?.tipo || 'bot_normal',
         color: config.jugadores[1]?.color || '#4dabf7',
-        hat: config.jugadores[1]?.hat || 'pompon',
+        hat: (config.jugadores[1]?.tipo || 'bot_normal') !== 'humano' ? 'bot_cpu' : (config.jugadores[1]?.hat || 'pompon'),
         r: 0,
         c: 4,
         muros: initialWalls,
@@ -108,14 +313,13 @@ export function inicializarPartida(config: MatchConfig): GameState {
       },
     ];
   } else {
-    // 4 Players clockwise: J1 (bottom), J2 (left), J3 (top), J4 (right)
     jugadores = [
       {
         id: 0,
         nombre: config.jugadores[0]?.nombre || 'Jugador 1',
         tipo: config.jugadores[0]?.tipo || 'humano',
         color: config.jugadores[0]?.color || '#ff6b6b',
-        hat: config.jugadores[0]?.hat || 'corona',
+        hat: (config.jugadores[0]?.tipo || 'humano') !== 'humano' ? 'bot_cpu' : (config.jugadores[0]?.hat || 'corona'),
         r: 8,
         c: 4,
         muros: initialWalls,
@@ -128,7 +332,7 @@ export function inicializarPartida(config: MatchConfig): GameState {
         nombre: config.jugadores[1]?.nombre || 'Jugador 2',
         tipo: config.jugadores[1]?.tipo || 'bot_normal',
         color: config.jugadores[1]?.color || '#4dabf7',
-        hat: config.jugadores[1]?.hat || 'pompon',
+        hat: (config.jugadores[1]?.tipo || 'bot_normal') !== 'humano' ? 'bot_cpu' : (config.jugadores[1]?.hat || 'pompon'),
         r: 4,
         c: 0,
         muros: initialWalls,
@@ -141,7 +345,7 @@ export function inicializarPartida(config: MatchConfig): GameState {
         nombre: config.jugadores[2]?.nombre || 'Jugador 3',
         tipo: config.jugadores[2]?.tipo || 'bot_normal',
         color: config.jugadores[2]?.color || '#ffd43b',
-        hat: config.jugadores[2]?.hat || 'antena',
+        hat: (config.jugadores[2]?.tipo || 'bot_normal') !== 'humano' ? 'bot_cpu' : (config.jugadores[2]?.hat || 'antena'),
         r: 0,
         c: 4,
         muros: initialWalls,
@@ -154,7 +358,7 @@ export function inicializarPartida(config: MatchConfig): GameState {
         nombre: config.jugadores[3]?.nombre || 'Jugador 4',
         tipo: config.jugadores[3]?.tipo || 'bot_facil',
         color: config.jugadores[3]?.color || '#51cf66',
-        hat: config.jugadores[3]?.hat || 'brote',
+        hat: (config.jugadores[3]?.tipo || 'bot_facil') !== 'humano' ? 'bot_cpu' : (config.jugadores[3]?.hat || 'brote'),
         r: 4,
         c: 8,
         muros: initialWalls,
@@ -197,8 +401,6 @@ export function inicializarPartida(config: MatchConfig): GameState {
   };
 }
 
-
-// 4.1 Wall check helper
 export function isH(r: number, c: number, murosH: number[][]): boolean {
   return r >= 0 && r < WALL_GRID_SIZE && c >= 0 && c < WALL_GRID_SIZE && murosH[r][c] !== -1;
 }
@@ -215,26 +417,13 @@ export function bloqueado(
   murosH: number[][],
   murosV: number[][]
 ): boolean {
-  if (dr === -1) {
-    // Up
-    return isH(r - 1, c, murosH) || isH(r - 1, c - 1, murosH);
-  }
-  if (dr === 1) {
-    // Down
-    return isH(r, c, murosH) || isH(r, c - 1, murosH);
-  }
-  if (dc === 1) {
-    // Right
-    return isV(r, c, murosV) || isV(r - 1, c, murosV);
-  }
-  if (dc === -1) {
-    // Left
-    return isV(r, c - 1, murosV) || isV(r - 1, c - 1, murosV);
-  }
+  if (dr === -1) return isH(r - 1, c, murosH) || isH(r - 1, c - 1, murosH);
+  if (dr === 1) return isH(r, c, murosH) || isH(r, c - 1, murosH);
+  if (dc === 1) return isV(r, c, murosV) || isV(r - 1, c, murosV);
+  if (dc === -1) return isV(r, c - 1, murosV) || isV(r - 1, c - 1, murosV);
   return false;
 }
 
-// 4.2 Legal moves with straight & diagonal jumps
 export function movimientosLegales(jugador: Player, estado: GameState): Coord[] {
   const res: Coord[] = [];
   const direcciones = [
@@ -264,7 +453,6 @@ export function movimientosLegales(jugador: Player, estado: GameState): Coord[] 
       continue;
     }
 
-    // Attempt straight jump over opponent
     const jr = nr + dr;
     const jc = nc + dc;
     const canJumpStraight =
@@ -280,7 +468,6 @@ export function movimientosLegales(jugador: Player, estado: GameState): Coord[] 
       continue;
     }
 
-    // Straight jump blocked: attempt diagonal jumps
     const laterales =
       dr === 0
         ? [
@@ -297,7 +484,6 @@ export function movimientosLegales(jugador: Player, estado: GameState): Coord[] 
         const sr = nr + er;
         const sc = nc + ec;
         if (sr >= 0 && sr < BOARD_SIZE && sc >= 0 && sc < BOARD_SIZE && !ocupadoPor(sr, sc)) {
-          // Avoid duplicate positions
           if (!res.some((p) => p.r === sr && p.c === sc)) {
             res.push({ r: sr, c: sc });
           }
@@ -309,22 +495,18 @@ export function movimientosLegales(jugador: Player, estado: GameState): Coord[] 
   return res;
 }
 
-// Check if position reaches goal
-// In 4-player games, all 4 corners (0,0), (0,8), (8,0), (8,8) are neutral and do NOT grant victory
 export function esMeta(jugador: Player, r: number, c: number, numJugadores: number = 2): boolean {
   if (numJugadores === 4) {
     if ((r === 0 || r === 8) && (c === 0 || c === 8)) {
       return false;
     }
   }
-
   if (jugador.targetType === 'row') {
     return r === jugador.targetValue;
   }
   return c === jugador.targetValue;
 }
 
-// 4.3 Shortest path (BFS) to goal
 export function bfsCamino(
   jugador: Player,
   murosH: number[][],
@@ -334,7 +516,6 @@ export function bfsCamino(
 ): { distancia: number; camino: Coord[] } {
   const start = desde || { r: jugador.r, c: jugador.c };
 
-  // Fast check: already at goal
   if (esMeta(jugador, start.r, start.c, numJugadores)) {
     return { distancia: 0, camino: [start] };
   }
@@ -385,7 +566,6 @@ export function bfsCamino(
     return { distancia: Infinity, camino: [] };
   }
 
-  // Reconstruct path
   const path: Coord[] = [];
   let curr: Coord | null = goalNode;
   while (curr) {
@@ -396,7 +576,6 @@ export function bfsCamino(
   return { distancia: dist[goalNode.r][goalNode.c], camino: path };
 }
 
-// 4.4 Validate wall placement
 export function validarMuro(
   orientacion: WallOrientation,
   r: number,
@@ -409,41 +588,35 @@ export function validarMuro(
     return 'fuera';
   }
 
-  // Crossing check or existing wall at same intersection
   if (murosH[r][c] !== -1 || murosV[r][c] !== -1) {
     return 'solape';
   }
 
   if (orientacion === 'H') {
-    // Must not overlap horizontally with adjacent wall
     if (isH(r, c - 1, murosH) || isH(r, c + 1, murosH)) {
       return 'solape';
     }
   } else {
-    // Must not overlap vertically with adjacent wall
     if (isV(r - 1, c, murosV) || isV(r + 1, c, murosV)) {
       return 'solape';
     }
   }
 
-  // Temporarily place wall
   if (orientacion === 'H') {
     murosH[r][c] = 999;
   } else {
     murosV[r][c] = 999;
   }
 
-  // Check path guarantee for EVERY player
   let allHavePath = true;
   for (const j of jugadores) {
-    const { distancia } = bfsCamino(j, murosH, murosV);
+    const { distancia } = bfsCamino(j, murosH, murosV, undefined, jugadores.length);
     if (distancia === Infinity) {
       allHavePath = false;
       break;
     }
   }
 
-  // Remove temporary wall
   if (orientacion === 'H') {
     murosH[r][c] = -1;
   } else {
@@ -457,7 +630,6 @@ export function validarMuro(
   return 'ok';
 }
 
-// Deep copy snapshot for undo
 export function tomarSnapshot(estado: GameState) {
   return {
     jugadores: estado.jugadores.map((p) => ({
@@ -476,7 +648,6 @@ export function tomarSnapshot(estado: GameState) {
   };
 }
 
-// Execute player movement
 export function aplicarMovimiento(
   estado: GameState,
   destino: Coord
@@ -484,10 +655,8 @@ export function aplicarMovimiento(
   const jugador = estado.jugadores[estado.turnoActual];
   const origenCoord = { r: jugador.r, c: jugador.c };
 
-  // Save snapshot before mutating
   estado.historial.push(tomarSnapshot(estado));
 
-  // Determine if it was a jump (Manhattan distance > 1 or diagonal)
   const manhattan = Math.abs(destino.r - jugador.r) + Math.abs(destino.c - jugador.c);
   const isDiagonal = Math.abs(destino.r - jugador.r) === 1 && Math.abs(destino.c - jugador.c) === 1;
   const esSalto = manhattan === 2 || isDiagonal;
@@ -500,7 +669,6 @@ export function aplicarMovimiento(
     jugador.estadisticas.saltos++;
   }
 
-  // Register in chronological history
   const notacionOrigen = coordToAlgebraic(origenCoord.r, origenCoord.c);
   const notacionDestino = coordToAlgebraic(destino.r, destino.c);
   estado.registroAcciones.push({
@@ -510,9 +678,7 @@ export function aplicarMovimiento(
     jugadorNombre: jugador.nombre,
     jugadorColor: jugador.color,
     tipo: 'mover',
-    descripcion: esSalto
-      ? `🦘 Salto a ${notacionDestino}`
-      : `🚶 Paso a ${notacionDestino}`,
+    descripcion: esSalto ? `🦘 Salto a ${notacionDestino}` : `🚶 Paso a ${notacionDestino}`,
     detalle: esSalto
       ? `Salto sobre rival de ${notacionOrigen} a ${notacionDestino}`
       : `Desde ${notacionOrigen}`,
@@ -522,10 +688,8 @@ export function aplicarMovimiento(
     tiempo: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
   });
 
-  // Track remontada stats: calculate current disadvantage vs closest rival
   actualizarDesventaja(estado);
 
-  // Check victory (respecting neutral corners for 4P)
   if (esMeta(jugador, jugador.r, jugador.c, estado.n)) {
     estado.terminada = true;
     estado.ganador = estado.turnoActual;
@@ -534,7 +698,6 @@ export function aplicarMovimiento(
     return { ganador: true, esSalto, mensaje: msg };
   }
 
-  // Pass turn
   avanzarTurno(estado);
   const proximo = estado.jugadores[estado.turnoActual];
   const mensaje = esSalto
@@ -545,7 +708,6 @@ export function aplicarMovimiento(
   return { ganador: false, esSalto, mensaje };
 }
 
-// Execute wall placement
 export function aplicarMuro(
   estado: GameState,
   orientacion: WallOrientation,
@@ -554,10 +716,9 @@ export function aplicarMuro(
 ): { esMuroMaestro: boolean; mensaje: string } {
   const jugador = estado.jugadores[estado.turnoActual];
 
-  // Calculate rival distance increase before placing to check "Muro maestro"
   const leadingRivalBefore = obtenerRivalMasPeligroso(estado, jugador.id);
   const rivalDistBefore = leadingRivalBefore
-    ? bfsCamino(leadingRivalBefore, estado.murosH, estado.murosV).distancia
+    ? bfsCamino(leadingRivalBefore, estado.murosH, estado.murosV, undefined, estado.n).distancia
     : 0;
 
   estado.historial.push(tomarSnapshot(estado));
@@ -572,17 +733,15 @@ export function aplicarMuro(
   jugador.estadisticas.acciones++;
   jugador.estadisticas.murosColocados++;
 
-  // Check Muro maestro: increases closest rival's distance by >= 4
   let esMuroMaestro = false;
   if (leadingRivalBefore) {
-    const rivalDistAfter = bfsCamino(leadingRivalBefore, estado.murosH, estado.murosV).distancia;
+    const rivalDistAfter = bfsCamino(leadingRivalBefore, estado.murosH, estado.murosV, undefined, estado.n).distancia;
     if (rivalDistAfter - rivalDistBefore >= 4) {
       esMuroMaestro = true;
       jugador.estadisticas.murosMaestros++;
     }
   }
 
-  // Register wall action in chronological history
   const notacionMuro = `${String.fromCharCode(65 + c)}${9 - r}`;
   const orientacionTexto = orientacion === 'H' ? 'Horizontal' : 'Vertical';
   estado.registroAcciones.push({
@@ -606,7 +765,6 @@ export function aplicarMuro(
 
   actualizarDesventaja(estado);
 
-  // Pass turn
   avanzarTurno(estado);
   const proximo = estado.jugadores[estado.turnoActual];
   const mensaje = esMuroMaestro
@@ -617,128 +775,13 @@ export function aplicarMuro(
   return { esMuroMaestro, mensaje };
 }
 
-// Tournament round handlers
-export function registrarResultadoRondaTorneo(
-  torneo: TorneoState,
-  ganadorId: number,
-  ganadorNombre: string,
-  puntosPorJugador: Record<number, number>
-): TorneoState {
-  const nextTorneo: TorneoState = {
-    ...torneo,
-    puntosAcumulados: { ...torneo.puntosAcumulados },
-    victoriasAcumuladas: { ...torneo.victoriasAcumuladas },
-    historialRondas: [...torneo.historialRondas],
-  };
-
-  Object.entries(puntosPorJugador).forEach(([idStr, pts]) => {
-    const id = Number(idStr);
-    nextTorneo.puntosAcumulados[id] = (nextTorneo.puntosAcumulados[id] || 0) + pts;
-  });
-
-  if (ganadorId >= 0) {
-    nextTorneo.victoriasAcumuladas[ganadorId] = (nextTorneo.victoriasAcumuladas[ganadorId] || 0) + 1;
-  }
-
-  nextTorneo.historialRondas.push({
-    ronda: torneo.rondaActual,
-    ganadorId,
-    ganadorNombre,
-    puntosRonda: { ...puntosPorJugador },
-  });
-
-  if (nextTorneo.rondaActual >= nextTorneo.totalRondas) {
-    nextTorneo.terminado = true;
-    let maxPts = -1;
-    let bestId = 0;
-    Object.entries(nextTorneo.puntosAcumulados).forEach(([idStr, pts]) => {
-      const id = Number(idStr);
-      if (pts > maxPts) {
-        maxPts = pts;
-        bestId = id;
-      }
-    });
-    nextTorneo.ganadorGlobalId = bestId;
-  }
-
-  return nextTorneo;
-}
-
-export function reiniciarTableroParaSiguienteRonda(estado: GameState): GameState {
-  if (!estado.torneo) return estado;
-  const config = estado.config;
-  const n = config.numJugadores;
-  const initialWalls = n === 2 ? 10 : 5;
-
-  const proximaRonda = estado.torneo.rondaActual + 1;
-  const torneoActualizado: TorneoState = {
-    ...estado.torneo,
-    rondaActual: proximaRonda,
-  };
-
-  // Reset player board positions and walls for the new match
-  const jugadores: Player[] = estado.jugadores.map((p) => {
-    let startR = 8;
-    let startC = 4;
-    let targetType: 'row' | 'col' = 'row';
-    let targetValue = 0;
-
-    if (n === 2) {
-      if (p.id === 0) {
-        startR = 8; startC = 4; targetType = 'row'; targetValue = 0;
-      } else {
-        startR = 0; startC = 4; targetType = 'row'; targetValue = 8;
-      }
-    } else {
-      if (p.id === 0) { startR = 8; startC = 4; targetType = 'row'; targetValue = 0; }
-      else if (p.id === 1) { startR = 4; startC = 0; targetType = 'col'; targetValue = 8; }
-      else if (p.id === 2) { startR = 0; startC = 4; targetType = 'row'; targetValue = 8; }
-      else { startR = 4; startC = 8; targetType = 'col'; targetValue = 0; }
-    }
-
-    return {
-      ...p,
-      r: startR,
-      c: startC,
-      muros: initialWalls,
-      targetType,
-      targetValue,
-      estadisticas: createInitialStats(),
-    };
-  });
-
-  const turnoInicial = config.empiezaAlAzar ? Math.floor(Math.random() * n) : 0;
-
-  return {
-    ...estado,
-    jugadores,
-    murosH: createEmptyGrid(-1),
-    murosV: createEmptyGrid(-1),
-    turnoActual: turnoInicial,
-    turnosTotales: 0,
-    terminada: false,
-    ganador: null,
-    modoAccion: 'mover',
-    orientacionMuro: 'H',
-    muroPrevisualizado: null,
-    caminoPista: null,
-    historial: [],
-    registroAcciones: [],
-    tiempoRestante: config.segundosPorTurno || 30,
-    pensandoBot: false,
-    ultimoMensaje: `🏆 Ronda ${proximaRonda} de ${torneoActualizado.totalRondas}: ¡Turno de ${jugadores[turnoInicial].nombre}!`,
-    torneo: torneoActualizado,
-  };
-}
-
-// Track remontada stats for every player
 function actualizarDesventaja(estado: GameState) {
   for (const p of estado.jugadores) {
-    const myDist = bfsCamino(p, estado.murosH, estado.murosV).distancia;
+    const myDist = bfsCamino(p, estado.murosH, estado.murosV, undefined, estado.n).distancia;
     let minRivalDist = Infinity;
     for (const other of estado.jugadores) {
       if (other.id !== p.id) {
-        const d = bfsCamino(other, estado.murosH, estado.murosV).distancia;
+        const d = bfsCamino(other, estado.murosH, estado.murosV, undefined, estado.n).distancia;
         if (d < minRivalDist) {
           minRivalDist = d;
         }
@@ -754,14 +797,13 @@ function actualizarDesventaja(estado: GameState) {
   }
 }
 
-// Find closest opponent to their own goal
 export function obtenerRivalMasPeligroso(estado: GameState, myPlayerId: number): Player | null {
   let closest: Player | null = null;
   let minDist = Infinity;
 
   for (const p of estado.jugadores) {
     if (p.id !== myPlayerId) {
-      const dist = bfsCamino(p, estado.murosH, estado.murosV).distancia;
+      const dist = bfsCamino(p, estado.murosH, estado.murosV, undefined, estado.n).distancia;
       if (dist < minDist) {
         minDist = dist;
         closest = p;
@@ -772,17 +814,15 @@ export function obtenerRivalMasPeligroso(estado: GameState, myPlayerId: number):
   return closest;
 }
 
-// Advance turn, check ties & auto-pass
 export function avanzarTurno(estado: GameState) {
   estado.turnosTotales++;
   estado.caminoPista = null;
   estado.muroPrevisualizado = null;
   estado.tiempoRestante = estado.config.segundosPorTurno || 30;
 
-  // Check 200 turn tie
   if (estado.turnosTotales >= 200) {
     estado.terminada = true;
-    estado.ganador = -1; // Tie
+    estado.ganador = -1;
     estado.ultimoMensaje = '⚖️ ¡Empate por alcanzar los 200 turnos!';
     return;
   }
@@ -794,47 +834,43 @@ export function avanzarTurno(estado: GameState) {
     const nextPlayer = estado.jugadores[nextIdx];
     const moves = movimientosLegales(nextPlayer, estado);
 
-    // If player has moves or walls, they can take their turn
     if (moves.length > 0 || nextPlayer.muros > 0) {
       estado.turnoActual = nextIdx;
-      // Default to move mode if moves exist, otherwise wall mode
       estado.modoAccion = moves.length > 0 ? 'mover' : 'muro';
       return;
     }
 
-    // Auto-pass if no moves and no walls
     nextIdx = (nextIdx + 1) % estado.n;
     attempts++;
   }
 
-  // All players stuck? Tie
   estado.terminada = true;
   estado.ganador = -1;
   estado.ultimoMensaje = '⚖️ ¡Todos los jugadores bloqueados! Empate.';
 }
 
-// Bot AI Implementation (Section 5)
 export function calcularJugadaBot(
   jugador: Player,
   estado: GameState
-): { tipo: 'mover'; coord: Coord } | { tipo: 'muro'; orientacion: WallOrientation; coord: Coord } | { tipo: 'pasar' } {
+):
+  | { tipo: 'mover'; coord: Coord }
+  | { tipo: 'muro'; orientacion: WallOrientation; coord: Coord }
+  | { tipo: 'pasar' } {
   const moves = movimientosLegales(jugador, estado);
 
-  // If no moves and no walls, pass
   if (moves.length === 0 && jugador.muros === 0) {
     return { tipo: 'pasar' };
   }
 
   const tipoBot = jugador.tipo;
 
-  // Helper: shortest path step towards goal
   const bestMoveToGoal = (): Coord | null => {
     if (moves.length === 0) return null;
     let bestDist = Infinity;
     let candidates: Coord[] = [];
 
     for (const m of moves) {
-      const { distancia } = bfsCamino(jugador, estado.murosH, estado.murosV, m);
+      const { distancia } = bfsCamino(jugador, estado.murosH, estado.murosV, m, estado.n);
       if (distancia < bestDist) {
         bestDist = distancia;
         candidates = [m];
@@ -846,23 +882,19 @@ export function calcularJugadaBot(
     return candidates[Math.floor(Math.random() * candidates.length)];
   };
 
-  // 1. Bot Fácil
   if (tipoBot === 'bot_facil') {
-    // 15% probability of placing a wall if walls remain
     if (jugador.muros > 0 && Math.random() < 0.15) {
       const leadingRival = obtenerRivalMasPeligroso(estado, jugador.id);
       if (leadingRival) {
-        const rivalDist0 = bfsCamino(leadingRival, estado.murosH, estado.murosV).distancia;
-        // Sample candidate positions
+        const rivalDist0 = bfsCamino(leadingRival, estado.murosH, estado.murosV, undefined, estado.n).distancia;
         for (let tries = 0; tries < 20; tries++) {
           const r = Math.floor(Math.random() * WALL_GRID_SIZE);
           const c = Math.floor(Math.random() * WALL_GRID_SIZE);
           const o: WallOrientation = Math.random() < 0.5 ? 'H' : 'V';
           if (validarMuro(o, r, c, estado.murosH, estado.murosV, estado.jugadores) === 'ok') {
-            // Check if it lengthens rival by at least 1
             if (o === 'H') estado.murosH[r][c] = jugador.id;
             else estado.murosV[r][c] = jugador.id;
-            const newDist = bfsCamino(leadingRival, estado.murosH, estado.murosV).distancia;
+            const newDist = bfsCamino(leadingRival, estado.murosH, estado.murosV, undefined, estado.n).distancia;
             if (o === 'H') estado.murosH[r][c] = -1;
             else estado.murosV[r][c] = -1;
 
@@ -874,7 +906,6 @@ export function calcularJugadaBot(
       }
     }
 
-    // 30% random legal move, else shortest path
     if (moves.length > 0) {
       if (Math.random() < 0.3) {
         return { tipo: 'mover', coord: moves[Math.floor(Math.random() * moves.length)] };
@@ -884,48 +915,41 @@ export function calcularJugadaBot(
     }
 
     if (jugador.muros > 0) {
-      // Emergency random valid wall
-      const anyWall = buscarCualquierMuroValido(estado, jugador);
+      const anyWall = buscarCualquierMuroValido(estado);
       if (anyWall) return anyWall;
     }
 
     return { tipo: 'pasar' };
   }
 
-  // 2. Bot Normal & Bot Difícil
-  const myDist = bfsCamino(jugador, estado.murosH, estado.murosV).distancia;
+  const myDist = bfsCamino(jugador, estado.murosH, estado.murosV, undefined, estado.n).distancia;
   const leadingRival = obtenerRivalMasPeligroso(estado, jugador.id);
   const rivalDist = leadingRival
-    ? bfsCamino(leadingRival, estado.murosH, estado.murosV).distancia
+    ? bfsCamino(leadingRival, estado.murosH, estado.murosV, undefined, estado.n).distancia
     : Infinity;
 
-  // Instant victory check: if any legal move wins the game right now, take it!
-  const winningMove = moves.find((m) => esMeta(jugador, m.r, m.c));
+  const winningMove = moves.find((m) => esMeta(jugador, m.r, m.c, estado.n));
   if (winningMove) {
     return { tipo: 'mover', coord: winningMove };
   }
 
-  // 2. Bot Difícil: 2-ply Lookahead Evaluation & Strategic Blocking
   if (tipoBot === 'bot_dificil') {
     let bestAction:
       | { tipo: 'mover'; coord: Coord; score: number }
       | { tipo: 'muro'; orientacion: WallOrientation; coord: Coord; score: number }
       | null = null;
 
-    // Evaluate all legal moves
     for (const m of moves) {
-      const { distancia: myNewDist } = bfsCamino(jugador, estado.murosH, estado.murosV, m);
-      // Lead advantage after this move
+      const { distancia: myNewDist } = bfsCamino(jugador, estado.murosH, estado.murosV, m, estado.n);
       const score = (rivalDist - myNewDist) * 3 + (myDist - myNewDist) * 2;
       if (!bestAction || score > bestAction.score) {
         bestAction = { tipo: 'mover', coord: m, score };
       }
     }
 
-    // Evaluate candidate walls if walls remain
     if (jugador.muros > 0 && leadingRival) {
       const candidateWalls: { o: WallOrientation; r: number; c: number }[] = [];
-      const rivalPath = bfsCamino(leadingRival, estado.murosH, estado.murosV).camino;
+      const rivalPath = bfsCamino(leadingRival, estado.murosH, estado.murosV, undefined, estado.n).camino;
 
       for (const pt of rivalPath) {
         for (const dr of [-1, 0, 1]) {
@@ -950,8 +974,8 @@ export function calcularJugadaBot(
           if (w.o === 'H') estado.murosH[w.r][w.c] = jugador.id;
           else estado.murosV[w.r][w.c] = jugador.id;
 
-          const newRivalDist = bfsCamino(leadingRival, estado.murosH, estado.murosV).distancia;
-          const newMyDist = bfsCamino(jugador, estado.murosH, estado.murosV).distancia;
+          const newRivalDist = bfsCamino(leadingRival, estado.murosH, estado.murosV, undefined, estado.n).distancia;
+          const newMyDist = bfsCamino(jugador, estado.murosH, estado.murosV, undefined, estado.n).distancia;
 
           if (w.o === 'H') estado.murosH[w.r][w.c] = -1;
           else estado.murosV[w.r][w.c] = -1;
@@ -959,10 +983,8 @@ export function calcularJugadaBot(
           const rivalDetour = newRivalDist - rivalDist;
           const selfPenalty = newMyDist - myDist;
 
-          // Only consider walls that actually delay the rival without hurting self more
           if (rivalDetour >= 1 && selfPenalty <= 1) {
             let wallScore = rivalDetour * 4 - selfPenalty * 5 + (newRivalDist - newMyDist) * 3;
-            // Massive bonus if rival is 1-2 steps from winning and this wall blocks them
             if (rivalDist <= 2 && rivalDetour >= 1) {
               wallScore += 20;
             } else if (rivalDist <= 4 && rivalDetour >= 2) {
@@ -985,15 +1007,12 @@ export function calcularJugadaBot(
     if (bestAction) {
       if (bestAction.tipo === 'mover') {
         return { tipo: 'mover', coord: bestAction.coord };
-      } else {
-        return { tipo: 'muro', orientacion: bestAction.orientacion, coord: bestAction.coord };
       }
+      return { tipo: 'muro', orientacion: bestAction.orientacion, coord: bestAction.coord };
     }
   }
 
-  // 3. Bot Normal: Equilibrado, humano y divertido (no invencible)
-  // ~70% de las veces prefiere avanzar hacia la meta
-  const deseaAvanzar = Math.random() < 0.70;
+  const deseaAvanzar = Math.random() < 0.7;
   const rivalMuyCerca = rivalDist <= 3;
 
   if (deseaAvanzar && !rivalMuyCerca) {
@@ -1005,9 +1024,8 @@ export function calcularJugadaBot(
 
   if (jugador.muros > 0 && leadingRival && rivalDist <= 6) {
     const candidatePool: { o: WallOrientation; r: number; c: number }[] = [];
-    const rivalPath = bfsCamino(leadingRival, estado.murosH, estado.murosV).camino;
+    const rivalPath = bfsCamino(leadingRival, estado.murosH, estado.murosV, undefined, estado.n).camino;
 
-    // Solo analiza los primeros 3 pasos del camino del rival
     for (const pt of rivalPath.slice(0, 3)) {
       for (const dr of [-1, 0, 1]) {
         for (const dc of [-1, 0, 1]) {
@@ -1021,7 +1039,6 @@ export function calcularJugadaBot(
       }
     }
 
-    // Tomamos hasta 8 candidatos al azar para no jugar como un gran maestro infalible
     const shuffled = candidatePool.sort(() => 0.5 - Math.random()).slice(0, 8);
     let maxGain = -999;
 
@@ -1030,8 +1047,8 @@ export function calcularJugadaBot(
         if (w.o === 'H') estado.murosH[w.r][w.c] = jugador.id;
         else estado.murosV[w.r][w.c] = jugador.id;
 
-        const newRivalDist = bfsCamino(leadingRival, estado.murosH, estado.murosV).distancia;
-        const newMyDist = bfsCamino(jugador, estado.murosH, estado.murosV).distancia;
+        const newRivalDist = bfsCamino(leadingRival, estado.murosH, estado.murosV, undefined, estado.n).distancia;
+        const newMyDist = bfsCamino(jugador, estado.murosH, estado.murosV, undefined, estado.n).distancia;
 
         if (w.o === 'H') estado.murosH[w.r][w.c] = -1;
         else estado.murosV[w.r][w.c] = -1;
@@ -1049,7 +1066,6 @@ export function calcularJugadaBot(
     }
   }
 
-  // Si encontró un buen muro y el rival está a tiro o amerita bloquear:
   if (
     bestWall &&
     ((bestWall.ganancia >= 1.5 && rivalDist <= 5) || (rivalMuyCerca && bestWall.ganancia >= 1))
@@ -1057,7 +1073,6 @@ export function calcularJugadaBot(
     return { tipo: 'muro', orientacion: bestWall.orientacion, coord: bestWall.coord };
   }
 
-  // De lo contrario avanza hacia la meta
   const bm = bestMoveToGoal();
   if (bm) {
     return { tipo: 'mover', coord: bm };
@@ -1071,8 +1086,7 @@ export function calcularJugadaBot(
 }
 
 function buscarCualquierMuroValido(
-  estado: GameState,
-  jugador: Player
+  estado: GameState
 ): { tipo: 'muro'; orientacion: WallOrientation; coord: Coord } | null {
   for (let r = 0; r < WALL_GRID_SIZE; r++) {
     for (let c = 0; c < WALL_GRID_SIZE; c++) {
@@ -1086,108 +1100,60 @@ function buscarCualquierMuroValido(
   return null;
 }
 
-// 7. Score Calculation Formula
 export function calcularDesglosePuntos(
   jugador: Player,
   estado: GameState,
-  rachaActual: number
+  _rachaActual: number = 0,
+  bonoTorneo: number = 0
 ): ScoreBreakdown {
-  const n = estado.n;
   const esGanador = estado.ganador === jugador.id;
   const stats = jugador.estadisticas;
 
-  // 7.1 Puntos por resultado
-  let resultado = 0;
-  if (esGanador) {
-    resultado = n === 2 ? 100 : 150;
-  } else if (estado.ganador === -1) {
-    // Empate
-    resultado = 20;
-  } else {
-    // Order non-winners in 4P by distance to goal, then remaining walls, then turn order
-    if (n === 2) {
-      resultado = 20;
-    } else {
-      const nonWinners = estado.jugadores
-        .filter((p) => p.id !== estado.ganador)
-        .sort((a, b) => {
-          const da = bfsCamino(a, estado.murosH, estado.murosV).distancia;
-          const db = bfsCamino(b, estado.murosH, estado.murosV).distancia;
-          if (da !== db) return da - db;
-          if (b.muros !== a.muros) return b.muros - a.muros;
-          return a.id - b.id;
-        });
+  // Sistema de puntos gradual:
+  // - Victoria: +5 pts (derrota o empate: 0 pts)
+  // - Muros colocados: +1 pt por cada muro usado
+  // - Final cerrado (ganar cuando un rival estaba a 1 casilla de su meta): +5 pts
+  // - Bono de campeón de torneo (al ganar el torneo completo): +10 pts
+  const resultado = esGanador ? 5 : 0;
+  const murosUsados = stats.murosColocados * 1;
 
-      const puesto = nonWinners.findIndex((p) => p.id === jugador.id);
-      if (puesto === 0) resultado = 60; // 2nd place
-      else if (puesto === 1) resultado = 35; // 3rd place
-      else resultado = 15; // 4th place
+  let rivalACasillaDeGanar = false;
+  if (esGanador) {
+    for (const otro of estado.jugadores) {
+      if (otro.id !== jugador.id) {
+        const { distancia } = bfsCamino(otro, estado.murosH, estado.murosV, undefined, estado.n);
+        if (distancia <= 1) {
+          rivalACasillaDeGanar = true;
+          break;
+        }
+      }
     }
   }
+  const finalCerrado = esGanador && rivalACasillaDeGanar ? 5 : 0;
 
-  // 7.2 Bonificaciones
-  const ahorrador = esGanador ? jugador.muros * 5 : 0;
-  const rapidez = esGanador ? Math.max(0, 40 - stats.acciones) : 0;
-  const saltador = Math.min(15, stats.saltos * 3);
-  const muroMaestro = Math.min(30, stats.murosMaestros * 10);
-  const remontada = esGanador && stats.remontada ? 25 : 0;
-  const racha = esGanador ? Math.min(50, rachaActual * 10) : 0;
-
-  const esPartidaLimpia =
-    esGanador &&
-    stats.usosDeshacer === 0 &&
-    stats.usosPista === 0 &&
-    stats.intentosMuroInvalido === 0;
-  const partidaLimpia = esPartidaLimpia ? 10 : 0;
-
-  // 7.4 Penalizaciones
-  const pPistas = stats.usosPista * 5;
-  const pDeshacer = stats.usosDeshacer * 10;
-  const pMurosInvalidos = Math.min(10, stats.intentosMuroInvalido * 1);
-  const pTiempoAgotado = stats.turnosAgotados * 8;
-  const pAbandonar = 0; // handled if abandoned
+  const pPistas = stats.usosPista * 1;
+  const pDeshacer = stats.usosDeshacer * 2;
+  const pMurosInvalidos = 0;
+  const pTiempoAgotado = stats.turnosAgotados * 1;
+  const pAbandonar = 0;
 
   const totalPenalizaciones = pPistas + pDeshacer + pMurosInvalidos + pTiempoAgotado + pAbandonar;
 
-  // 7.3 Multiplicador por dificultad
-  let mult = 1.0;
-  const bots = estado.jugadores.filter((p) => p.tipo !== 'humano');
-  if (bots.length > 0) {
-    const hasDificil = bots.some((b) => b.tipo === 'bot_dificil');
-    const hasNormal = bots.some((b) => b.tipo === 'bot_normal');
-    if (hasDificil) mult = 1.5;
-    else if (hasNormal) mult = 1.0;
-    else mult = 0.5; // only fácil
-  }
-
-  // Bonus for multiple human rivals in 4P
-  const humanRivals = estado.jugadores.filter((p) => p.tipo === 'humano' && p.id !== jugador.id);
-  if (n === 4 && humanRivals.length > 1) {
-    mult += 0.1;
-  }
-
-  const subtotal =
-    resultado +
-    ahorrador +
-    rapidez +
-    saltador +
-    muroMaestro +
-    remontada +
-    racha +
-    partidaLimpia -
-    totalPenalizaciones;
-
-  const total = Math.max(0, Math.round(subtotal * mult));
+  const subtotal = resultado + murosUsados + finalCerrado + bonoTorneo - totalPenalizaciones;
+  const total = Math.max(0, subtotal);
 
   return {
     resultado,
-    ahorrador,
-    rapidez,
-    saltador,
-    muroMaestro,
-    remontada,
-    racha,
-    partidaLimpia,
+    murosUsados,
+    finalCerrado,
+    bonoTorneo,
+    ahorrador: 0,
+    rapidez: 0,
+    saltador: 0,
+    muroMaestro: 0,
+    remontada: 0,
+    racha: 0,
+    partidaLimpia: 0,
     penalizaciones: {
       pistas: pPistas,
       deshacer: pDeshacer,
@@ -1196,7 +1162,7 @@ export function calcularDesglosePuntos(
       abandonar: pAbandonar,
       total: totalPenalizaciones,
     },
-    multiplicador: mult,
+    multiplicador: 1,
     total,
   };
 }
@@ -1211,65 +1177,80 @@ export function calcularDesglosesPuntuacion(estado: GameState): Map<number, Scor
   return map;
 }
 
-export function ejecutarAccionMover(
-  estado: GameState,
-  destino: Coord,
-  jugadorId?: number
-): GameState {
-  aplicarMovimiento(estado, destino);
-  return { ...estado };
+function clonarEstadoParaAccion(estado: GameState): GameState {
+  return {
+    ...estado,
+    jugadores: estado.jugadores.map((p) => ({
+      ...p,
+      estadisticas: { ...p.estadisticas },
+    })),
+    murosH: estado.murosH.map((row) => [...row]),
+    murosV: estado.murosV.map((row) => [...row]),
+    historial: [...estado.historial],
+    registroAcciones: [...estado.registroAcciones],
+  };
+}
+
+export function ejecutarAccionMover(estado: GameState, destino: Coord, _jugadorId?: number): GameState {
+  const copia = clonarEstadoParaAccion(estado);
+  aplicarMovimiento(copia, destino);
+  return copia;
 }
 
 export function ejecutarAccionMuro(
   estado: GameState,
   coord: Coord,
   orientacion: WallOrientation,
-  jugadorId?: number
+  _jugadorId?: number
 ): GameState {
-  aplicarMuro(estado, orientacion, coord.r, coord.c);
-  return { ...estado };
+  const copia = clonarEstadoParaAccion(estado);
+  aplicarMuro(copia, orientacion, coord.r, coord.c);
+  return copia;
 }
 
-export function ejecutarTurnoBot(
-  estado: GameState
-): { nuevoEstado: GameState; accion: any } {
-  const jugador = estado.jugadores[estado.turnoActual];
-  const jugada = calcularJugadaBot(jugador, estado);
+export function ejecutarTurnoBot(estado: GameState): { nuevoEstado: GameState; accion: any } {
+  const copia = clonarEstadoParaAccion(estado);
+  const jugador = copia.jugadores[copia.turnoActual];
+  const jugada = calcularJugadaBot(jugador, copia);
   if (jugada.tipo === 'mover') {
-    aplicarMovimiento(estado, jugada.coord);
+    aplicarMovimiento(copia, jugada.coord);
   } else if (jugada.tipo === 'muro') {
-    aplicarMuro(estado, jugada.orientacion, jugada.coord.r, jugada.coord.c);
+    aplicarMuro(copia, jugada.orientacion, jugada.coord.r, jugada.coord.c);
   } else {
-    avanzarTurno(estado);
+    avanzarTurno(copia);
   }
-  return { nuevoEstado: { ...estado }, accion: jugada };
+  return { nuevoEstado: copia, accion: jugada };
 }
 
 export function obtenerCaminoPista(
   jugador: Player,
   murosH: number[][],
-  murosV: number[][]
+  murosV: number[][],
+  numJugadores: number = 2
 ): Coord[] {
-  const { camino } = bfsCamino(jugador, murosH, murosV);
+  const { camino } = bfsCamino(jugador, murosH, murosV, undefined, numJugadores);
   return camino;
 }
 
 export function deshacerJugada(estado: GameState): GameState {
   if (estado.historial.length === 0) return estado;
   const snapshot = estado.historial.pop()!;
-  const curP = estado.jugadores[estado.turnoActual];
-  if (curP) curP.estadisticas.usosDeshacer++;
 
   return {
     ...estado,
     jugadores: snapshot.jugadores.map((sj) => {
       const orig = estado.jugadores.find((p) => p.id === sj.id)!;
+      const prevUsos = Math.max(orig.estadisticas.usosDeshacer, sj.estadisticas.usosDeshacer);
       return {
         ...orig,
         r: sj.r,
         c: sj.c,
         muros: sj.muros,
-        estadisticas: { ...sj.estadisticas },
+        estadisticas: {
+          ...sj.estadisticas,
+          usosDeshacer: sj.id === snapshot.turnoActual ? prevUsos + 1 : prevUsos,
+          partidaLimpia: sj.id === snapshot.turnoActual ? false : sj.estadisticas.partidaLimpia,
+        },
       };
     }),
     murosH: snapshot.murosH.map((r) => [...r]),
@@ -1281,6 +1262,6 @@ export function deshacerJugada(estado: GameState): GameState {
     ganador: null,
     caminoPista: null,
     muroPrevisualizado: null,
-    ultimoMensaje: '↩ Jugada deshecha (-10 pts)',
+    ultimoMensaje: '↩ Jugada deshecha (-2 pts)',
   };
 }

@@ -1,20 +1,216 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * Unificado: OnlineLobbyScreen + OnlineDiagnosticsOverlay
  */
 
-import React, { useEffect, useState } from 'react';
-import { sounds } from '../audio/murosAudio';
+import React, { useEffect, useRef, useState } from 'react';
+import { sounds } from '../game/murosLocosEngine';
+import { generarCodigoSala, normalizeRoomCode, onlineService } from '../game/onlineService';
 import {
-  formatRoomPeerId,
-  generarCodigoSala,
-  onlineService,
-} from '../game/onlineService';
-import { HatType, OnlinePlayerInfo, PublicRoomInfo, UserAccount } from '../types/murosLocos';
+  HatType,
+  OnlineDiagnosticData,
+  OnlinePlayerInfo,
+  PERSONAJES_REGISTRO,
+  PublicRoomInfo,
+  UserAccount,
+} from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
 
+// =========================================================================
+// 1. ONLINE DIAGNOSTICS OVERLAY
+// =========================================================================
+export const OnlineDiagnosticsOverlay: React.FC = () => {
+  const [data, setData] = useState<OnlineDiagnosticData>(() => onlineService.getDiagnosticData());
+  const [expandido, setExpandido] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = onlineService.subscribeDiagnostics((fresh) => {
+      setData(fresh);
+    });
+    return unsubscribe;
+  }, []);
+
+  if (data.status === 'desconectado' && data.role === 'none' && data.logs.length === 0) {
+    return null;
+  }
+
+  const getStatusColor = () => {
+    switch (data.status) {
+      case 'conectado':
+        return 'bg-[#51cf66] text-[#134e20]';
+      case 'negociando':
+        return 'bg-[#ffd43b] text-[#5c3c00]';
+      case 'reconectando':
+        return 'bg-[#ff922b] text-[#6d2500]';
+      default:
+        return 'bg-[#ced4da] text-[#495057]';
+    }
+  };
+
+  const getQualityBars = () => {
+    let count = 0;
+    if (data.calidad === 'excelente') count = 4;
+    else if (data.calidad === 'buena') count = 3;
+    else if (data.calidad === 'inestable') count = 2;
+    else if (data.calidad === 'critica') count = 1;
+
+    return (
+      <div className="flex items-end gap-0.5 h-3.5">
+        {[1, 2, 3, 4].map((bar) => (
+          <div
+            key={bar}
+            className={`w-1 rounded-xs transition-all ${
+              bar <= count
+                ? count >= 3
+                  ? 'bg-[#2b8a3e]'
+                  : count === 2
+                  ? 'bg-[#f59f00]'
+                  : 'bg-[#e03131]'
+                : 'bg-black/15'
+            }`}
+            style={{ height: `${bar * 25}%` }}
+          />
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div className="fixed bottom-3 left-3 z-50 select-none font-sans">
+      <div className="flex items-center gap-1.5 p-1.5 bg-[#fff8e7] border-2 border-[#2b2140] rounded-2xl shadow-[0_4px_0_#2b2140] text-xs">
+        <div className="relative flex items-center justify-center w-3 h-3 ml-1">
+          <span
+            className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${
+              data.status === 'conectado'
+                ? 'bg-[#51cf66] animate-ping'
+                : data.status === 'negociando'
+                ? 'bg-[#ffd43b] animate-ping'
+                : 'bg-[#ff6b6b]'
+            }`}
+          />
+          <span
+            className={`relative inline-flex rounded-full h-2.5 w-2.5 border border-[#2b2140] ${getStatusColor()}`}
+          />
+        </div>
+
+        {getQualityBars()}
+
+        <span className="font-mono-num font-black text-[11px] text-[#2b2140]">
+          {data.pingMs !== null ? `${data.pingMs} ms` : 'P2P WebRTC'}
+        </span>
+
+        <button
+          type="button"
+          onClick={() => setExpandido(!expandido)}
+          className={`py-0.5 px-2 rounded-xl text-[10px] font-black border border-[#2b2140] transition-colors cursor-pointer ${
+            expandido
+              ? 'bg-[#2b2140] text-white'
+              : 'bg-white text-[#2b2140] hover:bg-[#ede4d0]'
+          }`}
+          title="Ver diagnóstico detallado de conexión"
+        >
+          {expandido ? '✕' : 'ⓘ Red'}
+        </button>
+      </div>
+
+      {expandido && (
+        <div className="mt-2 w-80 max-w-[90vw] bg-[#fff8e7] border-3 border-[#2b2140] rounded-2xl p-3 shadow-[0_8px_0_#2b2140,0_16px_25px_rgba(0,0,0,0.35)] flex flex-col gap-2.5 animate-[slideUp_0.15s_ease-out]">
+          <div className="flex items-center justify-between pb-1.5 border-b-2 border-[#2b2140]/15">
+            <div className="flex items-center gap-1.5">
+              <span className="text-base">📡</span>
+              <span className="font-black text-xs text-[#2b2140]">Diagnóstico de Red P2P</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => onlineService.sendInstantDiagnosticPing()}
+              className="py-0.5 px-2 bg-white rounded-lg border border-[#2b2140] text-[10px] font-black hover:bg-[#fff9db] cursor-pointer"
+            >
+              🔄 Ping
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+            <div className="p-1.5 bg-white rounded-xl border border-[#2b2140]/25">
+              <span className="text-[9px] font-bold text-[#86542d] block">Estado Conexión</span>
+              <span className="font-black text-[#2b2140] capitalize">{data.status}</span>
+            </div>
+            <div className="p-1.5 bg-white rounded-xl border border-[#2b2140]/25">
+              <span className="text-[9px] font-bold text-[#86542d] block">Latencia RTT</span>
+              <span className="font-black font-mono-num text-[#2b8a3e]">
+                {data.pingMs !== null ? `${data.pingMs} ms` : 'Calculando...'}
+              </span>
+            </div>
+            <div className="p-1.5 bg-white rounded-xl border border-[#2b2140]/25">
+              <span className="text-[9px] font-bold text-[#86542d] block">Rol de Sesión</span>
+              <span className="font-black text-[#2b2140] uppercase">
+                {data.role === 'host' ? '👑 Anfitrión' : data.role === 'client' ? '🎮 Cliente' : 'Ninguno'}
+              </span>
+            </div>
+            <div className="p-1.5 bg-white rounded-xl border border-[#2b2140]/25">
+              <span className="text-[9px] font-bold text-[#86542d] block">Calidad Enlace</span>
+              <span className="font-black text-[#2b2140] capitalize">{data.calidad}</span>
+            </div>
+          </div>
+
+          <div className="p-2 bg-white rounded-xl border border-[#2b2140]/25 text-[10px] space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-[#86542d]">Mi PeerID:</span>
+              <span className="font-mono text-[#2b2140] font-black truncate max-w-[170px]" title={data.miPeerId}>
+                {data.miPeerId || 'Iniciando...'}
+              </span>
+            </div>
+            {data.rivalPeerId && (
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-[#86542d]">Rival PeerID:</span>
+                <span className="font-mono text-[#2b2140] font-black truncate max-w-[170px]" title={data.rivalPeerId}>
+                  {data.rivalPeerId}
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-black text-[#593922] uppercase tracking-wider">
+              Registro de Conexión (Logs):
+            </span>
+            <div className="bg-[#1a1b1e] text-[#d0ebff] font-mono rounded-xl p-2 max-h-28 overflow-y-auto text-[9px] space-y-1">
+              {data.logs.length === 0 ? (
+                <span className="text-gray-400 italic">Sin eventos registrados aún</span>
+              ) : (
+                data.logs.map((log, idx) => (
+                  <div key={idx} className="leading-tight">
+                    <span className="text-[#ffd43b]">[{log.ts}] </span>
+                    <span
+                      className={
+                        log.tipo === 'error'
+                          ? 'text-[#ff8787] font-bold'
+                          : log.tipo === 'warn'
+                          ? 'text-[#ffe066]'
+                          : 'text-[#a5d8ff]'
+                      }
+                    >
+                      {log.mensaje}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// =========================================================================
+// 2. ONLINE LOBBY SCREEN
+// =========================================================================
 interface OnlineLobbyScreenProps {
   usuarioActual?: UserAccount | null;
+  codigoSalaInicial?: string | null;
+  onConsumirSalaInicial?: () => void;
   onIniciarPartidaOnline: (maxJugadores: 2 | 4) => void;
   onVolverAlMenu: () => void;
   onShowToast: (msg: string) => void;
@@ -24,15 +220,19 @@ type LobbyTab = 'publicas' | 'crear' | 'unirse' | 'en_sala';
 
 export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
   usuarioActual,
+  codigoSalaInicial,
+  onConsumirSalaInicial,
   onIniciarPartidaOnline,
   onVolverAlMenu,
   onShowToast,
 }) => {
-  const [tab, setTab] = useState<LobbyTab>('publicas');
-  const [nombre, setNombre] = useState<string>(() => usuarioActual ? usuarioActual.nombre : 'Tú');
-  const [color, setColor] = useState<string>(() => usuarioActual ? usuarioActual.avatarColor : '#ff6b6b');
-  const [hat, setHat] = useState<HatType>(() => usuarioActual ? usuarioActual.avatarHat : 'corona');
-  const [codigoInput, setCodigoInput] = useState<string>('');
+  const [tab, setTab] = useState<LobbyTab>(() => (codigoSalaInicial ? 'unirse' : 'publicas'));
+  const [nombre, setNombre] = useState<string>(() => (usuarioActual ? usuarioActual.nombre : 'Invitado'));
+  const [color, setColor] = useState<string>(() => (usuarioActual ? usuarioActual.avatarColor : '#ff6b6b'));
+  const [hat, setHat] = useState<HatType>(() => (usuarioActual ? usuarioActual.avatarHat : 'corona'));
+  const [codigoInput, setCodigoInput] = useState<string>(() =>
+    codigoSalaInicial ? normalizeRoomCode(codigoSalaInicial) : ''
+  );
   const [roomCode, setRoomCode] = useState<string>('');
   const [maxJugadores, setMaxJugadores] = useState<2 | 4>(2);
   const [publicarEnLista, setPublicarEnLista] = useState<boolean>(true);
@@ -41,6 +241,24 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
   const [conectando, setConectando] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [jugadoresEnLobby, setJugadoresEnLobby] = useState<OnlinePlayerInfo[]>([]);
+  const autoJoinedCodeRef = useRef<string | null>(null);
+
+  const onConsumirRef = useRef(onConsumirSalaInicial);
+  onConsumirRef.current = onConsumirSalaInicial;
+  const onShowToastRef = useRef(onShowToast);
+  onShowToastRef.current = onShowToast;
+  const onIniciarPartidaRef = useRef(onIniciarPartidaOnline);
+  onIniciarPartidaRef.current = onIniciarPartidaOnline;
+  const profileRef = useRef({ usuarioActual, nombre, color, hat });
+  profileRef.current = { usuarioActual, nombre, color, hat };
+
+  useEffect(() => {
+    if (usuarioActual) {
+      setNombre(usuarioActual.nombre);
+      setColor(usuarioActual.avatarColor || '#ff6b6b');
+      setHat(usuarioActual.avatarHat || 'corona');
+    }
+  }, [usuarioActual]);
 
   const recargarSalasPublicas = async () => {
     setCargandoSalas(true);
@@ -58,59 +276,121 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
     if (tab === 'publicas') {
       recargarSalasPublicas();
       const interval = setInterval(() => {
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
         recargarSalasPublicas();
-      }, 4000);
-      return () => clearInterval(interval);
+      }, 8000);
+      const onFocus = () => recargarSalasPublicas();
+      window.addEventListener('focus', onFocus);
+      return () => {
+        clearInterval(interval);
+        window.removeEventListener('focus', onFocus);
+      };
     }
   }, [tab]);
 
-  // Wire Lobby Listeners
   useEffect(() => {
     onlineService.setCallbacks({
       onLobbyUpdate: (players, max) => {
         setJugadoresEnLobby([...players]);
         setMaxJugadores(max);
+        setRoomCode(onlineService.getRoomCode());
         setTab('en_sala');
         setConectando(false);
         setErrorMsg(null);
       },
-      onError: (err) => {
+      onLobbyError: (err) => {
         setConectando(false);
         setErrorMsg(err);
         sounds.playError();
       },
     });
-  }, []);
-
-  // Handle URL with ?sala=CODE
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const paramSala = params.get('sala');
-      if (paramSala && paramSala.length >= 4) {
-        setCodigoInput(paramSala.toUpperCase());
-        setTab('unirse');
-      }
-    } catch {
-      // ignore
+    const currentPlayers = onlineService.getLobbyPlayers();
+    if (currentPlayers.length > 0 && onlineService.getRoomCode()) {
+      setJugadoresEnLobby([...currentPlayers]);
+      setRoomCode(onlineService.getRoomCode());
     }
+    return () => {
+      onlineService.setCallbacks({
+        onLobbyUpdate: undefined,
+        onLobbyError: undefined,
+      });
+    };
   }, []);
 
-  // Entrar a una sala pública de la lista
+  // Si el usuario entra desde un enlace directo (?sala=7TQERX), unirse automáticamente a esa sala
+  useEffect(() => {
+    let targetCode = normalizeRoomCode(codigoSalaInicial || '');
+    if (!targetCode) {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        targetCode = normalizeRoomCode(params.get('sala') || '');
+      } catch {}
+    }
+
+    if (targetCode.length >= 4 && autoJoinedCodeRef.current !== targetCode) {
+      autoJoinedCodeRef.current = targetCode;
+      setCodigoInput(targetCode);
+      setRoomCode(targetCode);
+      setTab('unirse');
+      setConectando(true);
+      setErrorMsg(null);
+      onConsumirRef.current?.();
+
+      const snap = profileRef.current;
+      const joinName = (snap.usuarioActual?.nombre || snap.nombre || 'Invitado').trim();
+      const joinColor = snap.usuarioActual?.avatarColor || snap.color || '#4dabf7';
+      const joinHat = snap.usuarioActual?.avatarHat || snap.hat || 'corona';
+
+      onlineService
+        .joinRoom(targetCode, joinName, joinColor, joinHat)
+        .then(() => {
+          setConectando(false);
+          setErrorMsg(null);
+          const list = onlineService.getLobbyPlayers();
+          if (list.length > 0) setJugadoresEnLobby([...list]);
+          setTab('en_sala');
+          onShowToastRef.current(`🚀 Conectado a la sala ${targetCode}`);
+        })
+        .catch((err: any) => {
+          setConectando(false);
+          const detail = String(err?.message || '').trim();
+          const esRechazoExplicito =
+            detail.includes('llena') || detail.includes('comenzó');
+          setErrorMsg(
+            esRechazoExplicito
+              ? detail
+              : `No se pudo entrar automáticamente a la sala ${targetCode}. Verifica que siga abierta o pulsa "Unirme a la Sala".`
+          );
+        });
+    }
+  }, [codigoSalaInicial]);
+
   const handleEntrarSalaPublica = async (salaId: string, maxP: 2 | 4) => {
+    const code = normalizeRoomCode(salaId);
+    if (code.length < 4) return;
     sounds.playClick();
     setConectando(true);
     setErrorMsg(null);
-    setRoomCode(salaId);
+    setRoomCode(code);
     setMaxJugadores(maxP);
 
+    const joinName = (usuarioActual?.nombre || nombre || 'Invitado').trim();
+
     try {
-      await onlineService.joinRoom(salaId, nombre, color, hat);
-      setTab('en_sala');
-      onShowToast(`¡Te has unido a ${salaId}!`);
-    } catch {
-      setErrorMsg('No se pudo conectar a la sala pública. Es posible que el anfitrión haya salido o la sala esté llena.');
+      await onlineService.joinRoom(code, joinName, color, hat);
       setConectando(false);
+      setErrorMsg(null);
+      const list = onlineService.getLobbyPlayers();
+      if (list.length > 0) setJugadoresEnLobby([...list]);
+      setTab('en_sala');
+      onShowToast(`¡Te has unido a ${code}!`);
+    } catch (err: any) {
+      setConectando(false);
+      setErrorMsg(
+        err?.message ||
+          'No se pudo conectar a la sala pública. Puede que el anfitrión haya salido o esté llena.'
+      );
+      recargarSalasPublicas();
     }
   };
 
@@ -119,31 +399,24 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
     setConectando(true);
     setErrorMsg(null);
     const code = generarCodigoSala();
+    const hostName = (usuarioActual?.nombre || nombre || 'Anfitrión').trim();
     setRoomCode(code);
 
     try {
-      await onlineService.createRoom(code, nombre, color, hat, maxJugadores);
-      if (publicarEnLista) {
-        await onlineService.publicarSalaPublica({
-          codigo: code,
-          nombre: `Sala de ${nombre}`,
-          anfitrion: nombre,
-          color,
-          hat,
-          maxJugadores,
-          creadoEn: Date.now(),
-        });
-      }
+      await onlineService.createRoom(code, hostName, color, hat, maxJugadores, publicarEnLista);
+      setConectando(false);
+      setErrorMsg(null);
+      setJugadoresEnLobby([...onlineService.getLobbyPlayers()]);
       setTab('en_sala');
       onShowToast(`¡Sala ${code} creada! ${publicarEnLista ? 'Publicada en la lista.' : 'Privada lista.'}`);
-    } catch {
-      setErrorMsg('No se pudo crear la sala. Verifica tu conexión.');
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'No se pudo crear la sala. Verifica tu conexión.');
       setConectando(false);
     }
   };
 
   const handleUnirseSala = async () => {
-    const code = codigoInput.trim().toUpperCase();
+    const code = normalizeRoomCode(codigoInput);
     if (code.length < 4) {
       setErrorMsg('Introduce un código de sala válido');
       sounds.playError();
@@ -153,13 +426,24 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
     sounds.playClick();
     setConectando(true);
     setErrorMsg(null);
+    setCodigoInput(code);
     setRoomCode(code);
 
+    const joinName = (usuarioActual?.nombre || nombre || 'Invitado').trim();
+
     try {
-      await onlineService.joinRoom(code, nombre, color, hat);
-      onShowToast(`Conectando a la sala ${code}...`);
-    } catch {
-      setErrorMsg('No se pudo encontrar la sala. Asegúrate de que el anfitrión la tenga abierta.');
+      await onlineService.joinRoom(code, joinName, color, hat);
+      setConectando(false);
+      setErrorMsg(null);
+      const list = onlineService.getLobbyPlayers();
+      if (list.length > 0) setJugadoresEnLobby([...list]);
+      setTab('en_sala');
+      onShowToast(`🚀 ¡Te has unido a la sala ${code}!`);
+    } catch (err: any) {
+      setErrorMsg(
+        err?.message ||
+          'No se pudo encontrar la sala. Asegúrate de que el anfitrión la tenga abierta.'
+      );
       setConectando(false);
     }
   };
@@ -179,30 +463,30 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
   };
 
   const isHost = onlineService.getRole() === 'host';
-  const puedeEmpezar = isHost && jugadoresEnLobby.length >= 2;
 
-  // Auto-start when lobby reaches required capacity
+  // Mantener viva la sala (pública o privada) mientras el anfitrión espera en el lobby
+  useEffect(() => {
+    if (!isHost || tab !== 'en_sala' || !roomCode) return;
+    const hb = setInterval(() => {
+      onlineService.actualizarSalaPublica(jugadoresEnLobby.length || 1);
+    }, 120000);
+    return () => clearInterval(hb);
+  }, [isHost, tab, roomCode, jugadoresEnLobby.length]);
+
   useEffect(() => {
     if (isHost && tab === 'en_sala' && jugadoresEnLobby.length >= maxJugadores) {
       const timer = setTimeout(() => {
-        onIniciarPartidaOnline(maxJugadores);
+        onIniciarPartidaRef.current(maxJugadores);
       }, 1000);
       return () => clearTimeout(timer);
     }
-  }, [isHost, tab, jugadoresEnLobby.length, maxJugadores, onIniciarPartidaOnline]);
+  }, [isHost, tab, jugadoresEnLobby.length, maxJugadores]);
 
-  const hatsList: { id: HatType; label: string; icon: string; defaultColor: string }[] = [
-    { id: 'corona', label: 'Corona', icon: '👑', defaultColor: '#ff6b6b' },
-    { id: 'pompon', label: 'Pompón', icon: '❄️', defaultColor: '#4dabf7' },
-    { id: 'antena', label: 'Antena', icon: '⚡', defaultColor: '#ffd43b' },
-    { id: 'brote', label: 'Brote', icon: '🌱', defaultColor: '#51cf66' },
-    { id: 'mago', label: 'Mago', icon: '🧙', defaultColor: '#9775fa' },
-    { id: 'gatito', label: 'Gatito', icon: '🐱', defaultColor: '#f06595' },
-  ];
+  const userPoints = usuarioActual?.puntos || 0;
+  const esAdmin = usuarioActual?.rol === 'admin';
 
   return (
     <div className="relative w-full h-full flex flex-col items-center justify-between p-3 sm:p-5 max-w-xl mx-auto z-10 overflow-y-auto">
-      {/* Top Header */}
       <div className="w-full flex items-center justify-between pb-3 mb-2 border-b-3 border-[#2b2140]/15">
         <button
           onClick={() => {
@@ -220,16 +504,14 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
             <span>Juego en Línea P2P</span>
           </h2>
           <span className="text-[11px] font-bold text-[#2b8a3e]">
-            ● Conexión Directa sin Servidores
+            ● Conexión Directa WebRTC
           </span>
         </div>
         <div className="w-16" />
       </div>
 
-      {/* Main Tabs (Public, Create Private, Join Private) */}
       {tab !== 'en_sala' && (
         <div className="w-full flex-1 flex flex-col gap-3 py-1">
-          {/* Tabs Selector */}
           <div className="grid grid-cols-3 p-1 bg-[#ede4d0] rounded-2xl border-3 border-[#2b2140] shadow-[0_3px_0_#2b2140] w-full max-w-md mx-auto">
             <button
               onClick={() => {
@@ -257,7 +539,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                   : 'text-[#86542d] hover:text-[#2b2140]'
               }`}
             >
-              👑 Crear Privada
+              👑 Crear Sala
             </button>
             <button
               onClick={() => {
@@ -275,7 +557,6 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
             </button>
           </div>
 
-          {/* Profile Setup: Name and Avatar */}
           <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] flex flex-col gap-2">
             <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
               Tu Personaje
@@ -294,7 +575,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                     </span>
                   ) : (
                     <span className="text-[10px] bg-[#fff3bf] text-[#8f4b00] font-extrabold px-1.5 py-0.5 rounded border border-[#2b2140]">
-                      Invitado (sin ranking)
+                      Invitado (local)
                     </span>
                   )}
                 </div>
@@ -314,45 +595,51 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                       ? 'bg-[#edf2ff] cursor-not-allowed select-none'
                       : 'bg-[#f8f9fa] focus:ring-2 focus:ring-[#ffd43b]'
                   }`}
-                  title={usuarioActual ? 'Tu nombre proviene de tu perfil iniciado' : undefined}
                 />
               </div>
             </div>
 
-            {/* Hat Selection (6 characters) */}
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mt-1">
-              {hatsList.map((h) => (
-                <button
-                  key={h.id}
-                  type="button"
-                  onClick={() => {
-                    sounds.playClick();
-                    setHat(h.id);
-                    setColor(h.defaultColor);
-                  }}
-                  className={`py-1.5 px-1 rounded-xl text-xs font-black border-2 border-[#2b2140] flex flex-col items-center gap-0.5 transition-all cursor-pointer ${
-                    hat === h.id
-                      ? 'bg-[#ffd43b] text-[#5c3c00] shadow-[0_3px_0_#2b2140] -translate-y-0.5'
-                      : 'bg-[#fff8e7] text-[#593922] hover:bg-white'
-                  }`}
-                >
-                  <span className="text-base">{h.icon}</span>
-                  <span className="text-[10px]">{h.label}</span>
-                </button>
-              ))}
+            <div className="grid grid-cols-5 gap-1.5 mt-1">
+              {PERSONAJES_REGISTRO.map((h) => {
+                const unlocked = h.puntosRequeridos === 0 || esAdmin || userPoints >= h.puntosRequeridos;
+                return (
+                  <button
+                    key={h.id}
+                    type="button"
+                    onClick={() => {
+                      if (!unlocked) {
+                        sounds.playError();
+                        onShowToast(`🔒 ${h.label} requiere ${h.puntosRequeridos} pts`);
+                        return;
+                      }
+                      sounds.playClick();
+                      setHat(h.id);
+                      setColor(h.defaultColor);
+                    }}
+                    className={`relative py-1.5 px-1 rounded-xl text-xs font-black border-2 border-[#2b2140] flex flex-col items-center gap-0.5 transition-all cursor-pointer ${
+                      !unlocked
+                        ? 'bg-[#e9ecef] opacity-60'
+                        : hat === h.id
+                        ? 'bg-[#ffd43b] text-[#5c3c00] shadow-[0_3px_0_#2b2140] -translate-y-0.5'
+                        : 'bg-[#fff8e7] text-[#593922] hover:bg-white'
+                    }`}
+                  >
+                    {!unlocked && <span className="absolute top-0.5 right-0.5 text-[8px]">🔒</span>}
+                    <span className="text-base">{h.icon}</span>
+                    <span className="text-[9px] truncate max-w-full">{h.label}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          {/* TAB 1: Salas Públicas (Matchmaking Abierto) */}
           {tab === 'publicas' && (
             <div className="p-3.5 bg-white rounded-2xl border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140] flex flex-col gap-2.5">
               <div className="flex items-center justify-between">
                 <div className="text-left">
-                  <h3 className="text-sm font-black text-[#2b2140]">
-                    🌍 Salas Públicas en Vivo
-                  </h3>
+                  <h3 className="text-sm font-black text-[#2b2140]">🌍 Salas Públicas en Vivo</h3>
                   <p className="text-[11px] text-[#86542d] leading-snug">
-                    Únete a una partida pública creada por otros jugadores o a una de las arenas fijas.
+                    Únete a una partida pública creada por otros jugadores.
                   </p>
                 </div>
                 <button
@@ -366,11 +653,10 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                 </button>
               </div>
 
-              {/* Salas Públicas Abiertas Dinámicas */}
               {salasDinamicas.length > 0 ? (
                 <div className="flex flex-col gap-1.5">
                   <span className="text-[10px] font-black uppercase text-[#2b8a3e] tracking-wider">
-                    🟢 Salas Públicas Abiertas ({salasDinamicas.length})
+                    🟢 Salas Abiertas ({salasDinamicas.length})
                   </span>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {salasDinamicas.map((sala) => (
@@ -389,7 +675,8 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                             {sala.nombre}
                           </span>
                           <span className="text-[10px] text-[#1864ab] font-bold block">
-                            Anfitrión: {sala.anfitrion} • {sala.maxJugadores}P
+                            Anfitrión: {sala.anfitrion} •{' '}
+                            {(sala as any).jugadoresConectados || 1}/{sala.maxJugadores} jugadores
                           </span>
                         </div>
                         <span className="text-[10px] bg-[#ffd43b] text-[#5c3c00] font-black px-1.5 py-0.5 rounded border border-[#2b2140] shrink-0">
@@ -404,9 +691,6 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                   <span className="text-3xl">🏜️</span>
                   <span className="text-xs font-bold text-[#86542d]">
                     No hay salas públicas abiertas en este momento.
-                  </span>
-                  <span className="text-[11px] text-[#868e96]">
-                    ¡Crea una sala y márcala como pública para que otros jugadores puedan unirse!
                   </span>
                   <button
                     type="button"
@@ -424,7 +708,6 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
             </div>
           )}
 
-          {/* TAB 2: Crear Sala */}
           {tab === 'crear' && (
             <div className="p-3.5 bg-white rounded-2xl border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140] flex flex-col gap-3">
               <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
@@ -450,7 +733,6 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                 ))}
               </div>
 
-              {/* Toggle Public / Private */}
               <div
                 onClick={() => {
                   sounds.playClick();
@@ -466,7 +748,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                   </span>
                   <span className="text-[11px] font-medium text-[#495057]">
                     {publicarEnLista
-                      ? 'Cualquier jugador podrá verla y unirse directamente.'
+                      ? 'Cualquier jugador podrá verla y unirse desde Salas Públicas.'
                       : 'Privada: sólo podrán unirse con tu código o enlace directo.'}
                   </span>
                 </div>
@@ -491,7 +773,6 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
             </div>
           )}
 
-          {/* TAB 3: Unirse con Código */}
           {tab === 'unirse' && (
             <div className="p-3.5 bg-white rounded-2xl border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140] flex flex-col gap-3">
               <div>
@@ -503,7 +784,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                   maxLength={16}
                   value={codigoInput}
                   onChange={(e) => setCodigoInput(e.target.value.toUpperCase())}
-                  placeholder="Ej: ML-A4X9K2"
+                  placeholder="Ej: A4X9K2"
                   className="w-full text-center text-lg font-black tracking-widest text-[#2b2140] bg-[#f8f9fa] border-3 border-[#2b2140] rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-[#4dabf7]"
                 />
               </div>
@@ -521,40 +802,38 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
           )}
 
           {errorMsg && (
-            <div className="p-2.5 bg-[#ffe3e3] text-[#c92a2a] text-xs font-bold rounded-xl border-2 border-[#2b2140] text-center animate-shake">
+            <div className="p-2.5 bg-[#ffe3e3] text-[#c92a2a] text-xs font-bold rounded-xl border-2 border-[#2b2140] text-center">
               ⚠️ {errorMsg}
             </div>
           )}
         </div>
       )}
 
-      {/* VIEW: Dentro de la Sala (Waiting Lobby) */}
       {tab === 'en_sala' && (
         <div className="w-full flex-1 flex flex-col gap-3 py-1">
-          {/* Room Code Card */}
           <div className="p-3 bg-white rounded-2xl border-3 border-[#2b2140] shadow-[0_3px_0_#2b2140] flex items-center justify-between">
             <div>
-              <span className="text-[11px] font-bold text-[#86542d] block">
-                Código de Sala
-              </span>
+              <span className="text-[11px] font-bold text-[#86542d] block">Código de Sala</span>
               <span className="text-2xl font-black text-[#2b2140] font-mono tracking-widest">
                 {roomCode}
               </span>
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleCopiarEnlace}
-                className="py-2 px-3 bg-[#ffd43b] text-[#5c3c00] rounded-xl border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] font-black text-xs hover:bg-[#fcc419] active:translate-y-0.5 cursor-pointer flex items-center gap-1.5"
-                title="Copiar enlace de invitación con código"
-              >
-                <span>🔗</span>
-                <span>Copiar Enlace</span>
-              </button>
-            </div>
+            <button
+              onClick={handleCopiarEnlace}
+              className="py-2 px-3 bg-[#ffd43b] text-[#5c3c00] rounded-xl border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] font-black text-xs hover:bg-[#fcc419] active:translate-y-0.5 cursor-pointer flex items-center gap-1.5"
+            >
+              <span>🔗</span>
+              <span>Copiar Enlace</span>
+            </button>
           </div>
 
-          {/* Players in Lobby */}
+          {errorMsg && (
+            <div className="p-2.5 bg-[#ffe3e3] text-[#c92a2a] text-xs font-bold rounded-xl border-2 border-[#2b2140] text-center">
+              ⚠️ {errorMsg}
+            </div>
+          )}
+
           <div className="p-3.5 bg-white rounded-2xl border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140] flex flex-col gap-2 flex-1">
             <div className="flex items-center justify-between pb-1 border-b-2 border-[#2b2140]/10">
               <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
@@ -602,7 +881,6 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
               )}
             </div>
 
-            {/* Quick Reactions */}
             <div className="mt-auto pt-3 border-t-2 border-[#2b2140]/10">
               <span className="text-[11px] font-bold text-[#86542d] block mb-1">
                 Reacciones rápidas:
@@ -624,7 +902,6 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
             </div>
           </div>
 
-          {/* Status & Instant Start Info */}
           {jugadoresEnLobby.length >= maxJugadores ? (
             <div className="flex flex-col gap-2">
               <div className="p-3 bg-[#d3f9d8] text-[#134e20] rounded-2xl border-3 border-[#2b2140] text-sm font-black text-center shadow-[0_4px_0_#2b2140] animate-bounce flex items-center justify-center gap-2">
@@ -644,7 +921,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
           ) : (
             <div className="p-3 bg-[#e7f5ff] text-[#1864ab] rounded-2xl border-2 border-[#2b2140] text-xs font-bold text-center shadow-sm flex items-center justify-center gap-2 animate-pulse">
               <span>⏳</span>
-              <span>Esperando a que entre el rival... La partida iniciará automáticamente en cuanto se conecte.</span>
+              <span>Esperando a que entre el rival... La partida iniciará automáticamente.</span>
             </div>
           )}
         </div>

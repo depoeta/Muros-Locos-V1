@@ -14,7 +14,9 @@ export type HatType =
   | 'zorro'
   | 'robot'
   | 'dragon'
-  | 'ninja';
+  | 'ninja'
+  | 'bot_cpu';
+export type EstiloVisual = 'clasico' | 'minimalista';
 export type WallOrientation = 'H' | 'V';
 
 export interface CharacterDef {
@@ -28,15 +30,15 @@ export interface CharacterDef {
 
 export const PERSONAJES_REGISTRO: CharacterDef[] = [
   { id: 'corona', label: 'Corona', icon: '👑', defaultColor: '#ff6b6b', puntosRequeridos: 0, descripcion: 'Inicial' },
-  { id: 'pompon', label: 'Pompón', icon: '❄️', defaultColor: '#4dabf7', puntosRequeridos: 0, descripcion: 'Inicial' },
-  { id: 'antena', label: 'Antena', icon: '⚡', defaultColor: '#ffd43b', puntosRequeridos: 0, descripcion: 'Inicial' },
+  { id: 'pompon', label: 'Pompón', icon: '🧶', defaultColor: '#4dabf7', puntosRequeridos: 0, descripcion: 'Inicial' },
+  { id: 'antena', label: 'Antena', icon: '📡', defaultColor: '#ffd43b', puntosRequeridos: 0, descripcion: 'Inicial' },
   { id: 'brote', label: 'Brote', icon: '🌱', defaultColor: '#51cf66', puntosRequeridos: 0, descripcion: 'Inicial' },
   { id: 'mago', label: 'Mago', icon: '🧙', defaultColor: '#9775fa', puntosRequeridos: 0, descripcion: 'Inicial' },
   { id: 'gatito', label: 'Gatito', icon: '🐱', defaultColor: '#f06595', puntosRequeridos: 0, descripcion: 'Inicial' },
-  { id: 'zorro', label: 'Zorro Astuto', icon: '🦊', defaultColor: '#f76707', puntosRequeridos: 150, descripcion: 'Requiere 150 pts' },
-  { id: 'robot', label: 'Cyber Bot', icon: '🤖', defaultColor: '#22b8cf', puntosRequeridos: 350, descripcion: 'Requiere 350 pts' },
-  { id: 'dragon', label: 'Dragón Mítico', icon: '🐲', defaultColor: '#12b886', puntosRequeridos: 600, descripcion: 'Requiere 600 pts' },
-  { id: 'ninja', label: 'Sombra Ninja', icon: '🥷', defaultColor: '#495057', puntosRequeridos: 1000, descripcion: 'Requiere 1000 pts' },
+  { id: 'zorro', label: 'Zorro Astuto', icon: '🦊', defaultColor: '#f76707', puntosRequeridos: 25, descripcion: 'Requiere 25 pts' },
+  { id: 'robot', label: 'Cyber Bot', icon: '🤖', defaultColor: '#22b8cf', puntosRequeridos: 60, descripcion: 'Requiere 60 pts' },
+  { id: 'dragon', label: 'Dragón Mítico', icon: '🐲', defaultColor: '#12b886', puntosRequeridos: 120, descripcion: 'Requiere 120 pts' },
+  { id: 'ninja', label: 'Sombra Ninja', icon: '🥷', defaultColor: '#495057', puntosRequeridos: 200, descripcion: 'Requiere 200 pts' },
 ];
 
 export interface Coord {
@@ -69,7 +71,7 @@ export interface Player {
   c: number;
   muros: number;
   targetType: 'row' | 'col';
-  targetValue: number; // e.g. row 0, row 8, col 8, col 0
+  targetValue: number;
   estadisticas: PlayerStats;
 }
 
@@ -85,11 +87,11 @@ export interface MatchConfig {
   permitirDeshacer: boolean;
   permitirPistas: boolean;
   modoConTiempo: boolean;
-  segundosPorTurno: number; // 15 | 30 | 60
+  segundosPorTurno: number;
   esTorneo?: boolean;
-  totalRondasTorneo?: number; // 3 | 5
+  totalRondasTorneo?: number;
   temaTablero?: BoardTheme;
-  rotationMode?: boolean; // Auto-rotate board in local pass-and-play
+  rotationMode?: boolean;
 }
 
 export interface AccionRegistro {
@@ -135,10 +137,10 @@ export interface TorneoRondaRecord {
 
 export interface TorneoState {
   activo: boolean;
-  rondaActual: number; // 1-indexed (e.g. 1, 2, 3)
-  totalRondas: number; // 3 o 5
-  puntosAcumulados: Record<number, number>; // jugadorId -> puntos acumulados
-  victoriasAcumuladas: Record<number, number>; // jugadorId -> victorias
+  rondaActual: number;
+  totalRondas: number;
+  puntosAcumulados: Record<number, number>;
+  victoriasAcumuladas: Record<number, number>;
   historialRondas: TorneoRondaRecord[];
   terminado: boolean;
   ganadorGlobalId: number | null;
@@ -157,15 +159,19 @@ export interface OnlinePlayerInfo {
 
 export type OnlineMessage =
   | { type: 'JOIN_REQUEST'; nombre: string; color: string; hat: HatType }
+  | { type: 'JOIN_REJECTED'; motivo: string }
   | { type: 'LOBBY_UPDATE'; roomCode: string; maxJugadores: 2 | 4; jugadores: OnlinePlayerInfo[] }
-  | { type: 'START_GAME'; config: MatchConfig; initialState: GameState }
-  | { type: 'PLAYER_ACTION'; jugadorId: number; accion: 'mover' | 'muro' | 'pasar'; payload: any }
+  | { type: 'START_GAME'; config: MatchConfig; initialState: GameState; _startId?: string }
+  | { type: 'PLAYER_ACTION'; jugadorId: number; accion: 'mover' | 'muro' | 'pasar'; payload: any; _actionId?: string }
   | { type: 'STATE_SYNC'; state: GameState }
   | { type: 'REACTION'; jugadorId: number; emoji: string }
-  | { type: 'REMATCH_REQUEST'; jugadorId: number }
+  | { type: 'REMATCH_REQUEST'; jugadorId: number; nombre?: string }
+  | { type: 'REMATCH_RESPONSE'; jugadorId: number; nombre?: string; aceptada: boolean }
   | { type: 'REMATCH_ACCEPT'; state: GameState }
-  | { type: 'PING' }
-  | { type: 'PONG' }
+  | { type: 'PLAYER_LEFT'; jugadorId: number; nombre?: string }
+  | { type: 'REQUEST_SYNC'; jugadorId: number; turnosTotales?: number }
+  | { type: 'PING'; turnosTotales?: number; turnoActual?: number; terminada?: boolean }
+  | { type: 'PONG'; turnosTotales?: number; turnoActual?: number; terminada?: boolean }
   | { type: 'DIAG_PING'; ts: number }
   | { type: 'DIAG_PONG'; ts: number }
   | { type: 'HOST_DISCONNECT_WARNING'; tiempoRestante: number }
@@ -185,12 +191,12 @@ export interface ActiveOnlineSession {
 export interface GameState {
   n: 2 | 4;
   jugadores: Player[];
-  murosH: number[][]; // 8x8: -1 = vacío, o player id
-  murosV: number[][]; // 8x8: -1 = vacío, o player id
+  murosH: number[][];
+  murosV: number[][];
   turnoActual: number;
   turnosTotales: number;
   terminada: boolean;
-  ganador: number | null; // index of winner, or -1 for tie
+  ganador: number | null;
   modoAccion: 'mover' | 'muro';
   orientacionMuro: WallOrientation;
   muroPrevisualizado: Coord | null;
@@ -211,6 +217,9 @@ export interface GameState {
 
 export interface ScoreBreakdown {
   resultado: number;
+  murosUsados: number;
+  finalCerrado: number;
+  bonoTorneo: number;
   ahorrador: number;
   rapidez: number;
   saltador: number;
@@ -285,6 +294,8 @@ export interface AppSettings {
   permitirPistas: boolean;
   modoDaltonico: boolean;
   temaTablero?: BoardTheme;
+  cambiarVistaPorTurno?: boolean;
+  vistaPropiaOnline?: boolean;
 }
 
 export interface LevelInfo {
@@ -310,6 +321,7 @@ export interface UserAccount {
   nombre: string;
   clave: string;
   rol: 'jugador' | 'admin';
+  esSupremo?: boolean;
   avatarColor: string;
   avatarHat: HatType;
   puntos: number;
@@ -330,6 +342,34 @@ export interface UserAccount {
 }
 
 export type Screen = 'menu' | 'config' | 'juego' | 'ranking' | 'logros' | 'como_jugar' | 'ajustes' | 'online_lobby';
+
+export interface WeeklyPlayerEntry {
+  nombre: string;
+  avatarColor: string;
+  avatarHat: HatType;
+  puntos: number;
+  partidas: number;
+  victorias: number;
+  elo?: number;
+  partidasIds?: string[];
+}
+
+export interface WeeklyBoardData {
+  semanaId: string;
+  premiada?: boolean;
+  premiados?: { nombre: string; puesto: number; bono: number }[];
+  jugadores: Record<string, WeeklyPlayerEntry>;
+}
+
+export interface WeeklyRankingResponse {
+  ok: boolean;
+  kvBound?: boolean;
+  semanaActualId: string;
+  semanaPasadaId: string;
+  cierraEnMs: number;
+  actual: WeeklyBoardData;
+  pasada: WeeklyBoardData;
+}
 
 export interface OnlineDiagnosticData {
   status: 'conectado' | 'negociando' | 'reconectando' | 'desconectado';

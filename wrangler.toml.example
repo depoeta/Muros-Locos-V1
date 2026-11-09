@@ -1,0 +1,18 @@
+# Ejemplo de configuración para Cloudflare Pages / Workers con Cloudflare D1 (SQL)
+# Si usas Wrangler CLI o Cloudflare Pages:
+
+name = "muros-locos"
+compatibility_date = "2024-11-01"
+pages_build_output_dir = "dist"
+
+# Binding de Cloudflare D1 (Base de datos relacional SQL)
+# Crea tu base de datos en Cloudflare Dashboard: Workers & Pages -> D1 -> Create database ("muros-locos-db")
+# Luego vincula el binding con nombre "DB":
+[[d1_databases]]
+binding = "DB"
+database_name = "muros_db"
+database_id = "d1b41994-57bb-4703-9bad-f793fafd5459"
+
+# Variables de entorno secretas (se configuran en Settings -> Environment Variables)
+# ADMIN_USERNAME = "admin"
+# ADMIN_SECRET_KEY = "tu_clave_secreta_aqui"

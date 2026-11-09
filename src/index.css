@@ -16,8 +16,8 @@
     overflow-y: auto;
     touch-action: pan-y;
     -webkit-overflow-scrolling: touch;
-    background-color: #74c0fc;
-    font-family: 'Fredoka', 'Baloo 2', system-ui, -apple-system, sans-serif;
+    background-color: #090d16;
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
   }
 }
 
@@ -27,57 +27,18 @@
 }
 
 @keyframes cloudDriftA {
-  0% {
-    transform: translateX(-380px);
-  }
-  100% {
-    transform: translateX(calc(100vw + 380px));
-  }
+  0% { transform: translateX(-380px); }
+  100% { transform: translateX(calc(100vw + 380px)); }
 }
 
 @keyframes cloudDriftB {
-  0% {
-    transform: translateX(-420px);
-  }
-  100% {
-    transform: translateX(calc(100vw + 420px));
-  }
+  0% { transform: translateX(-420px); }
+  100% { transform: translateX(calc(100vw + 420px)); }
 }
 
 @keyframes cloudDriftC {
-  0% {
-    transform: translateX(-360px);
-  }
-  100% {
-    transform: translateX(calc(100vw + 360px));
-  }
-}
-
-@keyframes cloudBob1 {
-  0%, 100% {
-    transform: translateY(0px);
-  }
-  50% {
-    transform: translateY(-9px);
-  }
-}
-
-@keyframes cloudBob2 {
-  0%, 100% {
-    transform: translateY(0px);
-  }
-  50% {
-    transform: translateY(11px);
-  }
-}
-
-@keyframes cloudBob3 {
-  0%, 100% {
-    transform: translateY(-6px);
-  }
-  50% {
-    transform: translateY(8px);
-  }
+  0% { transform: translateX(-360px); }
+  100% { transform: translateX(calc(100vw + 360px)); }
 }
 
 @keyframes blink {

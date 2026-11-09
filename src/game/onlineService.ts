@@ -1,9 +1,14 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * Motor Online Híbrido WebRTC P2P + Señalización Propia (/api/salas) + Respaldo CGNAT:
+ * - Independiente de servidores externos caídos (elimina el cuello de botella de 0.peerjs.com).
+ * - Negocia RTCDataChannel directo entre navegadores en <1s usando /api/salas/:codigo.
+ * - Cuando el canal WebRTC está abierto, el tráfico va 100% P2P directo (0 peticiones HTTP/KV en partida).
+ * - Si un jugador está tras NAT simétrico / 4G-5G CGNAT o firewall estricto, conmuta sin cortes al canal /msg.
  */
 
-import { Peer, type DataConnection } from 'peerjs';
 import {
   ActiveOnlineSession,
   Coord,
@@ -18,6 +23,13 @@ import { getApiBaseUrl } from './storage';
 
 export const SESSION_STORAGE_KEY = 'muros_locos_active_online_session';
 
+export function normalizeRoomCode(code: string): string {
+  return String(code || '')
+    .toUpperCase()
+    .trim()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
 export function generarCodigoSala(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
@@ -28,7 +40,86 @@ export function generarCodigoSala(): string {
 }
 
 export function formatRoomPeerId(code: string): string {
-  return `muros-locos-p2p-${code.toLowerCase().trim()}`;
+  return `muros-locos-p2p-${normalizeRoomCode(code).toLowerCase()}`;
+}
+
+function randomShortId(len: number = 8): string {
+  return (Math.random().toString(36).slice(2) + Date.now().toString(36))
+    .replace(/[^a-z0-9]/gi, '')
+    .toLowerCase()
+    .slice(0, len);
+}
+
+const RTC_CONFIGURATION: RTCConfiguration = {
+  iceServers: [
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:global.stun.twilio.com:3478' },
+  ],
+};
+
+function prepareWireState(state: GameState): GameState {
+  const clean = JSON.parse(JSON.stringify(state)) as GameState;
+  clean.historial = [];
+  if (Array.isArray(clean.registroAcciones) && clean.registroAcciones.length > 40) {
+    clean.registroAcciones = clean.registroAcciones.slice(-40);
+  }
+  return clean;
+}
+
+async function gatherLocalDescription(
+  pc: RTCPeerConnection,
+  maxWaitMs: number = 900
+): Promise<RTCSessionDescriptionInit | null> {
+  if (!pc.localDescription) return null;
+  if (pc.iceGatheringState === 'complete') {
+    return {
+      type: pc.localDescription.type,
+      sdp: pc.localDescription.sdp,
+    };
+  }
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    let srflxGraceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(hardTimer);
+      if (srflxGraceTimer) clearTimeout(srflxGraceTimer);
+      pc.removeEventListener('icegatheringstatechange', onStateChange);
+      pc.removeEventListener('icecandidate', onCandidate);
+      resolve();
+    };
+
+    const onStateChange = () => {
+      if (pc.iceGatheringState === 'complete') {
+        done();
+      }
+    };
+
+    const onCandidate = (ev: RTCPeerConnectionIceEvent) => {
+      if (!ev.candidate) {
+        done();
+        return;
+      }
+      if (ev.candidate.candidate && ev.candidate.candidate.includes('typ srflx') && !srflxGraceTimer) {
+        srflxGraceTimer = setTimeout(done, 160);
+      }
+    };
+
+    const hardTimer = setTimeout(done, maxWaitMs);
+    pc.addEventListener('icegatheringstatechange', onStateChange);
+    pc.addEventListener('icecandidate', onCandidate);
+  });
+
+  if (!pc.localDescription) return null;
+  return {
+    type: pc.localDescription.type,
+    sdp: pc.localDescription.sdp,
+  };
 }
 
 export type OnlineEventCallback = {
@@ -47,20 +138,35 @@ export type OnlineEventCallback = {
     payload: any
   ) => void;
   onReaction?: (jugadorId: number, emoji: string) => void;
-  onRematchRequested?: (jugadorId: number) => void;
+  onRematchRequested?: (jugadorId: number, nombre: string) => void;
+  onRematchResponded?: (jugadorId: number, nombre: string, aceptada: boolean) => void;
+  onPlayerLeftRoom?: (nombre: string) => void;
+  onOpponentAbandoned?: (nombre: string) => void;
   onHostDisconnected?: (secondsRemaining: number) => void;
   onHostDisconnectWarning?: (secondsRemaining: number) => void;
   onHostReconnected?: () => void;
   onError?: (errorMsg: string) => void;
+  onLobbyError?: (errorMsg: string) => void;
   onDisconnectTimeout?: () => void;
 };
 
+interface HostPeerSlot {
+  peerId: string;
+  pc: RTCPeerConnection;
+  dc: RTCDataChannel | null;
+  answeredOfferSdp: string;
+}
+
 class OnlineManager {
-  private peer: Peer | null = null;
-  private connections: Map<string, DataConnection> = new Map();
-  private hostConnection: DataConnection | null = null;
+  private hostPeers: Map<string, HostPeerSlot> = new Map();
+  private clientPc: RTCPeerConnection | null = null;
+  private clientDc: RTCDataChannel | null = null;
+  private appliedAnswerSdp: string = '';
+
   private role: 'host' | 'client' | null = null;
   private roomCode: string = '';
+  private roomPublica: boolean = true;
+  private myPeerId: string = '';
   private maxPlayers: 2 | 4 = 2;
   private myPlayerId: number = 0;
   private myName: string = '';
@@ -69,18 +175,38 @@ class OnlineManager {
   private lobbyPlayers: OnlinePlayerInfo[] = [];
   private callbacks: OnlineEventCallback = {};
 
-  // Heartbeat & keep-alive
+  private syncInterval: ReturnType<typeof setInterval> | null = null;
+  private syncInFlight: boolean = false;
+  private lastMsgSeq: number = 0;
+  private lastHandledStartId: string = '';
+  private handledActionIds: Set<string> = new Set();
+
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private lastSeenMap: Map<string, number> = new Map();
   private hostLastSeen: number = Date.now();
-
-  // Reconnection grace period
-  private reconnectInterval: ReturnType<typeof setInterval> | null = null;
+  private lastRemoteActivityMarker: string = '';
+  private hadWebRtcOpenInMatch: boolean = false;
   private countdownInterval: ReturnType<typeof setInterval> | null = null;
+  private pendingActionRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastPollAt: number = 0;
+
   private currentGameState: GameState | null = null;
   private isIntentionalExit: boolean = false;
+  private rivalLeftAfterMatch: boolean = false;
+  private roomClosedRemotely: boolean = false;
 
-  // Visual Diagnostic Overlay State
+  constructor() {
+    if (typeof window !== 'undefined') {
+      const handleUnload = () => {
+        if (this.role && this.roomCode && !this.isIntentionalExit) {
+          this.cleanUp();
+        }
+      };
+      window.addEventListener('pagehide', handleUnload);
+      window.addEventListener('beforeunload', handleUnload);
+    }
+  }
+
   private diagnosticData: OnlineDiagnosticData = {
     status: 'desconectado',
     pingMs: null,
@@ -110,7 +236,9 @@ class OnlineManager {
   private notifyDiagnostics() {
     const data = this.getDiagnosticData();
     this.diagnosticListeners.forEach((l) => {
-      try { l(data); } catch {}
+      try {
+        l(data);
+      } catch {}
     });
   }
 
@@ -124,24 +252,38 @@ class OnlineManager {
     this.notifyDiagnostics();
   }
 
+  private updateLatencyMetric(rttMs: number) {
+    const rtt = Math.max(1, Math.round(rttMs));
+    this.diagnosticData.pingMs = rtt;
+    this.diagnosticData.calidad =
+      rtt < 100 ? 'excelente' : rtt < 200 ? 'buena' : rtt < 350 ? 'inestable' : 'critica';
+    this.notifyDiagnostics();
+  }
+
   public sendInstantDiagnosticPing() {
     const now = Date.now();
-    if (this.role === 'client' && this.hostConnection && this.hostConnection.open) {
-      this.hostConnection.send({ type: 'DIAG_PING', ts: now });
+    if (this.role === 'client') {
+      if (this.clientDc && this.clientDc.readyState === 'open') {
+        try {
+          this.clientDc.send(JSON.stringify({ type: 'DIAG_PING', ts: now }));
+        } catch {}
+      }
     } else if (this.role === 'host') {
-      this.connections.forEach((conn) => {
-        if (conn.open) {
-          try { conn.send({ type: 'DIAG_PING', ts: now }); } catch {}
+      this.hostPeers.forEach((slot) => {
+        if (slot.dc && slot.dc.readyState === 'open') {
+          try {
+            slot.dc.send(JSON.stringify({ type: 'DIAG_PING', ts: now }));
+          } catch {}
         }
       });
     }
   }
 
   private startDiagnosticPingLoop() {
-    if (this.diagPingTimer) clearInterval(this.diagPingTimer);
+    this.stopDiagnosticPingLoop();
     this.diagPingTimer = setInterval(() => {
       this.sendInstantDiagnosticPing();
-    }, 3000);
+    }, 3500);
   }
 
   private stopDiagnosticPingLoop() {
@@ -171,11 +313,6 @@ class OnlineManager {
     return this.lobbyPlayers;
   }
 
-  public setGameState(state: GameState) {
-    this.currentGameState = state;
-    this.saveActiveSession();
-  }
-
   public saveActiveSession() {
     if (!this.roomCode || !this.role) return;
     try {
@@ -190,9 +327,7 @@ class OnlineManager {
         timestamp: Date.now(),
       };
       sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   public getSavedSession(): ActiveOnlineSession | null {
@@ -210,86 +345,125 @@ class OnlineManager {
     }
   }
 
-  public clearSession() {
-    try {
-      sessionStorage.removeItem(SESSION_STORAGE_KEY);
-    } catch {
-      // ignore
+  public getActiveSession(): ActiveOnlineSession | null {
+    return this.getSavedSession();
+  }
+
+  private areAllClientDataChannelsOpen(): boolean {
+    if (this.role === 'client') {
+      return Boolean(this.clientDc && this.clientDc.readyState === 'open');
+    }
+    if (this.role === 'host') {
+      const remotePlayers = this.lobbyPlayers.filter((p) => !p.esAnfitrion);
+      if (remotePlayers.length === 0) return false;
+      return remotePlayers.every((p) => {
+        const slot = this.hostPeers.get(p.peerId);
+        return Boolean(slot?.dc && slot.dc.readyState === 'open');
+      });
+    }
+    return false;
+  }
+
+  private areAllPeersResponsive(now: number = Date.now()): boolean {
+    if (!this.areAllClientDataChannelsOpen()) return false;
+    if (this.role === 'client') {
+      return now - this.hostLastSeen < 6500;
+    }
+    if (this.role === 'host') {
+      const remotePlayers = this.lobbyPlayers.filter((p) => !p.esAnfitrion);
+      if (remotePlayers.length === 0) return false;
+      return remotePlayers.every((p) => {
+        const lastSeen = this.lastSeenMap.get(p.peerId) || 0;
+        return now - lastSeen < 6500;
+      });
+    }
+    return false;
+  }
+
+  private clearPendingActionRetry() {
+    if (this.pendingActionRetryTimer) {
+      clearTimeout(this.pendingActionRetryTimer);
+      this.pendingActionRetryTimer = null;
     }
   }
 
-  // ===================== HEARTBEAT (PING-PONG) =====================
+  private buildPingPayload(type: 'PING' | 'PONG'): OnlineMessage {
+    return {
+      type,
+      turnosTotales: this.currentGameState?.turnosTotales,
+      turnoActual: this.currentGameState?.turnoActual,
+      terminada: this.currentGameState?.terminada,
+    };
+  }
+
+  private notifyPeerDeparture(nombre: string) {
+    if (this.rivalLeftAfterMatch) return;
+    this.rivalLeftAfterMatch = true;
+    this.stopReconnectGracePeriod();
+    this.clearPendingActionRetry();
+
+    if (this.currentGameState && !this.currentGameState.terminada) {
+      this.callbacks.onOpponentAbandoned?.(nombre);
+    } else {
+      this.callbacks.onPlayerLeftRoom?.(nombre);
+    }
+  }
+
   private startHeartbeat() {
     this.stopHeartbeat();
-    this.hostLastSeen = Date.now();
+    const initNow = Date.now();
+    this.hostLastSeen = initNow;
+    this.lobbyPlayers.forEach((p) => {
+      if (!p.esAnfitrion && p.peerId) {
+        this.lastSeenMap.set(p.peerId, initNow);
+      }
+    });
 
     this.heartbeatInterval = setInterval(() => {
+      if (this.isIntentionalExit || !this.role) return;
       const now = Date.now();
 
       if (this.role === 'host') {
-        // Host pings all connected clients & purges inactive ones
-        const deadPeers: string[] = [];
-
-        for (const [peerId, conn] of this.connections.entries()) {
-          if (conn.open) {
+        const pingStr = JSON.stringify(this.buildPingPayload('PING'));
+        for (const slot of this.hostPeers.values()) {
+          if (slot.dc && slot.dc.readyState === 'open') {
             try {
-              conn.send({ type: 'PING' });
-            } catch {
-              deadPeers.push(peerId);
-            }
-          }
-
-          const lastSeen = this.lastSeenMap.get(peerId) || now;
-          if (now - lastSeen > 12000) {
-            deadPeers.push(peerId);
+              slot.dc.send(pingStr);
+            } catch {}
           }
         }
 
-        // Clean up dead peers immediately so room becomes available
-        if (deadPeers.length > 0) {
-          deadPeers.forEach((pId) => {
-            const conn = this.connections.get(pId);
-            if (conn) {
-              try { conn.close(); } catch {}
+        if (this.currentGameState && !this.currentGameState.terminada) {
+          const remotePlayers = this.lobbyPlayers.filter((p) => !p.esAnfitrion);
+          const silenceLimitMs = this.hadWebRtcOpenInMatch ? 12000 : 35000;
+          for (const p of remotePlayers) {
+            const lastSeen = this.lastSeenMap.get(p.peerId) || initNow;
+            if (now - lastSeen > 6500) {
+              this.pollRoomOnce();
             }
-            this.connections.delete(pId);
-            this.lastSeenMap.delete(pId);
-          });
-
-          // In game: trigger grace period instead of removing
-          if (this.currentGameState && !this.currentGameState.terminada) {
-            this.startPeerDisconnectGracePeriod();
-          } else {
-            const prevCount = this.lobbyPlayers.length;
-            this.lobbyPlayers = this.lobbyPlayers.filter((p) => p.esAnfitrion || !deadPeers.includes(p.peerId));
-            this.lobbyPlayers.forEach((p, idx) => { p.id = idx; });
-
-            if (this.lobbyPlayers.length !== prevCount) {
-              this.broadcastLobbyUpdate();
+            if (now - lastSeen > silenceLimitMs) {
+              this.startDisconnectGracePeriod();
+              break;
             }
           }
         }
       } else if (this.role === 'client') {
-        // Client pings host
-        if (this.hostConnection && this.hostConnection.open) {
+        if (this.clientDc && this.clientDc.readyState === 'open') {
           try {
-            this.hostConnection.send({ type: 'PING' });
-          } catch {
-            // will detect on timeout
+            this.clientDc.send(JSON.stringify(this.buildPingPayload('PING')));
+          } catch {}
+        }
+        if (this.currentGameState && !this.currentGameState.terminada) {
+          const silenceLimitMs = this.hadWebRtcOpenInMatch ? 12000 : 35000;
+          if (now - this.hostLastSeen > 6500) {
+            this.pollRoomOnce();
+          }
+          if (now - this.hostLastSeen > silenceLimitMs) {
+            this.startDisconnectGracePeriod();
           }
         }
-
-        // Check if host went quiet (only in active unfinished game and not intentional exit)
-        if (
-          !this.isIntentionalExit &&
-          this.currentGameState &&
-          !this.currentGameState.terminada &&
-          now - this.hostLastSeen > 12000
-        ) {
-          this.startHostDisconnectGracePeriod(formatRoomPeerId(this.roomCode));
-        }
       }
-    }, 2000);
+    }, 2500);
   }
 
   private stopHeartbeat() {
@@ -299,194 +473,891 @@ class OnlineManager {
     }
   }
 
-  // ===================== HOST CREATION =====================
+  private startRoomSyncLoop() {
+    this.stopRoomSyncLoop();
+    this.syncInterval = setInterval(() => {
+      this.pollRoomOnce();
+    }, 1500);
+  }
+
+  private stopRoomSyncLoop() {
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval);
+      this.syncInterval = null;
+    }
+  }
+
+  private async pollRoomOnce() {
+    if (this.isIntentionalExit || !this.role || !this.roomCode || this.syncInFlight) return;
+    if (this.rivalLeftAfterMatch || this.roomClosedRemotely) return;
+
+    const now = Date.now();
+
+    // Si la partida está activa o recién terminada y todos los pares responden por WebRTC directo, 0 peticiones HTTP/KV
+    if (this.currentGameState && this.areAllPeersResponsive(now)) {
+      return;
+    }
+
+    // Mientras el anfitrión espera solo en el lobby sin rival, espaciar a 3s para ahorrar lecturas de KV
+    if (
+      this.role === 'host' &&
+      !this.currentGameState &&
+      this.lobbyPlayers.length < 2 &&
+      now - this.lastPollAt < 2900
+    ) {
+      return;
+    }
+
+    this.syncInFlight = true;
+    this.lastPollAt = now;
+    const t0 = now;
+
+    try {
+      const base = getApiBaseUrl(`/api/salas/${encodeURIComponent(this.roomCode)}`);
+      const sep = base.includes('?') ? '&' : '?';
+      const url = `${base}${sep}peerId=${encodeURIComponent(this.myPeerId)}&since=${this.lastMsgSeq}&_t=${t0}`;
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+        cache: 'no-store',
+      });
+
+      if (this.isIntentionalExit || !this.role) return;
+
+      if (res.status === 404) {
+        this.roomClosedRemotely = true;
+        if (this.role === 'client') {
+          const hostName =
+            this.currentGameState?.jugadores[0]?.nombre ||
+            this.lobbyPlayers.find((p) => p.esAnfitrion)?.nombre ||
+            'El anfitrión';
+          if (this.currentGameState) {
+            this.notifyPeerDeparture(hostName);
+          } else {
+            this.callbacks.onLobbyError?.('El anfitrión cerró la sala.');
+          }
+        }
+        return;
+      }
+
+      if (!res.ok) return;
+      const data = await res.json().catch(() => null);
+      if (!data?.ok || !data.sala || this.isIntentionalExit) return;
+
+      const rtt = Date.now() - t0;
+      if (!this.areAllClientDataChannelsOpen()) {
+        this.updateLatencyMetric(rtt);
+      }
+
+      const sala = data.sala;
+      const marker = `${sala.seq ?? 0}:${sala.ultimoCambio ?? 0}:${Array.isArray(sala.jugadores) ? sala.jugadores.length : 0}`;
+      if (marker !== this.lastRemoteActivityMarker) {
+        this.lastRemoteActivityMarker = marker;
+        if (this.role === 'client') {
+          this.hostLastSeen = Date.now();
+        }
+      }
+
+      if (this.role === 'host') {
+        await this.processHostRoomPoll(sala);
+      } else if (this.role === 'client') {
+        await this.processClientRoomPoll(sala);
+      }
+    } catch {
+      // Silenciar fallos puntuales de red
+    } finally {
+      this.syncInFlight = false;
+    }
+  }
+
+  private async processHostRoomPoll(sala: any) {
+    const remoteList: OnlinePlayerInfo[] = Array.isArray(sala.jugadores) ? sala.jugadores : [];
+
+    // Sincronizar lista del lobby mientras no haya iniciado la partida
+    if (!this.currentGameState && remoteList.length > 0) {
+      const changed =
+        remoteList.length !== this.lobbyPlayers.length ||
+        remoteList.some((p, i) => p.peerId !== this.lobbyPlayers[i]?.peerId);
+
+      if (changed) {
+        this.lobbyPlayers = remoteList;
+        this.saveActiveSession();
+        this.broadcastLobbyUpdate();
+
+        if (this.lobbyPlayers.length >= this.maxPlayers) {
+          this.callbacks.onLobbyFull?.(this.maxPlayers);
+        }
+      }
+    }
+
+    // Responder ofertas WebRTC entrantes de clientes
+    const signals = sala.signals || {};
+    for (const p of remoteList) {
+      if (p.esAnfitrion || !p.peerId) continue;
+      const sig = signals[p.peerId];
+      if (sig?.offer?.sdp) {
+        const existingSlot = this.hostPeers.get(p.peerId);
+        if (!existingSlot || existingSlot.answeredOfferSdp !== sig.offer.sdp) {
+          this.diagnosticData.rivalPeerId = p.peerId;
+          await this.acceptClientOfferAsHost(p.peerId, sig.offer);
+        }
+      }
+    }
+
+    // Procesar mensajes recibidos por el canal de respaldo /msg
+    const nuevos = Array.isArray(sala.mensajesNuevos) ? sala.mensajesNuevos : [];
+    for (const item of nuevos) {
+      if (item.seq > this.lastMsgSeq) {
+        this.lastMsgSeq = item.seq;
+      }
+      if (item.msg) {
+        this.handleMessageFromClient(item.from, item.msg as OnlineMessage);
+      }
+    }
+    if (typeof sala.seq === 'number' && sala.seq > this.lastMsgSeq) {
+      this.lastMsgSeq = sala.seq;
+    }
+  }
+
+  private async processClientRoomPoll(sala: any) {
+    const remoteList: OnlinePlayerInfo[] = Array.isArray(sala.jugadores) ? sala.jugadores : [];
+
+    if (!this.currentGameState && remoteList.length > 0) {
+      const me = remoteList.find((p) => p.peerId === this.myPeerId);
+      if (me) {
+        this.myPlayerId = me.id;
+      }
+      const changed =
+        remoteList.length !== this.lobbyPlayers.length ||
+        remoteList.some((p, i) => p.peerId !== this.lobbyPlayers[i]?.peerId);
+
+      if (changed) {
+        this.lobbyPlayers = remoteList;
+        this.maxPlayers = sala.maxJugadores === 4 ? 4 : 2;
+        this.saveActiveSession();
+        this.callbacks.onLobbyUpdate?.([...this.lobbyPlayers], this.maxPlayers);
+      }
+    }
+
+    // Aplicar respuesta SDP del anfitrión para abrir el canal WebRTC directo
+    const mySig = sala.signals?.[this.myPeerId];
+    if (
+      mySig?.answer?.sdp &&
+      this.clientPc &&
+      this.appliedAnswerSdp !== mySig.answer.sdp &&
+      this.clientPc.signalingState === 'have-local-offer'
+    ) {
+      this.appliedAnswerSdp = mySig.answer.sdp;
+      try {
+        await this.clientPc.setRemoteDescription(new RTCSessionDescription(mySig.answer));
+        this.addDiagnosticLog('info', 'Respuesta SDP recibida del anfitrión');
+      } catch (err: any) {
+        this.addDiagnosticLog('warn', `Aviso SDP cliente: ${err?.message || err}`);
+      }
+    }
+
+    // Procesar mensajes del anfitrión por el canal /msg
+    const nuevos = Array.isArray(sala.mensajesNuevos) ? sala.mensajesNuevos : [];
+    for (const item of nuevos) {
+      if (item.seq > this.lastMsgSeq) {
+        this.lastMsgSeq = item.seq;
+      }
+      if (item.msg) {
+        this.handleMessageFromHost(item.msg as OnlineMessage);
+      }
+    }
+    if (typeof sala.seq === 'number' && sala.seq > this.lastMsgSeq) {
+      this.lastMsgSeq = sala.seq;
+    }
+  }
+
+  private async acceptClientOfferAsHost(
+    clientPeerId: string,
+    offer: RTCSessionDescriptionInit
+  ): Promise<void> {
+    if (typeof RTCPeerConnection === 'undefined') return;
+
+    const prev = this.hostPeers.get(clientPeerId);
+    if (prev) {
+      try {
+        prev.dc?.close();
+        prev.pc.close();
+      } catch {}
+      this.hostPeers.delete(clientPeerId);
+    }
+
+    try {
+      const pc = new RTCPeerConnection(RTC_CONFIGURATION);
+      const slot: HostPeerSlot = {
+        peerId: clientPeerId,
+        pc,
+        dc: null,
+        answeredOfferSdp: offer.sdp || '',
+      };
+      this.hostPeers.set(clientPeerId, slot);
+      this.lastSeenMap.set(clientPeerId, Date.now());
+
+      pc.oniceconnectionstatechange = () => {
+        this.diagnosticData.iceState = pc.iceConnectionState;
+        this.notifyDiagnostics();
+      };
+
+      pc.ondatachannel = (ev) => {
+        const dc = ev.channel;
+        slot.dc = dc;
+        this.bindHostDataChannel(clientPeerId, dc);
+      };
+
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      const answerRaw = await pc.createAnswer();
+      await pc.setLocalDescription(answerRaw);
+      const fullAnswer = await gatherLocalDescription(pc, 900);
+
+      if (fullAnswer && !this.isIntentionalExit && this.roomCode) {
+        await fetch(getApiBaseUrl(`/api/salas/${encodeURIComponent(this.roomCode)}/signal`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          cache: 'no-store',
+          body: JSON.stringify({
+            clientPeerId,
+            answer: fullAnswer,
+          }),
+        });
+        this.addDiagnosticLog('info', `Respuesta WebRTC enviada a ${clientPeerId}`);
+      }
+    } catch (err: any) {
+      this.addDiagnosticLog('warn', `Respaldo activo para ${clientPeerId}: ${err?.message || err}`);
+    }
+  }
+
+  private bindHostDataChannel(clientPeerId: string, dc: RTCDataChannel) {
+    dc.onopen = () => {
+      this.hadWebRtcOpenInMatch = true;
+      this.lastSeenMap.set(clientPeerId, Date.now());
+      this.stopReconnectGracePeriod();
+      this.diagnosticData.status = 'conectado';
+      this.diagnosticData.dataChannelState = 'open';
+      this.diagnosticData.iceState = 'connected';
+      this.addDiagnosticLog('info', `Canal P2P WebRTC directo abierto con ${clientPeerId}`);
+      this.sendInstantDiagnosticPing();
+
+      // Sincronizar lobby o estado de partida apenas abre el canal directo
+      try {
+        dc.send(
+          JSON.stringify({
+            type: 'LOBBY_UPDATE',
+            roomCode: this.roomCode,
+            maxJugadores: this.maxPlayers,
+            jugadores: [...this.lobbyPlayers],
+          } satisfies OnlineMessage)
+        );
+        if (this.currentGameState && !this.currentGameState.terminada) {
+          dc.send(
+            JSON.stringify({
+              type: 'START_GAME',
+              config: this.currentGameState.config,
+              initialState: prepareWireState(this.currentGameState),
+              _startId: this.lastHandledStartId || `sync_${this.roomCode}`,
+            } satisfies OnlineMessage)
+          );
+        }
+      } catch {}
+    };
+
+    dc.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(String(ev.data)) as OnlineMessage;
+        this.handleMessageFromClient(clientPeerId, msg);
+      } catch {}
+    };
+
+    dc.onclose = () => {
+      this.diagnosticData.dataChannelState = 'closed';
+      this.notifyDiagnostics();
+      this.handlePeerChannelClosedOnHost(clientPeerId);
+    };
+  }
+
+  private handlePeerChannelClosedOnHost(clientPeerId: string) {
+    if (this.isIntentionalExit || !this.role) return;
+
+    if (this.currentGameState && this.currentGameState.terminada) {
+      const leftPlayer = this.lobbyPlayers.find((p) => p.peerId === clientPeerId);
+      const leftName = leftPlayer?.nombre || 'El otro jugador';
+      if (!this.rivalLeftAfterMatch) {
+        this.broadcast({
+          type: 'PLAYER_LEFT',
+          jugadorId: leftPlayer?.id ?? 1,
+          nombre: leftName,
+        });
+        this.notifyPeerDeparture(leftName);
+      }
+    } else if (this.currentGameState && !this.currentGameState.terminada) {
+      // Comprobar de inmediato /leave o caída real en servidor y mostrar aviso si no responde
+      this.pollRoomOnce();
+      this.startDisconnectGracePeriod();
+    }
+  }
+
   public async createRoom(
     code: string,
     hostName: string,
     color: string,
     hat: HatType,
-    maxPlayers: 2 | 4 = 2
+    maxPlayers: 2 | 4 = 2,
+    publica: boolean = true
   ): Promise<string> {
     this.cleanUp();
     this.isIntentionalExit = false;
+    this.rivalLeftAfterMatch = false;
+    this.roomClosedRemotely = false;
     this.role = 'host';
-    this.roomCode = code.toUpperCase();
+    this.roomCode = normalizeRoomCode(code) || generarCodigoSala();
+    this.roomPublica = publica;
     this.maxPlayers = maxPlayers;
     this.myPlayerId = 0;
     this.myName = hostName.trim() || 'Anfitrión';
     this.myColor = color;
     this.myHat = hat;
+    this.myPeerId = `host-${this.roomCode.toLowerCase()}-${randomShortId(5)}`;
+    this.lastMsgSeq = 0;
 
-    const hostPeerId = formatRoomPeerId(this.roomCode);
+    this.lobbyPlayers = [
+      {
+        id: 0,
+        peerId: this.myPeerId,
+        nombre: this.myName,
+        color: this.myColor,
+        hat: this.myHat,
+        listo: true,
+        conectado: true,
+        esAnfitrion: true,
+      },
+    ];
 
-    return new Promise((resolve, reject) => {
-      this.peer = new Peer(hostPeerId, { debug: 1 });
-
-      this.peer.on('open', (id) => {
-        this.lobbyPlayers = [
-          {
-            id: 0,
-            peerId: id,
-            nombre: this.myName,
-            color: this.myColor,
-            hat: this.myHat,
-            listo: true,
-            conectado: true,
-            esAnfitrion: true,
-          },
-        ];
-        this.saveActiveSession();
-        this.startHeartbeat();
-
-        this.diagnosticData.status = 'conectado';
-        this.diagnosticData.role = 'host';
-        this.diagnosticData.miPeerId = id;
-        this.diagnosticData.iceState = 'connected';
-        this.diagnosticData.dataChannelState = 'open';
-        this.addDiagnosticLog('info', `Sala creada. PeerID Host: ${id}`);
-        this.startDiagnosticPingLoop();
-
-        if (this.callbacks.onLobbyUpdate) {
-          this.callbacks.onLobbyUpdate([...this.lobbyPlayers], this.maxPlayers);
-        }
-        resolve(this.roomCode);
-      });
-
-      this.peer.on('connection', (conn) => {
-        this.diagnosticData.rivalPeerId = conn.peer;
-        this.addDiagnosticLog('info', `Cliente conectado: ${conn.peer}`);
-        this.handleIncomingClientConnection(conn);
-      });
-
-      this.peer.on('error', (err) => {
-        this.diagnosticData.status = 'desconectado';
-        this.addDiagnosticLog('error', `Error en Peer: ${err.message}`);
-        if (this.callbacks.onError) {
-          this.callbacks.onError(`Error en la sala: ${err.message}`);
-        }
-        reject(err);
-      });
+    const res = await fetch(getApiBaseUrl('/api/salas'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify({
+        codigo: this.roomCode,
+        nombre: `Sala de ${this.myName}`,
+        anfitrion: this.myName,
+        hostPeerId: this.myPeerId,
+        color: this.myColor,
+        hat: this.myHat,
+        maxJugadores: this.maxPlayers,
+        publica: this.roomPublica,
+        jugadores: this.lobbyPlayers,
+        creadoEn: Date.now(),
+      }),
     });
-  }
 
-  private handleIncomingClientConnection(conn: DataConnection) {
-    const setup = () => {
-      this.connections.set(conn.peer, conn);
-      this.lastSeenMap.set(conn.peer, Date.now());
-
-      conn.on('data', (raw: unknown) => {
-        const msg = raw as OnlineMessage;
-        this.handleMessageFromClient(conn, msg);
-      });
-
-      conn.on('close', () => {
-        this.connections.delete(conn.peer);
-        this.lastSeenMap.delete(conn.peer);
-
-        if (this.isIntentionalExit || !this.role) return;
-
-        // If game is in progress and not finished: start 10s abandonment countdown
-        if (this.currentGameState && !this.currentGameState.terminada) {
-          this.startPeerDisconnectGracePeriod();
-        } else {
-          // In lobby or game already finished: remove to free room slot immediately
-          const prevCount = this.lobbyPlayers.length;
-          this.lobbyPlayers = this.lobbyPlayers.filter((p) => p.peerId !== conn.peer);
-          this.lobbyPlayers.forEach((p, idx) => { p.id = idx; });
-
-          if (this.lobbyPlayers.length !== prevCount) {
-            this.broadcastLobbyUpdate();
-          }
-        }
-      });
-    };
-
-    if (conn.open) {
-      setup();
-    } else {
-      conn.on('open', setup);
+    if (!res.ok) {
+      this.cleanUp();
+      throw new Error('No se pudo registrar la sala en el servidor.');
     }
+
+    this.saveActiveSession();
+    this.startHeartbeat();
+    this.startRoomSyncLoop();
+    this.startDiagnosticPingLoop();
+
+    this.diagnosticData.status = 'conectado';
+    this.diagnosticData.role = 'host';
+    this.diagnosticData.miPeerId = this.myPeerId;
+    this.diagnosticData.iceState = 'connected';
+    this.diagnosticData.dataChannelState = 'open';
+    this.addDiagnosticLog('info', `Sala ${this.roomCode} abierta y lista para recibir jugadores`);
+
+    this.callbacks.onLobbyUpdate?.([...this.lobbyPlayers], this.maxPlayers);
+    return this.roomCode;
   }
 
-  private handleMessageFromClient(conn: DataConnection, msg: OnlineMessage) {
-    this.lastSeenMap.set(conn.peer, Date.now());
+  public async joinRoom(
+    code: string,
+    playerName: string,
+    color: string,
+    hat: HatType
+  ): Promise<void> {
+    this.cleanUp();
+    this.isIntentionalExit = false;
+    this.rivalLeftAfterMatch = false;
+    this.roomClosedRemotely = false;
+    this.role = 'client';
+    this.roomCode = normalizeRoomCode(code);
+    this.myName = playerName.trim() || 'Invitado';
+    this.myColor = color;
+    this.myHat = hat;
+    this.myPeerId = `cli-${randomShortId(8)}`;
+    this.appliedAnswerSdp = '';
+    this.lastMsgSeq = 0;
 
-    if (this.countdownInterval) {
-      this.stopReconnectGracePeriod();
-      if (this.callbacks.onHostReconnected) {
-        this.callbacks.onHostReconnected();
+    if (this.roomCode.length < 4) {
+      this.cleanUp();
+      throw new Error('Introduce un código de sala válido.');
+    }
+
+    this.diagnosticData.status = 'negociando';
+    this.diagnosticData.role = 'client';
+    this.diagnosticData.miPeerId = this.myPeerId;
+    this.diagnosticData.rivalPeerId = formatRoomPeerId(this.roomCode);
+    this.addDiagnosticLog('info', `Conectando a la sala ${this.roomCode}...`);
+
+    let offerSdp: RTCSessionDescriptionInit | null = null;
+
+    if (typeof RTCPeerConnection !== 'undefined') {
+      try {
+        const pc = new RTCPeerConnection(RTC_CONFIGURATION);
+        this.clientPc = pc;
+
+        pc.oniceconnectionstatechange = () => {
+          this.diagnosticData.iceState = pc.iceConnectionState;
+          this.notifyDiagnostics();
+        };
+
+        const dc = pc.createDataChannel('muros-p2p', { ordered: true });
+        this.clientDc = dc;
+        this.bindClientDataChannel(dc);
+
+        const rawOffer = await pc.createOffer();
+        await pc.setLocalDescription(rawOffer);
+        offerSdp = await gatherLocalDescription(pc, 850);
+      } catch (err: any) {
+        this.addDiagnosticLog('warn', `WebRTC local en modo respaldo: ${err?.message || err}`);
       }
     }
 
-    if (msg.type === 'PING') {
-      try { conn.send({ type: 'PONG' }); } catch {}
+    const t0 = Date.now();
+    const res = await fetch(
+      getApiBaseUrl(`/api/salas/${encodeURIComponent(this.roomCode)}/join`),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify({
+          peerId: this.myPeerId,
+          nombre: this.myName,
+          color: this.myColor,
+          hat: this.myHat,
+          offer: offerSdp,
+        }),
+      }
+    );
+
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.ok || !data.sala) {
+      const msg =
+        data?.error ||
+        `La sala ${this.roomCode} no está disponible o el anfitrión ya la cerró.`;
+      this.cleanUp();
+      throw new Error(msg);
+    }
+
+    this.updateLatencyMetric(Date.now() - t0);
+
+    const sala = data.sala;
+    this.maxPlayers = sala.maxJugadores === 4 ? 4 : 2;
+    this.lobbyPlayers = Array.isArray(sala.jugadores) ? sala.jugadores : [];
+    this.lastMsgSeq = typeof sala.seq === 'number' ? sala.seq : 0;
+
+    const me = this.lobbyPlayers.find((p) => p.peerId === this.myPeerId);
+    if (me) {
+      this.myPlayerId = me.id;
+      this.myColor = me.color;
+      this.myHat = me.hat;
+    }
+
+    this.diagnosticData.status = 'conectado';
+    this.diagnosticData.rivalPeerId = sala.hostPeerId || formatRoomPeerId(this.roomCode);
+    this.addDiagnosticLog('info', `Unido a la sala ${this.roomCode} como Jugador ${this.myPlayerId + 1}`);
+
+    this.saveActiveSession();
+    this.startHeartbeat();
+    this.startRoomSyncLoop();
+    this.startDiagnosticPingLoop();
+
+    this.callbacks.onLobbyUpdate?.([...this.lobbyPlayers], this.maxPlayers);
+  }
+
+  private bindClientDataChannel(dc: RTCDataChannel) {
+    dc.onopen = () => {
+      this.hadWebRtcOpenInMatch = true;
+      this.stopReconnectGracePeriod();
+      this.hostLastSeen = Date.now();
+      this.diagnosticData.status = 'conectado';
+      this.diagnosticData.iceState = 'connected';
+      this.diagnosticData.dataChannelState = 'open';
+      this.addDiagnosticLog('info', 'Enlace P2P WebRTC directo activo');
+      this.sendInstantDiagnosticPing();
+
+      try {
+        dc.send(
+          JSON.stringify({
+            type: 'JOIN_REQUEST',
+            nombre: this.myName,
+            color: this.myColor,
+            hat: this.myHat,
+          } satisfies OnlineMessage)
+        );
+        if (this.currentGameState && !this.currentGameState.terminada) {
+          dc.send(
+            JSON.stringify({
+              type: 'REQUEST_SYNC',
+              jugadorId: this.myPlayerId,
+              turnosTotales: this.currentGameState.turnosTotales,
+            } satisfies OnlineMessage)
+          );
+        }
+      } catch {}
+    };
+
+    dc.onmessage = (ev) => {
+      try {
+        const msg = JSON.parse(String(ev.data)) as OnlineMessage;
+        this.handleMessageFromHost(msg);
+      } catch {}
+    };
+
+    dc.onclose = () => {
+      this.diagnosticData.dataChannelState = 'closed';
+      this.notifyDiagnostics();
+      if (this.isIntentionalExit || !this.role || !this.currentGameState) return;
+
+      const hostName = this.currentGameState.jugadores[0]?.nombre || 'El anfitrión';
+      if (this.currentGameState.terminada) {
+        this.notifyPeerDeparture(hostName);
+        return;
+      }
+      // Si se cerró el DataChannel en mitad de partida, comprobar de inmediato si cerró la sala o hubo corte temporal
+      this.pollRoomOnce();
+      this.startDisconnectGracePeriod();
+    };
+  }
+
+  private async postFallbackMessage(msg: OnlineMessage, toPeerId?: string) {
+    if (!this.roomCode) return;
+    try {
+      await fetch(getApiBaseUrl(`/api/salas/${encodeURIComponent(this.roomCode)}/msg`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify({
+          from: this.myPeerId,
+          to: toPeerId || null,
+          msg,
+        }),
+      });
+    } catch {}
+  }
+
+  private sendToHost(msg: OnlineMessage) {
+    if (this.clientDc && this.clientDc.readyState === 'open') {
+      try {
+        this.clientDc.send(JSON.stringify(msg));
+        return;
+      } catch {}
+    }
+    if (
+      msg.type !== 'PING' &&
+      msg.type !== 'PONG' &&
+      msg.type !== 'DIAG_PING' &&
+      msg.type !== 'DIAG_PONG'
+    ) {
+      this.postFallbackMessage(msg);
+    }
+  }
+
+  public broadcast(msg: OnlineMessage) {
+    const serialized = JSON.stringify(msg);
+    let sentCount = 0;
+    const expectedRemotes = this.lobbyPlayers.filter((p) => !p.esAnfitrion).length;
+
+    for (const slot of this.hostPeers.values()) {
+      if (slot.dc && slot.dc.readyState === 'open') {
+        try {
+          slot.dc.send(serialized);
+          sentCount++;
+        } catch {}
+      }
+    }
+
+    const isControlEphemeral =
+      msg.type === 'PING' ||
+      msg.type === 'PONG' ||
+      msg.type === 'DIAG_PING' ||
+      msg.type === 'DIAG_PONG';
+
+    // Si algún jugador aún no abrió WebRTC (o es START_GAME para marcar sala enPartida), publicar en /msg
+    if (!isControlEphemeral && (sentCount < expectedRemotes || msg.type === 'START_GAME')) {
+      this.postFallbackMessage(msg);
+    }
+  }
+
+  private syncHostStateToSingleClient(senderPeerId: string) {
+    if (!this.currentGameState) return;
+    const syncMsg: OnlineMessage = {
+      type: 'STATE_SYNC',
+      state: prepareWireState(this.currentGameState),
+    };
+    const slot = this.hostPeers.get(senderPeerId);
+    if (slot?.dc?.readyState === 'open') {
+      try {
+        slot.dc.send(JSON.stringify(syncMsg));
+        return;
+      } catch {}
+    }
+    this.postFallbackMessage(syncMsg, senderPeerId);
+  }
+
+  private handleMessageFromClient(senderPeerId: string, msg: OnlineMessage) {
+    if (!msg || typeof msg !== 'object') return;
+    this.lastSeenMap.set(senderPeerId, Date.now());
+
+    if (this.countdownInterval && msg.type !== 'PLAYER_LEFT') {
+      this.stopReconnectGracePeriod();
+      this.callbacks.onHostReconnected?.();
+    }
+
+    const senderSlot = this.hostPeers.get(senderPeerId);
+
+    if (msg.type === 'PING' || msg.type === 'PONG') {
+      if (msg.type === 'PING' && senderSlot?.dc?.readyState === 'open') {
+        try {
+          senderSlot.dc.send(JSON.stringify(this.buildPingPayload('PONG')));
+        } catch {}
+      }
+      if (
+        this.currentGameState &&
+        typeof msg.turnosTotales === 'number' &&
+        (msg.turnosTotales < this.currentGameState.turnosTotales ||
+          (this.currentGameState.terminada && !msg.terminada))
+      ) {
+        this.syncHostStateToSingleClient(senderPeerId);
+      }
       return;
     }
-    if (msg.type === 'PONG') {
+
+    if (msg.type === 'REQUEST_SYNC') {
+      this.syncHostStateToSingleClient(senderPeerId);
       return;
     }
 
     if (msg.type === 'DIAG_PING') {
-      try { conn.send({ type: 'DIAG_PONG', ts: msg.ts }); } catch {}
+      if (senderSlot?.dc?.readyState === 'open') {
+        try {
+          senderSlot.dc.send(JSON.stringify({ type: 'DIAG_PONG', ts: msg.ts }));
+        } catch {}
+      }
       return;
     }
     if (msg.type === 'DIAG_PONG') {
-      const rtt = Math.max(1, Date.now() - msg.ts);
-      this.diagnosticData.pingMs = rtt;
-      this.diagnosticData.calidad =
-        rtt < 100 ? 'excelente' : rtt < 200 ? 'buena' : rtt < 350 ? 'inestable' : 'critica';
-      this.notifyDiagnostics();
+      this.updateLatencyMetric(Date.now() - msg.ts);
       return;
     }
 
     if (msg.type === 'JOIN_REQUEST') {
-      // If room is full, reject
-      if (this.lobbyPlayers.length >= this.maxPlayers) {
-        conn.send({
-          type: 'HOST_DISCONNECT_WARNING',
-          tiempoRestante: 0,
-        });
-        conn.close();
-        return;
+      const existing = this.lobbyPlayers.find((p) => p.peerId === senderPeerId);
+      if (existing) {
+        existing.nombre = msg.nombre.trim() || existing.nombre;
+        existing.color = msg.color || existing.color;
+        existing.hat = msg.hat || existing.hat;
+        existing.conectado = true;
+        this.broadcastLobbyUpdate();
       }
+      return;
+    }
 
-      const newId = this.lobbyPlayers.length;
-      const playerColors = ['#ff6b6b', '#4dabf7', '#ffd43b', '#51cf66'];
-      const playerHats: HatType[] = ['corona', 'pompon', 'antena', 'brote'];
-
-      const newPlayer: OnlinePlayerInfo = {
-        id: newId,
-        peerId: conn.peer,
-        nombre: msg.nombre.trim() || `Jugador ${newId + 1}`,
-        color: msg.color || playerColors[newId] || '#4dabf7',
-        hat: msg.hat || playerHats[newId] || 'pompon',
-        listo: true,
-        conectado: true,
-        esAnfitrion: false,
-      };
-
-      this.lobbyPlayers.push(newPlayer);
-      this.broadcastLobbyUpdate();
-
-      // AUTO-START INSTANTLY when lobby reaches required capacity!
-      if (this.lobbyPlayers.length >= this.maxPlayers) {
-        if (this.callbacks.onLobbyFull) {
-          this.callbacks.onLobbyFull(this.maxPlayers);
+    if (msg.type === 'PLAYER_ACTION') {
+      if (msg._actionId) {
+        if (this.handledActionIds.has(msg._actionId)) {
+          // El cliente reintentó su acción porque no le llegó el STATE_SYNC: reenviarle estado actual
+          this.syncHostStateToSingleClient(senderPeerId);
+          return;
+        }
+        this.handledActionIds.add(msg._actionId);
+        if (this.handledActionIds.size > 60) {
+          const first = this.handledActionIds.values().next().value;
+          if (first) this.handledActionIds.delete(first);
         }
       }
-    } else if (msg.type === 'PLAYER_ACTION') {
-      if (this.callbacks.onClientAction) {
+      if (this.callbacks.onPlayerAction) {
+        this.callbacks.onPlayerAction(msg.jugadorId, msg.accion, msg.payload);
+      } else if (this.callbacks.onClientAction) {
         this.callbacks.onClientAction(msg.jugadorId, msg.accion, msg.payload);
       }
     } else if (msg.type === 'REACTION') {
-      this.broadcast(msg);
-      if (this.callbacks.onReaction) {
-        this.callbacks.onReaction(msg.jugadorId, msg.emoji);
+      for (const [peerId, slot] of this.hostPeers.entries()) {
+        if (peerId !== senderPeerId && slot.dc?.readyState === 'open') {
+          try {
+            slot.dc.send(JSON.stringify(msg));
+          } catch {}
+        }
       }
+      this.callbacks.onReaction?.(msg.jugadorId, msg.emoji);
     } else if (msg.type === 'REMATCH_REQUEST') {
-      if (this.callbacks.onRematchRequested) {
-        this.callbacks.onRematchRequested(msg.jugadorId);
+      const senderName =
+        msg.nombre ||
+        this.currentGameState?.jugadores[msg.jugadorId]?.nombre ||
+        `Jugador ${msg.jugadorId + 1}`;
+      for (const [peerId, slot] of this.hostPeers.entries()) {
+        if (peerId !== senderPeerId && slot.dc?.readyState === 'open') {
+          try {
+            slot.dc.send(JSON.stringify(msg));
+          } catch {}
+        }
       }
+      this.callbacks.onRematchRequested?.(msg.jugadorId, senderName);
+    } else if (msg.type === 'REMATCH_RESPONSE') {
+      const senderName =
+        msg.nombre ||
+        this.currentGameState?.jugadores[msg.jugadorId]?.nombre ||
+        `Jugador ${msg.jugadorId + 1}`;
+      if (!msg.aceptada) {
+        this.rivalLeftAfterMatch = true;
+      }
+      for (const [peerId, slot] of this.hostPeers.entries()) {
+        if (peerId !== senderPeerId && slot.dc?.readyState === 'open') {
+          try {
+            slot.dc.send(JSON.stringify(msg));
+          } catch {}
+        }
+      }
+      this.callbacks.onRematchResponded?.(msg.jugadorId, senderName, msg.aceptada);
+    } else if (msg.type === 'PLAYER_LEFT') {
+      const senderName =
+        msg.nombre ||
+        this.currentGameState?.jugadores[msg.jugadorId]?.nombre ||
+        'El otro jugador';
+      this.broadcast(msg);
+      this.notifyPeerDeparture(senderName);
+    }
+  }
+
+  private handleMessageFromHost(msg: OnlineMessage) {
+    if (!msg || typeof msg !== 'object') return;
+    this.hostLastSeen = Date.now();
+
+    if (this.countdownInterval && msg.type !== 'PLAYER_LEFT') {
+      this.stopReconnectGracePeriod();
+      this.callbacks.onHostReconnected?.();
+    }
+
+    if (msg.type === 'PING' || msg.type === 'PONG') {
+      if (msg.type === 'PING' && this.clientDc?.readyState === 'open') {
+        try {
+          this.clientDc.send(JSON.stringify(this.buildPingPayload('PONG')));
+        } catch {}
+      }
+      if (
+        this.currentGameState &&
+        typeof msg.turnosTotales === 'number' &&
+        (msg.turnosTotales > this.currentGameState.turnosTotales ||
+          (msg.terminada && !this.currentGameState.terminada))
+      ) {
+        this.sendToHost({
+          type: 'REQUEST_SYNC',
+          jugadorId: this.myPlayerId,
+          turnosTotales: this.currentGameState.turnosTotales,
+        });
+      }
+      return;
+    }
+
+    if (msg.type === 'DIAG_PING') {
+      if (this.clientDc?.readyState === 'open') {
+        try {
+          this.clientDc.send(JSON.stringify({ type: 'DIAG_PONG', ts: msg.ts }));
+        } catch {}
+      }
+      return;
+    }
+    if (msg.type === 'DIAG_PONG') {
+      this.updateLatencyMetric(Date.now() - msg.ts);
+      return;
+    }
+
+    if (msg.type === 'JOIN_REJECTED') {
+      this.callbacks.onLobbyError?.(msg.motivo || 'No se pudo entrar a la sala.');
+      return;
+    }
+
+    if (msg.type === 'LOBBY_UPDATE') {
+      this.roomCode = msg.roomCode;
+      this.maxPlayers = msg.maxJugadores;
+      this.lobbyPlayers = msg.jugadores;
+
+      const me = msg.jugadores.find((p) => p.peerId === this.myPeerId);
+      if (me) {
+        this.myPlayerId = me.id;
+        this.myColor = me.color;
+        this.myHat = me.hat;
+      }
+
+      this.saveActiveSession();
+      this.callbacks.onLobbyUpdate?.(msg.jugadores, msg.maxJugadores);
+    } else if (msg.type === 'START_GAME') {
+      if (msg._startId && msg._startId === this.lastHandledStartId) {
+        return;
+      }
+      if (msg._startId) {
+        this.lastHandledStartId = msg._startId;
+      }
+      this.clearPendingActionRetry();
+      this.rivalLeftAfterMatch = false;
+      this.roomClosedRemotely = false;
+      this.hadWebRtcOpenInMatch = this.areAllClientDataChannelsOpen();
+      const clientState: GameState = {
+        ...msg.initialState,
+        miJugadorId: this.myPlayerId,
+        esAnfitrion: false,
+        modoOnline: true,
+      };
+      this.currentGameState = clientState;
+      this.saveActiveSession();
+      this.callbacks.onGameStart?.(clientState);
+    } else if (msg.type === 'STATE_SYNC') {
+      this.clearPendingActionRetry();
+      const clientState: GameState = {
+        ...msg.state,
+        miJugadorId: this.myPlayerId,
+        esAnfitrion: false,
+        modoOnline: true,
+      };
+      this.currentGameState = clientState;
+      this.saveActiveSession();
+      this.callbacks.onStateSync?.(clientState);
+    } else if (msg.type === 'REACTION') {
+      this.callbacks.onReaction?.(msg.jugadorId, msg.emoji);
+    } else if (msg.type === 'REMATCH_REQUEST') {
+      const senderName =
+        msg.nombre ||
+        this.currentGameState?.jugadores[msg.jugadorId]?.nombre ||
+        'El anfitrión';
+      this.callbacks.onRematchRequested?.(msg.jugadorId, senderName);
+    } else if (msg.type === 'REMATCH_RESPONSE') {
+      const senderName =
+        msg.nombre ||
+        this.currentGameState?.jugadores[msg.jugadorId]?.nombre ||
+        'El anfitrión';
+      if (!msg.aceptada) {
+        this.rivalLeftAfterMatch = true;
+      }
+      this.callbacks.onRematchResponded?.(msg.jugadorId, senderName, msg.aceptada);
+    } else if (msg.type === 'PLAYER_LEFT') {
+      this.notifyPeerDeparture(msg.nombre || 'El otro jugador');
+    } else if (msg.type === 'HOST_RESUMED') {
+      this.clearPendingActionRetry();
+      this.stopReconnectGracePeriod();
+      const clientState: GameState = {
+        ...msg.state,
+        miJugadorId: this.myPlayerId,
+        esAnfitrion: false,
+        modoOnline: true,
+      };
+      this.currentGameState = clientState;
+      this.callbacks.onStateSync?.(clientState);
+      this.callbacks.onHostReconnected?.();
     }
   }
 
@@ -498,396 +1369,90 @@ class OnlineManager {
       maxJugadores: this.maxPlayers,
       jugadores: list,
     };
-    this.broadcast(updateMsg);
-    if (this.callbacks.onLobbyUpdate) {
-      this.callbacks.onLobbyUpdate(list, this.maxPlayers);
-    }
-  }
-
-  public broadcast(msg: OnlineMessage) {
-    for (const conn of this.connections.values()) {
-      if (conn.open) {
+    const serialized = JSON.stringify(updateMsg);
+    for (const slot of this.hostPeers.values()) {
+      if (slot.dc && slot.dc.readyState === 'open') {
         try {
-          conn.send(msg);
-        } catch {
-          // ignore
-        }
+          slot.dc.send(serialized);
+        } catch {}
       }
     }
+    this.callbacks.onLobbyUpdate?.(list, this.maxPlayers);
   }
 
   public startGameAsHost(initialState: GameState) {
-    this.currentGameState = initialState;
+    this.clearPendingActionRetry();
+    this.rivalLeftAfterMatch = false;
+    this.roomClosedRemotely = false;
+    this.hadWebRtcOpenInMatch = this.areAllClientDataChannelsOpen();
+    const now = Date.now();
+    this.lobbyPlayers.forEach((p) => {
+      if (!p.esAnfitrion && p.peerId) {
+        this.lastSeenMap.set(p.peerId, now);
+      }
+    });
+    const cleanInitial = prepareWireState(initialState);
+    this.currentGameState = cleanInitial;
+    const startId = `st_${now}_${randomShortId(4)}`;
+    this.lastHandledStartId = startId;
     this.saveActiveSession();
+
     const startMsg: OnlineMessage = {
       type: 'START_GAME',
-      config: initialState.config,
-      initialState,
+      config: cleanInitial.config,
+      initialState: cleanInitial,
+      _startId: startId,
     };
     this.broadcast(startMsg);
   }
 
-  public syncGameStateFromHost(state: GameState) {
-    this.currentGameState = state;
+  public syncState(state: GameState) {
+    const cleanState = prepareWireState(state);
+    this.currentGameState = cleanState;
     this.saveActiveSession();
     this.broadcast({
       type: 'STATE_SYNC',
-      state,
+      state: cleanState,
     });
   }
 
-  public syncState(state: GameState) {
-    this.syncGameStateFromHost(state);
-  }
-
-  public disconnect() {
-    this.cleanUp();
-  }
-
-  public getActiveSession(): ActiveOnlineSession | null {
-    return this.getSavedSession();
-  }
-
-  public requestRematch(jugadorId?: number) {
-    this.sendRematchRequest();
-  }
-
-  // ===================== CLIENT JOINING =====================
-  public async joinRoom(
-    code: string,
-    playerName: string,
-    color: string,
-    hat: HatType
-  ): Promise<void> {
-    this.cleanUp();
-    this.isIntentionalExit = false;
-    this.role = 'client';
-    this.roomCode = code.toUpperCase().trim();
-    this.myName = playerName.trim() || 'Invitado';
-    this.myColor = color;
-    this.myHat = hat;
-
-    const hostPeerId = formatRoomPeerId(this.roomCode);
-
-    return new Promise((resolve, reject) => {
-      let isSettled = false;
-      this.peer = new Peer({ debug: 1 });
-
-      const timeoutId = setTimeout(() => {
-        if (!isSettled) {
-          isSettled = true;
-          this.cleanUp();
-          reject(new Error('Sala no disponible'));
-        }
-      }, 6000);
-
-      this.peer.on('open', () => {
-        this.diagnosticData.status = 'negociando';
-        this.diagnosticData.role = 'client';
-        this.diagnosticData.miPeerId = this.peer?.id || '';
-        this.diagnosticData.rivalPeerId = hostPeerId;
-        this.addDiagnosticLog('info', `Peer cliente iniciado (${this.peer?.id}). Conectando a host: ${hostPeerId}...`);
-
-        this.connectToHost(
-          hostPeerId,
-          () => {
-            if (!isSettled) {
-              isSettled = true;
-              clearTimeout(timeoutId);
-              this.diagnosticData.status = 'conectado';
-              this.diagnosticData.iceState = 'connected';
-              this.diagnosticData.dataChannelState = 'open';
-              this.addDiagnosticLog('info', `Conexión WebRTC establecida con el anfitrión`);
-              this.startHeartbeat();
-              this.startDiagnosticPingLoop();
-              resolve();
-            }
-          },
-          (err) => {
-            if (!isSettled) {
-              isSettled = true;
-              clearTimeout(timeoutId);
-              this.diagnosticData.status = 'desconectado';
-              this.addDiagnosticLog('warn', `Fallo de conexión con anfitrión`);
-              reject(err);
-            }
-          }
-        );
-      });
-
-      this.peer.on('error', (err) => {
-        if (!isSettled) {
-          isSettled = true;
-          clearTimeout(timeoutId);
-          reject(err);
-        }
-      });
-    });
-  }
-
-  // Auto-Matchmaking: Fast join or become host
-  public async joinOrHostPublicRoom(
-    code: string,
-    playerName: string,
-    color: string,
-    hat: HatType,
-    maxPlayers: 2 | 4 = 2
-  ): Promise<'host' | 'client'> {
-    try {
-      await this.joinRoom(code, playerName, color, hat);
-      return 'client';
-    } catch {
-      await this.createRoom(code, playerName, color, hat, maxPlayers);
-      return 'host';
-    }
-  }
-
-  private connectToHost(
-    hostPeerId: string,
-    onSuccess?: () => void,
-    onError?: (e: unknown) => void
-  ) {
-    if (!this.peer) return;
-
-    this.hostConnection = this.peer.connect(hostPeerId, {
-      reliable: true,
-    });
-
-    const onOpen = () => {
-      this.stopReconnectGracePeriod();
-      this.hostLastSeen = Date.now();
-
-      this.hostConnection?.send({
-        type: 'JOIN_REQUEST',
-        nombre: this.myName,
-        color: this.myColor,
-        hat: this.myHat,
-      });
-
-      this.saveActiveSession();
-
-      if (this.callbacks.onHostReconnected) {
-        this.callbacks.onHostReconnected();
-      }
-
-      if (onSuccess) onSuccess();
-    };
-
-    if (this.hostConnection.open) {
-      onOpen();
-    } else {
-      this.hostConnection.on('open', onOpen);
-    }
-
-    this.hostConnection.on('data', (raw: unknown) => {
-      const msg = raw as OnlineMessage;
-      this.handleMessageFromHost(msg);
-    });
-
-    this.hostConnection.on('close', () => {
-      if (
-        this.isIntentionalExit ||
-        !this.role ||
-        !this.currentGameState ||
-        this.currentGameState.terminada
-      ) {
-        return;
-      }
-      this.startHostDisconnectGracePeriod(hostPeerId);
-    });
-
-    this.hostConnection.on('error', (err) => {
-      if (onError) onError(err);
-    });
-  }
-
-  private handleMessageFromHost(msg: OnlineMessage) {
-    this.hostLastSeen = Date.now();
-
-    if (msg.type === 'PING') {
-      try { this.hostConnection?.send({ type: 'PONG' }); } catch {}
-      return;
-    }
-    if (msg.type === 'PONG') {
-      return;
-    }
-
-    if (msg.type === 'DIAG_PING') {
-      try { this.hostConnection?.send({ type: 'DIAG_PONG', ts: msg.ts }); } catch {}
-      return;
-    }
-    if (msg.type === 'DIAG_PONG') {
-      const rtt = Math.max(1, Date.now() - msg.ts);
-      this.diagnosticData.pingMs = rtt;
-      this.diagnosticData.calidad =
-        rtt < 100 ? 'excelente' : rtt < 200 ? 'buena' : rtt < 350 ? 'inestable' : 'critica';
-      this.notifyDiagnostics();
-      return;
-    }
-
-    if (msg.type === 'LOBBY_UPDATE') {
-      this.roomCode = msg.roomCode;
-      this.maxPlayers = msg.maxJugadores;
-      this.lobbyPlayers = msg.jugadores;
-
-      const me = msg.jugadores.find((p) => p.peerId === this.peer?.id);
-      if (me) {
-        this.myPlayerId = me.id;
-        this.myColor = me.color;
-        this.myHat = me.hat;
-      }
-
-      this.saveActiveSession();
-
-      if (this.callbacks.onLobbyUpdate) {
-        this.callbacks.onLobbyUpdate(msg.jugadores, msg.maxJugadores);
-      }
-    } else if (msg.type === 'START_GAME') {
-      // Ensure myPlayerId and client role are correctly applied
-      const clientState: GameState = {
-        ...msg.initialState,
-        miJugadorId: this.myPlayerId,
-        esAnfitrion: false,
-        modoOnline: true,
-      };
-      this.currentGameState = clientState;
-      this.saveActiveSession();
-      if (this.callbacks.onGameStart) {
-        this.callbacks.onGameStart(clientState);
-      }
-    } else if (msg.type === 'STATE_SYNC') {
-      const clientState: GameState = {
-        ...msg.state,
-        miJugadorId: this.myPlayerId,
-        esAnfitrion: false,
-        modoOnline: true,
-      };
-      this.currentGameState = clientState;
-      this.saveActiveSession();
-      if (this.callbacks.onStateSync) {
-        this.callbacks.onStateSync(clientState);
-      }
-    } else if (msg.type === 'REACTION') {
-      if (this.callbacks.onReaction) {
-        this.callbacks.onReaction(msg.jugadorId, msg.emoji);
-      }
-    } else if (msg.type === 'HOST_RESUMED') {
-      this.stopReconnectGracePeriod();
-      const clientState: GameState = {
-        ...msg.state,
-        miJugadorId: this.myPlayerId,
-        esAnfitrion: false,
-        modoOnline: true,
-      };
-      this.currentGameState = clientState;
-      if (this.callbacks.onStateSync) {
-        this.callbacks.onStateSync(clientState);
-      }
-      if (this.callbacks.onHostReconnected) {
-        this.callbacks.onHostReconnected();
-      }
-    }
-  }
-
-  // ===================== GRACE PERIOD ON DISCONNECT (2 MINUTES / 120 SECONDS) =====================
-  private startHostDisconnectGracePeriod(hostPeerId: string) {
-    if (this.countdownInterval) return; // already active
-
-    let secondsLeft = 120; // 2 minutos para volver
-
-    if (this.callbacks.onHostDisconnected) {
-      this.callbacks.onHostDisconnected(secondsLeft);
-    }
-
-    if (this.countdownInterval) clearInterval(this.countdownInterval);
-    if (this.reconnectInterval) clearInterval(this.reconnectInterval);
-
-    this.countdownInterval = setInterval(() => {
-      secondsLeft -= 1;
-      if (this.callbacks.onHostDisconnected) {
-        this.callbacks.onHostDisconnected(secondsLeft);
-      }
-
-      if (secondsLeft <= 0) {
-        this.stopReconnectGracePeriod();
-        if (this.callbacks.onDisconnectTimeout) {
-          this.callbacks.onDisconnectTimeout();
-        }
-      }
-    }, 1000);
-
-    this.reconnectInterval = setInterval(() => {
-      if (this.peer && !this.peer.destroyed) {
-        try {
-          this.connectToHost(hostPeerId);
-        } catch {
-          // retry
-        }
-      }
-    }, 2500);
-  }
-
-  private startPeerDisconnectGracePeriod() {
-    if (this.countdownInterval) return; // already active
-
-    let secondsLeft = 120; // 2 minutos para volver
-
-    if (this.callbacks.onHostDisconnected) {
-      this.callbacks.onHostDisconnected(secondsLeft);
-    }
-
-    if (this.countdownInterval) clearInterval(this.countdownInterval);
-
-    this.countdownInterval = setInterval(() => {
-      secondsLeft -= 1;
-      if (this.callbacks.onHostDisconnected) {
-        this.callbacks.onHostDisconnected(secondsLeft);
-      }
-
-      if (secondsLeft <= 0) {
-        this.stopReconnectGracePeriod();
-        if (this.callbacks.onDisconnectTimeout) {
-          this.callbacks.onDisconnectTimeout();
-        }
-      }
-    }, 1000);
-  }
-
-  private stopReconnectGracePeriod() {
-    if (this.countdownInterval) {
-      clearInterval(this.countdownInterval);
-      this.countdownInterval = null;
-    }
-    if (this.reconnectInterval) {
-      clearInterval(this.reconnectInterval);
-      this.reconnectInterval = null;
-    }
-    if (this.callbacks.onHostDisconnected) {
-      this.callbacks.onHostDisconnected(null as unknown as number);
-    }
-  }
-
-  // ===================== ACTION DISPATCH =====================
   public sendAction(
     accion: 'mover' | 'muro' | 'pasar',
     payload: { destino?: Coord; orientacion?: WallOrientation; r?: number; c?: number }
   ) {
+    if (this.role !== 'client') return;
+    const expectedPrevTurns = this.currentGameState?.turnosTotales ?? 0;
     const msg: OnlineMessage = {
       type: 'PLAYER_ACTION',
       jugadorId: this.myPlayerId,
       accion,
       payload,
+      _actionId: `act_${Date.now()}_${randomShortId(4)}`,
     };
+    this.sendToHost(msg);
 
-    if (this.role === 'client') {
-      if (this.hostConnection && this.hostConnection.open) {
-        this.hostConnection.send(msg);
+    // Reintento automático por respaldo HTTP si el canal WebRTC quedó semiabierto y el anfitrión no confirmó el turno
+    this.clearPendingActionRetry();
+    this.pendingActionRetryTimer = setTimeout(() => {
+      this.pendingActionRetryTimer = null;
+      if (
+        this.isIntentionalExit ||
+        this.role !== 'client' ||
+        !this.currentGameState ||
+        this.currentGameState.terminada
+      ) {
+        return;
       }
-    } else if (this.role === 'host') {
-      if (this.callbacks.onClientAction) {
-        this.callbacks.onClientAction(this.myPlayerId, accion, payload);
+      if ((this.currentGameState.turnosTotales ?? 0) <= expectedPrevTurns) {
+        this.postFallbackMessage(msg);
+        this.postFallbackMessage({
+          type: 'REQUEST_SYNC',
+          jugadorId: this.myPlayerId,
+          turnosTotales: this.currentGameState.turnosTotales,
+        });
+        this.pollRoomOnce();
       }
-    }
+    }, 2200);
   }
 
   public sendReaction(emoji: string) {
@@ -897,54 +1462,119 @@ class OnlineManager {
       emoji,
     };
     if (this.role === 'client') {
-      this.hostConnection?.send(msg);
+      this.sendToHost(msg);
     } else if (this.role === 'host') {
       this.broadcast(msg);
     }
-    if (this.callbacks.onReaction) {
-      this.callbacks.onReaction(this.myPlayerId, emoji);
+    this.callbacks.onReaction?.(this.myPlayerId, emoji);
+  }
+
+  public canRequestRematch(): boolean {
+    if (!this.role || this.rivalLeftAfterMatch || this.roomClosedRemotely) return false;
+    if (this.areAllClientDataChannelsOpen()) return true;
+    return Boolean(this.roomCode);
+  }
+
+  public requestRematch(_jugadorId?: number): boolean {
+    if (!this.canRequestRematch()) return false;
+    const msg: OnlineMessage = {
+      type: 'REMATCH_REQUEST',
+      jugadorId: this.myPlayerId,
+      nombre: this.myName,
+    };
+    if (this.role === 'client') {
+      this.sendToHost(msg);
+      return true;
+    }
+    if (this.role === 'host') {
+      this.broadcast(msg);
+      return true;
+    }
+    return false;
+  }
+
+  public respondRematch(aceptada: boolean): boolean {
+    const msg: OnlineMessage = {
+      type: 'REMATCH_RESPONSE',
+      jugadorId: this.myPlayerId,
+      nombre: this.myName,
+      aceptada,
+    };
+    if (!aceptada) {
+      this.rivalLeftAfterMatch = true;
+    }
+    if (this.role === 'client') {
+      this.sendToHost(msg);
+      return true;
+    }
+    if (this.role === 'host') {
+      this.broadcast(msg);
+      return true;
+    }
+    return false;
+  }
+
+  private startDisconnectGracePeriod() {
+    if (this.countdownInterval) return;
+    let secondsLeft = 25;
+    this.callbacks.onHostDisconnectWarning?.(secondsLeft);
+
+    this.countdownInterval = setInterval(() => {
+      secondsLeft -= 1;
+      this.callbacks.onHostDisconnectWarning?.(secondsLeft);
+      if (secondsLeft <= 0) {
+        this.stopReconnectGracePeriod();
+        this.callbacks.onDisconnectTimeout?.();
+      }
+    }, 1000);
+  }
+
+  private stopReconnectGracePeriod() {
+    if (this.countdownInterval) {
+      clearInterval(this.countdownInterval);
+      this.countdownInterval = null;
     }
   }
 
-  public sendRematchRequest() {
-    if (this.role === 'client' && this.hostConnection && this.hostConnection.open) {
-      this.hostConnection.send({
-        type: 'REMATCH_REQUEST',
-        jugadorId: this.myPlayerId,
-      });
-    }
-  }
-
-  // ===================== SALAS PÚBLICAS DINÁMICAS =====================
   public async obtenerSalasPublicas(): Promise<any[]> {
     try {
-      const res = await fetch(getApiBaseUrl('/api/salas'));
-      if (res.ok) {
+      const base = getApiBaseUrl('/api/salas');
+      const sep = base.includes('?') ? '&' : '?';
+      const res = await fetch(`${base}${sep}_t=${Date.now()}`, {
+        method: 'GET',
+        headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
+        cache: 'no-store',
+      });
+      const ct = res.headers.get('content-type') || '';
+      if (res.ok && ct.includes('application/json')) {
         const list = await res.json();
         if (Array.isArray(list)) return list;
       }
-    } catch {
-      // fallback
-    }
+    } catch {}
     return [];
   }
 
   public async publicarSalaPublica(input?: string | any): Promise<boolean> {
     const info = typeof input === 'object' && input !== null ? input : {};
-    const code = info.codigo || this.roomCode;
+    const code = normalizeRoomCode(info.codigo || this.roomCode);
     if (!code) return false;
-    const nombre = typeof input === 'string' ? input : info.nombre || `Sala ${code}`;
+    const nombre = typeof input === 'string' ? input : info.nombre || `Sala de ${this.myName}`;
     try {
       const res = await fetch(getApiBaseUrl('/api/salas'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
         body: JSON.stringify({
           codigo: code,
           nombre: String(nombre).trim() || `Sala ${code}`,
           anfitrion: info.anfitrion || this.myName,
+          hostPeerId: this.myPeerId || `host_${code.toLowerCase()}`,
           color: info.color || this.myColor,
           hat: info.hat || this.myHat,
           maxJugadores: info.maxJugadores || this.maxPlayers,
+          publica: true,
+          jugadores: this.lobbyPlayers.length > 0 ? this.lobbyPlayers : undefined,
+          jugadoresConectados: Math.max(1, this.lobbyPlayers.length || 1),
           creadoEn: info.creadoEn || Date.now(),
         }),
       });
@@ -954,62 +1584,142 @@ class OnlineManager {
     }
   }
 
+  public async actualizarSalaPublica(jugadoresConectados?: number): Promise<void> {
+    if (this.role !== 'host' || !this.roomCode) return;
+    try {
+      await fetch(getApiBaseUrl(`/api/salas/${encodeURIComponent(this.roomCode)}`), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify({
+          jugadoresConectados:
+            typeof jugadoresConectados === 'number'
+              ? jugadoresConectados
+              : Math.max(1, this.lobbyPlayers.length || 1),
+        }),
+      });
+    } catch {}
+  }
+
   public async eliminarSalaPublica(): Promise<void> {
     if (!this.roomCode) return;
     try {
       await fetch(getApiBaseUrl(`/api/salas/${encodeURIComponent(this.roomCode)}`), {
         method: 'DELETE',
+        cache: 'no-store',
+        keepalive: true,
       });
     } catch {}
   }
 
+  public disconnect() {
+    this.cleanUp();
+  }
+
   public cleanUp() {
+    const prevRole = this.role;
+    const prevCode = this.roomCode;
+    const prevPeerId = this.myPeerId;
+    const prevPlayerId = this.myPlayerId;
+    const prevName = this.myName;
+
+    if (prevRole === 'host' && prevCode) {
+      const leftMsg: OnlineMessage = {
+        type: 'PLAYER_LEFT',
+        jugadorId: prevPlayerId,
+        nombre: prevName || 'El anfitrión',
+      };
+      for (const slot of this.hostPeers.values()) {
+        if (slot.dc && slot.dc.readyState === 'open') {
+          try {
+            slot.dc.send(JSON.stringify(leftMsg));
+          } catch {}
+        }
+      }
+      fetch(getApiBaseUrl(`/api/salas/${encodeURIComponent(prevCode)}`), {
+        method: 'DELETE',
+        cache: 'no-store',
+        keepalive: true,
+      }).catch(() => {});
+    } else if (prevRole === 'client' && prevCode) {
+      const leftMsg: OnlineMessage = {
+        type: 'PLAYER_LEFT',
+        jugadorId: prevPlayerId,
+        nombre: prevName || 'El otro jugador',
+      };
+      if (this.clientDc && this.clientDc.readyState === 'open') {
+        try {
+          this.clientDc.send(JSON.stringify(leftMsg));
+        } catch {}
+      }
+      fetch(getApiBaseUrl(`/api/salas/${encodeURIComponent(prevCode)}/leave`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        keepalive: true,
+        body: JSON.stringify({
+          peerId: prevPeerId,
+          jugadorId: prevPlayerId,
+          nombre: prevName || 'El otro jugador',
+        }),
+      }).catch(() => {});
+    }
+
     this.isIntentionalExit = true;
+    this.rivalLeftAfterMatch = false;
+    this.roomClosedRemotely = false;
+    this.hadWebRtcOpenInMatch = false;
+    this.lastRemoteActivityMarker = '';
+    this.lastPollAt = 0;
+    this.clearPendingActionRetry();
     this.stopHeartbeat();
+    this.stopRoomSyncLoop();
     this.stopReconnectGracePeriod();
     this.stopDiagnosticPingLoop();
+
+    for (const slot of this.hostPeers.values()) {
+      try {
+        slot.dc?.close();
+        slot.pc.close();
+      } catch {}
+    }
+    this.hostPeers.clear();
+    this.lastSeenMap.clear();
+
+    if (this.clientDc) {
+      try {
+        this.clientDc.close();
+      } catch {}
+      this.clientDc = null;
+    }
+    if (this.clientPc) {
+      try {
+        this.clientPc.close();
+      } catch {}
+      this.clientPc = null;
+    }
+
+    this.appliedAnswerSdp = '';
+    this.lastMsgSeq = 0;
+    this.lastHandledStartId = '';
+    this.handledActionIds.clear();
+    this.currentGameState = null;
+    this.role = null;
+    this.roomCode = '';
+    this.myPeerId = '';
+    this.lobbyPlayers = [];
+
     this.diagnosticData.status = 'desconectado';
     this.diagnosticData.calidad = 'desconectado';
     this.diagnosticData.pingMs = null;
     this.diagnosticData.role = 'none';
     this.diagnosticData.rivalPeerId = null;
+    this.diagnosticData.dataChannelState = 'closed';
     this.notifyDiagnostics();
-    this.currentGameState = null;
+
     try {
-      localStorage.removeItem('muros_active_session');
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
     } catch {}
-
-    for (const conn of this.connections.values()) {
-      try {
-        conn.close();
-      } catch {
-        // ignore
-      }
-    }
-    this.connections.clear();
-    this.lastSeenMap.clear();
-
-    if (this.hostConnection) {
-      try {
-        this.hostConnection.close();
-      } catch {
-        // ignore
-      }
-      this.hostConnection = null;
-    }
-
-    if (this.peer) {
-      try {
-        this.peer.destroy();
-      } catch {
-        // ignore
-      }
-      this.peer = null;
-    }
-
-    this.role = null;
-    this.roomCode = '';
-    this.lobbyPlayers = [];
   }
 }
 

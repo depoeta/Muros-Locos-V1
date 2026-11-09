@@ -1,0 +1,19 @@
+{
+  "admin": {
+    "id": "admin",
+    "nombre": "Admin Supremo",
+    "clave": "***SUPREMO***",
+    "rol": "admin",
+    "esSupremo": true,
+    "avatarColor": "#ffd43b",
+    "avatarHat": "corona",
+    "temaTablero": "madera",
+    "puntos": 0,
+    "partidas": 0,
+    "victorias": 0,
+    "elo": 0,
+    "creadoEn": "2026-11-03T01:57:14.178Z",
+    "ultimaConexion": "2026-11-09T01:12:57.481Z",
+    "historialPartidas": []
+  }
+}
