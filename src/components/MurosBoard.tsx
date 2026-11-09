@@ -142,21 +142,36 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
   const esTurnoHumano = jugadorActivo.tipo === 'humano' && esMiTurnoOnline;
   const movimientos = esTurnoHumano ? movimientosLegales(jugadorActivo, estado) : [];
 
-  // Vista fija estable: el tablero se mantiene siempre upright (sin giros ni rotaciones para evitar mareos)
-  const anguloRotacion = 0;
-  const etiquetaOrientacionVisual = estado.orientacionMuro === 'H' ? 'Horizontal' : 'Vertical';
+  const hayMultiplesHumanos = estado.jugadores.filter((p) => p.tipo === 'humano').length >= 2;
 
-  const yo =
-    estado.modoOnline && estado.miJugadorId !== undefined
-      ? estado.jugadores[estado.miJugadorId]
-      : estado.jugadores[0];
+  const obtenerAnguloJugador = (jugadorId: number, numJugadores: 2 | 4): number => {
+    if (numJugadores === 2) {
+      return jugadorId === 1 ? 180 : 0;
+    }
+    const angulos4P = [0, -90, 180, 90];
+    return angulos4P[((jugadorId % 4) + 4) % 4];
+  };
 
-  const rival =
-    estado.modoOnline && estado.miJugadorId !== undefined
-      ? estado.jugadores.find((p) => p.id !== estado.miJugadorId) || estado.jugadores[1]
-      : estado.n === 2
-      ? estado.jugadores[1]
-      : estado.jugadores[2];
+  // Cambio de perspectiva instantáneo (aparece de inmediato sin girar: transition 'none')
+  const anguloRotacion = React.useMemo(() => {
+    if (!hayMultiplesHumanos && !estado.modoOnline) {
+      return 0; // Contra bots siempre fija al lado del humano
+    }
+    if (estado.modoOnline) {
+      const miId = estado.miJugadorId ?? 0;
+      return obtenerAnguloJugador(miId, estado.n);
+    }
+    return obtenerAnguloJugador(ultimoHumanoIdx, estado.n);
+  }, [hayMultiplesHumanos, estado.modoOnline, estado.miJugadorId, estado.n, ultimoHumanoIdx]);
+
+  const esRotacionLateral = Math.abs(anguloRotacion % 180) === 90;
+  const etiquetaOrientacionVisual = esRotacionLateral
+    ? estado.orientacionMuro === 'H'
+      ? 'Vertical'
+      : 'Horizontal'
+    : estado.orientacionMuro === 'H'
+    ? 'Horizontal'
+    : 'Vertical';
 
   // La rotación visual la realiza íntegramente CSS transform: rotate(anguloRotacion) sobre el marco;
   // no invertir coordenadas aquí evita la doble inversión (180° + 180° = 0°) que anulaba la vista de J2.
@@ -389,34 +404,14 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
         )}
       </div>
 
-      {/* Indicador Visual: Lado Superior del Oponente / Meta J1 */}
-      <div className="w-full max-w-[min(480px,calc(100vh-250px))] flex items-center justify-between px-3 py-1.5 mb-1.5 bg-[#fff8e7]/95 rounded-2xl border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-xs select-none">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span
-            className="w-3.5 h-3.5 rounded-full border-2 border-[#2b2140] shrink-0"
-            style={{ backgroundColor: rival?.color || '#4dabf7' }}
-          />
-          <span className="font-black text-[#2b2140] truncate">
-            {estado.n === 2
-              ? `Lado Rival: ${rival?.nombre || 'Rival'}`
-              : `Lado Superior: ${rival?.nombre || 'J2'}`}
-          </span>
-          <span className="text-[10px] font-bold text-[#862e9c] bg-[#f3d9fa] px-1.5 py-0.5 rounded-md border border-[#d0bfff] shrink-0">
-            ⬇️ Inicio
-          </span>
-        </div>
-        <div className="flex items-center gap-1 font-black text-[11px] text-[#2b8a3e] bg-[#d3f9d8] px-2 py-0.5 rounded-lg border border-[#8ce99a] shrink-0 ml-2">
-          <span>🏁</span>
-          <span className="truncate">
-            Meta de {yo?.nombre || 'J1'}
-          </span>
-        </div>
-      </div>
-
-      {/* Outer Themed Board Frame (Posición fija y estable sin giros) */}
+      {/* Outer Themed Board Frame (Aparece directo en perspectiva sin girar) */}
       <div
         className={`relative w-full max-w-[min(480px,calc(100vh-250px))] aspect-square rounded-3xl p-2 sm:p-3 ${currentTheme.frameBg} border-4 border-[#2b2140] shadow-[0_8px_0_#2b2140,0_16px_22px_rgba(0,0,0,0.3)] select-none`}
-        style={currentTheme.frameStyle}
+        style={{
+          ...currentTheme.frameStyle,
+          transform: `rotate(${anguloRotacion}deg)`,
+          transition: 'none', // Cambio instantáneo: aparece de inmediato sin animación de giro
+        }}
       >
         <div className={`absolute top-2 left-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} border-2 border-[#2b2140]`} />
         <div className={`absolute top-2 right-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} border-2 border-[#2b2140]`} />
@@ -620,7 +615,13 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                     }
                     className="w-full h-full flex items-center justify-center relative"
                   >
-                    <div className="w-full h-full flex items-center justify-center relative">
+                    <div
+                      style={{
+                        transform: `rotate(${-anguloRotacion}deg)`,
+                        transition: 'none',
+                      }}
+                      className="w-full h-full flex items-center justify-center relative"
+                    >
                       {estado.reaccionActiva && estado.reaccionActiva.jugadorId === player.id && (
                         <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-white border-2 border-[#2b2140] rounded-full px-2 py-0.5 shadow-md text-base animate-bounce z-40 pointer-events-none whitespace-nowrap">
                           {estado.reaccionActiva.emoji}
@@ -724,40 +725,6 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
           </AnimatePresence>
         </div>
       </div>
-
-      {/* Indicador Visual: Lado Inferior / Inicio J1 & Meta Rival */}
-      <div className="w-full max-w-[min(480px,calc(100vh-250px))] flex items-center justify-between px-3 py-1.5 mt-1.5 bg-[#fff8e7]/95 rounded-2xl border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-xs select-none">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span
-            className="w-3.5 h-3.5 rounded-full border-2 border-[#2b2140] shrink-0"
-            style={{ backgroundColor: yo?.color || '#ff6b6b' }}
-          />
-          <span className="font-black text-[#2b2140] truncate">
-            {estado.n === 2 ? `Tu Lado: ${yo?.nombre || 'J1'}` : `Lado Inferior: ${yo?.nombre || 'J1'}`}
-          </span>
-          <span className="text-[10px] font-bold text-[#1971c2] bg-[#d0ebff] px-1.5 py-0.5 rounded-md border border-[#a5d8ff] shrink-0">
-            ⬆️ Inicio
-          </span>
-        </div>
-        <div className="flex items-center gap-1 font-black text-[11px] text-[#c92a2a] bg-[#ffe3e3] px-2 py-0.5 rounded-lg border border-[#ffa8a8] shrink-0 ml-2">
-          <span>🏁</span>
-          <span className="truncate">
-            Meta de {rival?.nombre || 'Rival'}
-          </span>
-        </div>
-      </div>
-
-      {/* Indicadores laterales para partidas de 4 jugadores */}
-      {estado.n === 4 && (
-        <div className="w-full max-w-[min(480px,calc(100vh-250px))] flex items-center justify-between px-2 text-[10px] font-black text-[#2b2140] mt-1 select-none">
-          <span className="bg-white/90 px-2 py-0.5 rounded-lg border border-[#2b2140]/30 shadow-xs">
-            ⬅️ {estado.jugadores[1]?.nombre || 'J2'} (Meta J4)
-          </span>
-          <span className="bg-white/90 px-2 py-0.5 rounded-lg border border-[#2b2140]/30 shadow-xs">
-            {estado.jugadores[3]?.nombre || 'J4'} (Meta J2) ➡️
-          </span>
-        </div>
-      )}
 
       {/* Touch / Quick Confirmation Bar when an intersection is selected */}
       {estado.modoAccion === 'muro' && esTurnoHumano && hoveredIntersection && (

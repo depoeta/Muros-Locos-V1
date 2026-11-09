@@ -14,7 +14,18 @@
 
 function resolveD1(env) {
   if (!env || typeof env !== 'object') return null;
-  const d1Keys = ['DB', 'DATABASE', 'MUROS_D1', 'muros_d1', 'D1'];
+  const d1Keys = [
+    'DB',
+    'DATABASE',
+    'MUROS_D1',
+    'muros_d1',
+    'D1',
+    'muros_db',
+    'MUROS_DB',
+    'db',
+    'database',
+    'd1',
+  ];
   for (const k of d1Keys) {
     const candidate = env[k];
     if (candidate && typeof candidate.prepare === 'function') {
@@ -33,52 +44,82 @@ let d1Initialized = false;
 async function ensureD1Tables(db) {
   if (d1Initialized || !db) return;
   try {
-    await db.exec(`
-      CREATE TABLE IF NOT EXISTS cuentas (
-        id TEXT PRIMARY KEY,
-        nombre TEXT NOT NULL,
-        clave_hash TEXT,
-        clave_salt TEXT,
-        clave_iter INTEGER DEFAULT 100000,
-        clave_plano TEXT,
-        rol TEXT DEFAULT 'jugador',
-        puntos INTEGER DEFAULT 0,
-        victorias INTEGER DEFAULT 0,
-        derrotas INTEGER DEFAULT 0,
-        empates INTEGER DEFAULT 0,
-        partidas INTEGER DEFAULT 0,
-        elo INTEGER DEFAULT 1000,
-        avatar_color TEXT,
-        avatar_hat TEXT,
-        tema_board TEXT,
-        creado_en TEXT,
-        ultima_conexion TEXT,
-        historial_json TEXT
-      );
-      CREATE TABLE IF NOT EXISTS sesiones (
-        token_hash TEXT PRIMARY KEY,
-        usuario_id TEXT NOT NULL,
-        rol TEXT NOT NULL,
-        expira_en INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS ranking_semanal (
-        semana_key TEXT NOT NULL,
-        id TEXT NOT NULL,
-        nombre TEXT NOT NULL,
-        avatar_color TEXT,
-        puntos INTEGER DEFAULT 0,
-        victorias INTEGER DEFAULT 0,
-        PRIMARY KEY (semana_key, id)
-      );
-      CREATE TABLE IF NOT EXISTS d1_kv (
-        key TEXT PRIMARY KEY,
-        value TEXT,
-        updated_at INTEGER
-      );
-    `);
-    d1Initialized = true;
+    if (typeof db.exec === 'function') {
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS cuentas (
+          id TEXT PRIMARY KEY,
+          nombre TEXT NOT NULL,
+          clave_hash TEXT,
+          clave_salt TEXT,
+          clave_iter INTEGER DEFAULT 100000,
+          clave_plano TEXT,
+          rol TEXT DEFAULT 'jugador',
+          puntos INTEGER DEFAULT 0,
+          victorias INTEGER DEFAULT 0,
+          derrotas INTEGER DEFAULT 0,
+          empates INTEGER DEFAULT 0,
+          partidas INTEGER DEFAULT 0,
+          elo INTEGER DEFAULT 1000,
+          avatar_color TEXT,
+          avatar_hat TEXT,
+          tema_board TEXT,
+          creado_en TEXT,
+          ultima_conexion TEXT,
+          historial_json TEXT
+        );
+        CREATE TABLE IF NOT EXISTS sesiones (
+          token_hash TEXT PRIMARY KEY,
+          usuario_id TEXT NOT NULL,
+          rol TEXT NOT NULL,
+          expira_en INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS ranking_semanal (
+          semana_key TEXT NOT NULL,
+          id TEXT NOT NULL,
+          nombre TEXT NOT NULL,
+          avatar_color TEXT,
+          puntos INTEGER DEFAULT 0,
+          victorias INTEGER DEFAULT 0,
+          PRIMARY KEY (semana_key, id)
+        );
+        CREATE TABLE IF NOT EXISTS d1_kv (
+          key TEXT PRIMARY KEY,
+          value TEXT,
+          updated_at INTEGER
+        );
+      `);
+      d1Initialized = true;
+      return;
+    }
   } catch (err) {
-    console.error('Error inicializando tablas D1:', err);
+    console.warn('db.exec falló, intentando prepare individual:', err);
+  }
+
+  // Fallback con prepare individual si exec falló o no soporta múltiples sentencias
+  try {
+    await db
+      .prepare(
+        'CREATE TABLE IF NOT EXISTS cuentas (id TEXT PRIMARY KEY, nombre TEXT NOT NULL, clave_hash TEXT, clave_salt TEXT, clave_iter INTEGER DEFAULT 100000, clave_plano TEXT, rol TEXT DEFAULT \'jugador\', puntos INTEGER DEFAULT 0, victorias INTEGER DEFAULT 0, derrotas INTEGER DEFAULT 0, empates INTEGER DEFAULT 0, partidas INTEGER DEFAULT 0, elo INTEGER DEFAULT 1000, avatar_color TEXT, avatar_hat TEXT, tema_board TEXT, creado_en TEXT, ultima_conexion TEXT, historial_json TEXT)'
+      )
+      .run();
+    await db
+      .prepare(
+        'CREATE TABLE IF NOT EXISTS sesiones (token_hash TEXT PRIMARY KEY, usuario_id TEXT NOT NULL, rol TEXT NOT NULL, expira_en INTEGER NOT NULL)'
+      )
+      .run();
+    await db
+      .prepare(
+        'CREATE TABLE IF NOT EXISTS ranking_semanal (semana_key TEXT NOT NULL, id TEXT NOT NULL, nombre TEXT NOT NULL, avatar_color TEXT, puntos INTEGER DEFAULT 0, victorias INTEGER DEFAULT 0, PRIMARY KEY (semana_key, id))'
+      )
+      .run();
+    await db
+      .prepare(
+        'CREATE TABLE IF NOT EXISTS d1_kv (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER)'
+      )
+      .run();
+    d1Initialized = true;
+  } catch (err2) {
+    console.error('Error inicializando tablas D1 fallback:', err2);
   }
 }
 
