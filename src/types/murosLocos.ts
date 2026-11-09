@@ -219,6 +219,7 @@ export interface ScoreBreakdown {
   resultado: number;
   murosUsados: number;
   finalCerrado: number;
+  bonoDominacion?: number;
   bonoTorneo: number;
   ahorrador: number;
   rapidez: number;

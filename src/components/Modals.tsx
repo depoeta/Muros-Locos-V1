@@ -331,8 +331,6 @@ export const AjustesModal: React.FC<AjustesModalProps> = ({ ajustes, onGuardar, 
 
   const opciones: { key: keyof AppSettings; label: string; desc: string; icon: string }[] = [
     { key: 'sonido', label: 'Efectos de Sonido', desc: 'Sonidos retro y efectos en cada jugada', icon: '🔊' },
-    { key: 'cambiarVistaPorTurno', label: 'Cambiar Vista en Turno Local', desc: 'Cambia al lado del jugador activo sin girar (2+ humanos)', icon: '🔄' },
-    { key: 'vistaPropiaOnline', label: 'Mi Lado Abajo en Online', desc: 'Muestra tu ficha abajo de forma fija sin girar', icon: '🧭' },
     { key: 'animacionesReducidas', label: 'Animaciones Reducidas', desc: 'Simplifica transiciones visuales del juego', icon: '⚡' },
     { key: 'mostrarDistancia', label: 'Mostrar Distancia a Meta', desc: 'Indica los pasos mínimos en la tarjeta', icon: '📏' },
     { key: 'permitirDeshacer', label: 'Permitir Deshacer', desc: 'Permite retroceder turnos (-2 pts)', icon: '↩️' },
@@ -742,10 +740,10 @@ export const RankingModal: React.FC<RankingModalProps> = ({
       setLocalRankingData(cargarRankingLocal());
       setSemanalData(sem);
       if (forzar) {
-        showToast(res.kvConectado ? '🔄 Sincronizado con Cloudflare KV' : '⚠️ Sin conexión al KV');
+        showToast(res.kvConectado ? '🔄 Sincronizado con la Base de Datos' : '⚠️ Sin conexión a la Base de Datos');
       }
     } catch {
-      showToast('⚠️ No se pudo sincronizar con el KV');
+      showToast('⚠️ No se pudo sincronizar con la Base de Datos');
     } finally {
       setSincronizando(false);
     }
@@ -778,7 +776,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
               <span className="text-[11px] font-bold text-[#2b8a3e]">
                 {tab === 'local'
                   ? '📍 Ranking Local en este Dispositivo'
-                  : '🌍 Clasificación en Cloudflare KV'}
+                  : '🌍 Clasificación en Base de Datos (Database)'}
               </span>
             </div>
           </div>
@@ -794,10 +792,10 @@ export const RankingModal: React.FC<RankingModalProps> = ({
           </button>
         </div>
 
-        {/* KV Disconnected Warning inside Ranking */}
+        {/* Database Disconnected Warning inside Ranking */}
         {diag.checkedOnce && !diag.kvConnected && tab !== 'local' && (
           <div className="p-2.5 bg-[#ffe3e3] rounded-2xl border-2 border-[#c92a2a] mb-2 text-[11px] font-bold text-[#c92a2a] flex items-center justify-between gap-2">
-            <span>⚠️ Sin conexión al KV: mostrando últimos datos guardados localmente.</span>
+            <span>⚠️ Sin conexión a la Base de Datos: mostrando últimos datos guardados localmente.</span>
             <button
               type="button"
               onClick={() => refrescarRanking(true)}
@@ -1009,7 +1007,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
             className="py-1.5 px-3.5 rounded-xl font-black bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#fff9db] active:translate-y-0.5 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
           >
             <span className={sincronizando ? 'animate-spin' : ''}>🔄</span>
-            <span>{sincronizando ? 'Sincronizando...' : 'Actualizar KV'}</span>
+            <span>{sincronizando ? 'Sincronizando...' : 'Actualizar Base de Datos'}</span>
           </button>
 
           <button
@@ -1359,6 +1357,12 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
               <span className="font-mono-num">+{jugadorDesglose.finalCerrado}</span>
             </div>
           )}
+          {Boolean(jugadorDesglose.bonoDominacion && jugadorDesglose.bonoDominacion > 0) && (
+            <div className="flex justify-between text-[#2b8a3e] font-bold">
+              <span>🎯 Dominación (rival retenido en inicio ≤2 casillas):</span>
+              <span className="font-mono-num">+{jugadorDesglose.bonoDominacion}</span>
+            </div>
+          )}
           {jugadorDesglose.bonoTorneo > 0 && (
             <div className="flex justify-between text-[#2b8a3e] font-bold">
               <span>👑 Campeón del Torneo:</span>
@@ -1621,7 +1625,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
         setErrorMsg(res.error || 'No se pudo crear la cuenta');
       }
     } catch {
-      setErrorMsg('Error al sincronizar con Cloudflare KV');
+      setErrorMsg('Error al sincronizar con la Base de Datos');
     } finally {
       setCargando(false);
     }
@@ -1645,10 +1649,10 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
           </button>
         </div>
 
-        {/* Estado KV en Perfil */}
+        {/* Estado Base de Datos en Perfil */}
         {diag.checkedOnce && !diag.kvConnected && (
           <div className="p-2.5 mb-2 bg-[#ffe3e3] rounded-xl border-2 border-[#c92a2a] text-[11px] font-bold text-[#c92a2a] flex items-center justify-between gap-2">
-            <span>⚠️ Sin conexión al KV: no se pueden enviar o recibir cambios.</span>
+            <span>⚠️ Sin conexión a la Base de Datos: no se pueden enviar o recibir cambios.</span>
             <button
               type="button"
               onClick={() => {
@@ -1933,7 +1937,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                                 onLogout();
                                 onCerrar();
                               } else {
-                                setToastMsg('⚠️ Sin conexión al KV para eliminar');
+                                setToastMsg('⚠️ Sin conexión a la Base de Datos para eliminar');
                               }
                             }}
                             className="flex-1 py-1.5 rounded-xl font-black text-xs bg-[#c92a2a] text-white border border-[#a61e1e] disabled:opacity-40 cursor-pointer"
@@ -2136,7 +2140,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                 {cargando && <span className="animate-spin">⏳</span>}
                 <span>
                   {cargando
-                    ? 'Verificando en Cloudflare KV...'
+                    ? 'Verificando en la Base de Datos (Database)...'
                     : tab === 'login'
                     ? 'Entrar a mi Cuenta'
                     : 'Registrar y Guardar'}
@@ -2151,7 +2155,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
 };
 
 // =========================================================================
-// 8. PANEL DE ADMINISTRACIÓN (Sin pedir clave por segunda vez + Verificación KV en cada acción)
+// 8. PANEL DE ADMINISTRACIÓN (Sin pedir clave por segunda vez + Verificación en Base de Datos en cada acción)
 // =========================================================================
 interface AdminPanelModalProps {
   onCerrar: () => void;
@@ -2287,7 +2291,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     [verificarRevocacionYActualizarLista]
   );
 
-  // Carga única al abrir el panel + ping ligero cada 8s (descarga cuentas solo si hubo cambios en KV)
+  // Carga única al abrir el panel + ping ligero cada 8s (descarga cuentas solo si hubo cambios en la Base de Datos)
   useEffect(() => {
     sincronizar(false);
 
@@ -2306,7 +2310,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     };
   }, [sincronizar, verificarRevocacionYActualizarLista]);
 
-  // Verifica siempre en el KV si el usuario sigue siendo Admin antes de ejecutar cualquier acción
+  // Verifica siempre en la Base de Datos si el usuario sigue siendo Admin antes de ejecutar cualquier acción
   const verificarPermisoAccion = async (requiereSupremo: boolean = false): Promise<boolean> => {
     const check = await verificarAccionAdminEnKV(usuarioActual || null, requiereSupremo);
     if (!check.ok) {

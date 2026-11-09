@@ -122,16 +122,16 @@ export const ActionBar: React.FC<ActionBarProps> = ({
   const permitirPistas = estado.config.permitirPistas && !estado.modoOnline;
 
   return (
-    <div className="w-full max-w-[620px] mx-auto px-2 mt-2">
-      {estado.modoOnline && onEnviarReaccion && (
-        <div className="flex items-center justify-center gap-1.5 mb-2 px-3 py-1.5 bg-slate-900/80 backdrop-blur-md rounded-2xl border border-white/10 shadow-sm">
+    <div className="w-full max-w-[540px] mx-auto px-2 mt-1">
+      {onEnviarReaccion && (
+        <div className="flex items-center justify-center gap-1 sm:gap-1.5 mb-1.5 px-2.5 py-1 bg-slate-900/85 backdrop-blur-md rounded-2xl border border-white/10 shadow-sm">
           <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mr-1">Reaccionar:</span>
           {['👋', '🧱', '😱', '😂', '👏', '🧠', '👑', '🔥'].map((em) => (
             <button
               key={em}
               type="button"
               onClick={() => onEnviarReaccion(em)}
-              className="text-base hover:scale-125 active:scale-95 transition-transform cursor-pointer px-1 text-slate-200"
+              className="text-base sm:text-lg hover:scale-130 active:scale-95 transition-transform cursor-pointer px-0.5 sm:px-1 text-slate-200"
             >
               {em}
             </button>

@@ -1118,18 +1118,33 @@ export function calcularDesglosePuntos(
   const murosUsados = stats.murosColocados * 1;
 
   let rivalACasillaDeGanar = false;
+  let rivalCercaDeInicio = false;
   if (esGanador) {
     for (const otro of estado.jugadores) {
       if (otro.id !== jugador.id) {
         const { distancia } = bfsCamino(otro, estado.murosH, estado.murosV, undefined, estado.n);
         if (distancia <= 1) {
           rivalACasillaDeGanar = true;
-          break;
+        }
+
+        // Puesto inicial de cada jugador según el número de participantes
+        const startPos =
+          (estado.n === 2
+            ? { 0: { r: 8, c: 4 }, 1: { r: 0, c: 4 } }[otro.id]
+            : { 0: { r: 8, c: 4 }, 1: { r: 4, c: 0 }, 2: { r: 0, c: 4 }, 3: { r: 4, c: 8 } }[otro.id]) || {
+            r: 0,
+            c: 4,
+          };
+        const distManhattan = Math.abs(otro.r - startPos.r) + Math.abs(otro.c - startPos.c);
+        // Si el oponente está a 2 casillas o menos de su puesto inicial al ganar: +2 pts extra
+        if (distManhattan <= 2) {
+          rivalCercaDeInicio = true;
         }
       }
     }
   }
   const finalCerrado = esGanador && rivalACasillaDeGanar ? 5 : 0;
+  const bonoDominacion = esGanador && rivalCercaDeInicio ? 2 : 0;
 
   const pPistas = stats.usosPista * 1;
   const pDeshacer = stats.usosDeshacer * 2;
@@ -1139,13 +1154,14 @@ export function calcularDesglosePuntos(
 
   const totalPenalizaciones = pPistas + pDeshacer + pMurosInvalidos + pTiempoAgotado + pAbandonar;
 
-  const subtotal = resultado + murosUsados + finalCerrado + bonoTorneo - totalPenalizaciones;
+  const subtotal = resultado + murosUsados + finalCerrado + bonoDominacion + bonoTorneo - totalPenalizaciones;
   const total = Math.max(0, subtotal);
 
   return {
     resultado,
     murosUsados,
     finalCerrado,
+    bonoDominacion,
     bonoTorneo,
     ahorrador: 0,
     rapidez: 0,

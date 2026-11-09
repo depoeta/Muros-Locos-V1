@@ -665,8 +665,8 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
       esTorneo,
       totalRondasTorneo,
       temaTablero,
-      // Cuando se juega contra bot (menos de 2 humanos), NUNCA se gira el tablero
-      rotationMode: puedeGirarTablero ? rotationMode : false,
+      // Giro completamente desactivado (vista fija sin rotaciones)
+      rotationMode: false,
     });
   };
 
@@ -1017,42 +1017,17 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
             </div>
           </div>
 
-          {/* Cambiar vista por turno (sin giro): solo habilitado cuando hay 2 o más jugadores humanos */}
-          <div
-            onClick={() => {
-              if (!puedeGirarTablero) return;
-              setRotationMode(!rotationMode);
-              sounds.playClick();
-            }}
-            className={`p-2 rounded-xl border-2 border-[#2b2140] flex items-center justify-between select-none col-span-2 transition-opacity ${
-              puedeGirarTablero
-                ? 'bg-white cursor-pointer'
-                : 'bg-[#f1f3f5] opacity-65 cursor-not-allowed'
-            }`}
-          >
+          {/* Vista Fija Estable: sin giros ni rotaciones para evitar mareos */}
+          <div className="p-2 rounded-xl border-2 border-[#2b2140] flex items-center justify-between select-none col-span-2 bg-[#e7f5ff]">
             <div className="flex flex-col text-left">
-              <span className="text-xs font-bold text-[#2b2140]">
-                🔄 Cambiar vista en cada turno humano (sin girar)
+              <span className="text-xs font-bold text-[#1864ab] flex items-center gap-1">
+                <span>🧭</span> Vista Fija Estable (Sin Giros)
               </span>
-              <span className="text-[10px] text-[#86542d]">
-                {puedeGirarTablero
-                  ? rotationMode
-                    ? 'Activado: cambia de lado al instante sin mareos'
-                    : 'Desactivado: el tablero mantiene siempre la vista fija'
-                  : 'Desactivado automáticamente al jugar contra Bots'}
+              <span className="text-[10px] text-[#1c7ed6]">
+                El tablero se mantiene siempre fijo sin rotaciones para evitar mareos, con indicadores claros del lado e inicio del oponente.
               </span>
             </div>
-            <div
-              className={`w-9 h-5 rounded-full p-0.5 border border-[#2b2140] transition-colors ${
-                puedeGirarTablero && rotationMode ? 'bg-[#51cf66]' : 'bg-[#ced4da]'
-              }`}
-            >
-              <div
-                className={`w-3.5 h-3.5 rounded-full bg-white border border-[#2b2140] transition-transform ${
-                  puedeGirarTablero && rotationMode ? 'translate-x-4' : ''
-                }`}
-              />
-            </div>
+            <span className="text-base shrink-0">✨</span>
           </div>
         </div>
 

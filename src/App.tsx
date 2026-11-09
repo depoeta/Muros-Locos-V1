@@ -100,7 +100,7 @@ export const App: React.FC = () => {
   const [ajustes, setAjustes] = useState<AppSettings>(() => cargarAjustes());
   const [modalAspectoAbierto, setModalAspectoAbierto] = useState(false);
 
-  // Diagnóstico en tiempo real de conexión a Cloudflare KV (aviso permanente en todo momento)
+  // Diagnóstico en tiempo real de conexión a la Base de Datos (Database / D1) (aviso permanente en todo momento)
   const [diagRed, setDiagRed] = useState<NetworkDiagnostic>(() => obtenerDiagnosticoRed());
   const [reconectandoKv, setReconectandoKv] = useState(false);
   const prevKvRef = useRef<boolean>(true);
@@ -186,7 +186,7 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  // Suscripción permanente al estado de Cloudflare KV + resincronización automática al volver internet
+  // Suscripción permanente al estado de la Base de Datos + resincronización automática al volver internet
   useEffect(() => {
     const onBrowserOnline = () => {
       pingServidor()
@@ -237,7 +237,7 @@ export const App: React.FC = () => {
   const modalActivoRef = useRef<ModalType>(modalActivo);
   modalActivoRef.current = modalActivo;
 
-  // Sincronización inicial y escucha ligera cada 90s (pausada en segundo plano) contra Cloudflare KV
+  // Sincronización inicial y escucha ligera cada 90s (pausada en segundo plano) contra la Base de Datos
   useEffect(() => {
     sincronizarConNube(false).catch(() => {});
     const stopListener = iniciarEscuchaNube(90000);
@@ -483,7 +483,7 @@ export const App: React.FC = () => {
       if (nuevoEstado.terminada) {
         finalizarPartida(nuevoEstado);
       }
-    }, 950);
+    }, 3000);
 
     return () => {
       clearTimeout(timeout);
@@ -814,9 +814,19 @@ export const App: React.FC = () => {
   };
 
   const handleEnviarReaccion = (emoji: string) => {
-    if (!estado || !estado.modoOnline) return;
+    if (!estado) return;
     sounds.playClick();
-    onlineService.sendReaction(emoji);
+    const curPlayerId = estado.modoOnline ? (estado.miJugadorId ?? 0) : estado.turnoActual;
+    setEstado((prev) =>
+      prev ? { ...prev, reaccionActiva: { jugadorId: curPlayerId, emoji, ts: Date.now() } } : null
+    );
+    setTimeout(() => {
+      setEstado((prev) => (prev ? { ...prev, reaccionActiva: null } : null));
+    }, 2800);
+
+    if (estado.modoOnline) {
+      onlineService.sendReaction(emoji);
+    }
   };
 
   const handleIniciarPartida = (config: MatchConfig) => {
@@ -1277,6 +1287,7 @@ export const App: React.FC = () => {
               onMover={handleMoverJugador}
               onPonerMuro={(_orientacion, r, c) => handleColocarMuro({ r, c })}
               onRotarMuro={handleRotarMuro}
+              onCambiarModo={handleCambiarModo}
               onInvalidWallAttempt={(motivo) => {
                 sounds.playError();
                 showToast(`⚠️ ${motivo}`);
@@ -1284,14 +1295,9 @@ export const App: React.FC = () => {
               bloqueadoPorAnimacion={false}
               modoDaltonico={ajustes.modoDaltonico}
               animacionesReducidas={ajustes.animacionesReducidas}
-              perspectivaInvertida={perspectivaInvertida}
-              rotationMode={Boolean(
-                !estado.modoOnline &&
-                  hayMultiplesHumanos &&
-                  (ajustes.cambiarVistaPorTurno ?? estado.config.rotationMode ?? false)
-              )}
-              vistaPropiaOnline={ajustes.vistaPropiaOnline !== false}
-              onTogglePerspectiva={() => setPerspectivaInvertida((p) => !p)}
+              perspectivaInvertida={false}
+              rotationMode={false}
+              vistaPropiaOnline={true}
               temaTablero={temaTableroActivo}
             />
           </div>
