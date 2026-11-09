@@ -18,8 +18,8 @@ interface PlayerCardsProps {
 
 export const PlayerCards: React.FC<PlayerCardsProps> = ({ estado, mostrarDistancia }) => {
   return (
-    <div className="w-full max-w-[620px] mx-auto px-2 mb-2">
-      <div className={`grid gap-2 ${estado.n === 2 ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-4'}`}>
+    <div className="w-full max-w-[620px] mx-auto px-1.5 mb-1 sm:mb-1.5 shrink-0">
+      <div className={`grid gap-1.5 sm:gap-2 ${estado.n === 2 ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-4'}`}>
         {estado.jugadores.map((jugador, idx) => {
           const isActive = estado.turnoActual === idx && !estado.terminada;
           const { distancia } = bfsCamino(jugador, estado.murosH, estado.murosV, undefined, estado.n);
@@ -28,15 +28,15 @@ export const PlayerCards: React.FC<PlayerCardsProps> = ({ estado, mostrarDistanc
           return (
             <div
               key={jugador.id}
-              className={`relative rounded-2xl p-2.5 flex items-center gap-2.5 transition-all duration-300 backdrop-blur-md ${
+              className={`relative rounded-xl sm:rounded-2xl p-1.5 sm:p-2 flex items-center gap-2 transition-all duration-200 backdrop-blur-md ${
                 isActive
-                  ? 'bg-slate-800/95 border border-emerald-400/40 shadow-lg shadow-emerald-500/10 -translate-y-0.5 scale-[1.02] z-10'
+                  ? 'bg-slate-800/95 border border-emerald-400/40 shadow-md shadow-emerald-500/10 scale-[1.01] z-10'
                   : 'bg-slate-900/80 border border-white/10 hover:border-white/20'
               }`}
             >
               {isActive && (
                 <div
-                  className="absolute -top-2 right-2 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider text-emerald-200 bg-emerald-500/20 border border-emerald-400/30 shadow-sm"
+                  className="absolute -top-2 right-2 px-1.5 py-0.2 rounded-full text-[9px] font-semibold uppercase tracking-wider text-emerald-200 bg-emerald-500/20 border border-emerald-400/30 shadow-xs"
                 >
                   {jugador.tipo === 'humano' ? 'Tu Turno' : 'Bot'}
                 </div>
@@ -49,14 +49,14 @@ export const PlayerCards: React.FC<PlayerCardsProps> = ({ estado, mostrarDistanc
               )}
 
               {isWinner && (
-                <div className="absolute -top-2.5 left-2 text-xl filter drop-shadow">👑</div>
+                <div className="absolute -top-2.5 left-2 text-lg filter drop-shadow">👑</div>
               )}
 
               <div className="flex-shrink-0">
                 <CartoonCharacter
                   color={jugador.color}
                   hat={jugador.hat}
-                  size={38}
+                  size={32}
                   showShadow={false}
                 />
               </div>

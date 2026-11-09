@@ -174,6 +174,17 @@ export function getApiBaseUrl(endpoint: string): string {
 let inFlightPingPromise: Promise<NetworkDiagnostic> | null = null;
 
 export async function pingServidor(): Promise<NetworkDiagnostic> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    cloudKvConnected = false;
+    reportarDiagnostico({
+      checkedOnce: true,
+      isOnline: false,
+      kvConnected: false,
+      lastError: 'Sin conexión a internet (modo sin conexión)',
+    });
+    return obtenerDiagnosticoRed();
+  }
+
   if (inFlightPingPromise) return inFlightPingPromise;
 
   inFlightPingPromise = (async () => {
@@ -244,8 +255,14 @@ export function iniciarHeartbeatGlobal() {
   if (typeof window === 'undefined' || networkEventsBound) return;
   networkEventsBound = true;
 
-  window.addEventListener('online', () => {
-    pingServidor();
+  window.addEventListener('online', async () => {
+    // Reconexión automática al detectar internet / wifi: sincroniza por sí solo sin pedir acción al usuario
+    try {
+      const diag = await pingServidor();
+      if (diag.kvConnected) {
+        await sincronizarConNube(true);
+      }
+    } catch {}
   });
 
   window.addEventListener('offline', () => {
@@ -254,7 +271,7 @@ export function iniciarHeartbeatGlobal() {
       checkedOnce: true,
       isOnline: false,
       kvConnected: false,
-      lastError: 'Sin conexión a internet',
+      lastError: 'Sin conexión a internet (modo sin conexión)',
     });
   });
 }
@@ -311,6 +328,9 @@ async function enviarJsonAKv(
   options?: KvWriteOptions
 ): Promise<boolean> {
   try {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return false;
+    }
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const cur = obtenerUsuarioActual();
     const sup = obtenerTokenAdminSupremo();
@@ -539,7 +559,10 @@ export function iniciarEscuchaNube(intervaloMs: number = 90000): () => void {
   let initialSynced = false;
 
   const verificar = async () => {
-    // Pausar peticiones cuando la pestaña está en segundo plano para ahorrar datos y lecturas KV
+    // Pausar peticiones si no hay conexión a internet o la pestaña está en segundo plano
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return;
+    }
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
       return;
     }

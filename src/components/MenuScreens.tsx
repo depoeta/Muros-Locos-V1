@@ -300,11 +300,9 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
               ) : (
                 <span
                   key={i}
-                  className="text-4xl sm:text-6xl md:text-7xl font-black tracking-tight inline-block animate-bounce drop-shadow-[0_6px_0_#2b2140]"
+                  className="text-4xl sm:text-6xl md:text-7xl font-black tracking-tight inline-block drop-shadow-[0_6px_0_#2b2140]"
                   style={{
                     color: l.color,
-                    animationDelay: `${i * 0.1}s`,
-                    animationDuration: '1.4s',
                     WebkitTextStroke: '2.5px #2b2140',
                   }}
                 >
@@ -319,7 +317,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
         </div>
       )}
 
-      {/* Mascots Display */}
+      {/* Mascots Display (Personajes estáticos sin movimiento) */}
       {esMinimalista ? (
         <div className="flex items-center justify-center gap-3 sm:gap-5 my-3 p-3 bg-slate-900/40 border border-white/10 rounded-2xl backdrop-blur-md shadow-inner">
           <div className="flex items-center gap-3 sm:gap-4">
@@ -339,16 +337,16 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
         </div>
       ) : (
         <div className="flex items-center justify-center gap-4 sm:gap-8 my-4">
-          <div className="animate-[bounce_2.2s_ease-in-out_infinite] [animation-delay:0s]">
+          <div>
             <CartoonCharacter color="#ff6b6b" hat="corona" size={64} />
           </div>
-          <div className="animate-[bounce_2.6s_ease-in-out_infinite] [animation-delay:0.3s]">
+          <div>
             <CartoonCharacter color="#4dabf7" hat="pompon" size={64} />
           </div>
-          <div className="animate-[bounce_2.4s_ease-in-out_infinite] [animation-delay:0.6s]">
+          <div>
             <CartoonCharacter color="#ffd43b" hat="antena" size={64} />
           </div>
-          <div className="animate-[bounce_2.8s_ease-in-out_infinite] [animation-delay:0.9s]">
+          <div>
             <CartoonCharacter color="#51cf66" hat="brote" size={64} />
           </div>
         </div>

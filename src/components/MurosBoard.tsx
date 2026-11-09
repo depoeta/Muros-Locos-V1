@@ -377,10 +377,10 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
   };
 
   return (
-    <div className="flex flex-col items-center justify-center w-full max-w-[540px] mx-auto px-1 sm:px-2">
-      {/* Top Bar with Online / Bot Turn Indicator and Perspective Flip Toggle */}
-      <div className="w-full flex items-center justify-between gap-2 mb-1.5">
-        {estado.modoOnline && !estado.terminada ? (
+    <div className="flex flex-col items-center justify-center w-full max-w-[500px] mx-auto px-1 sm:px-2">
+      {/* Indicador de turno únicamente en modo Online (los bots juegan directo sin saltos de pantalla) */}
+      {estado.modoOnline && !estado.terminada && (
+        <div className="w-full flex items-center justify-between gap-2 mb-1 shrink-0">
           <div
             className={`flex-1 py-1 px-3 rounded-2xl border-2 border-[#2b2140] font-black text-xs text-center shadow-[0_2px_0_#2b2140] flex items-center justify-center gap-2 transition-all ${
               esMiTurnoOnline
@@ -394,19 +394,12 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                 : `⏳ Turno de ${jugadorActivo.nombre}...`}
             </span>
           </div>
-        ) : jugadorActivo.tipo !== 'humano' && !estado.terminada ? (
-          <div className="flex-1 py-1 px-3 rounded-2xl border-2 border-[#2b2140] bg-[#fff3bf] text-[#8f4b00] font-black text-xs text-center shadow-[0_2px_0_#2b2140] flex items-center justify-center gap-1.5">
-            <span className="animate-spin">⚙️</span>
-            <span>🤖 {jugadorActivo.nombre} está pensando su jugada...</span>
-          </div>
-        ) : (
-          <div className="flex-1" />
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Outer Themed Board Frame (Aparece directo en perspectiva sin girar) */}
+      {/* Outer Themed Board Frame (Sin animación de giro, tamaño ajustado a viewport) */}
       <div
-        className={`relative w-full max-w-[min(480px,calc(100vh-250px))] aspect-square rounded-3xl p-2 sm:p-3 ${currentTheme.frameBg} border-4 border-[#2b2140] shadow-[0_8px_0_#2b2140,0_16px_22px_rgba(0,0,0,0.3)] select-none`}
+        className={`relative w-full max-w-[min(450px,calc(100vh-270px))] max-h-[min(450px,calc(100vh-270px))] aspect-square rounded-3xl p-2 sm:p-2.5 ${currentTheme.frameBg} border-4 border-[#2b2140] shadow-[0_6px_0_#2b2140,0_14px_20px_rgba(0,0,0,0.25)] select-none shrink-0`}
         style={{
           ...currentTheme.frameStyle,
           transform: `rotate(${anguloRotacion}deg)`,

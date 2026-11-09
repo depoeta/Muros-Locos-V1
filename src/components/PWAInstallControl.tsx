@@ -257,13 +257,28 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
   );
 };
 
-export const OfflineIndicator: React.FC = () => {
+interface OfflineIndicatorProps {
+  compact?: boolean;
+}
+
+export const OfflineIndicator: React.FC<OfflineIndicatorProps> = ({ compact = false }) => {
   const isOnline = useOnlineStatus();
 
   if (isOnline) return null;
 
+  if (compact) {
+    return (
+      <div
+        className="fixed bottom-3 left-3 z-[65] flex items-center justify-center p-1.5 rounded-full bg-[#2b2140]/90 border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] transition-all"
+        title="Sin conexión a internet (Modo Offline)"
+      >
+        <span className="h-2.5 w-2.5 rounded-full bg-[#fa5252] border border-white animate-pulse shrink-0" />
+      </div>
+    );
+  }
+
   return (
-    <div className="fixed bottom-3 left-3 z-[65] flex items-center gap-2 rounded-2xl bg-[#ffd43b] text-[#2b2140] border-2 border-[#2b2140] px-3 py-1.5 text-[11px] font-black shadow-[0_4px_0_#2b2140]">
+    <div className="fixed bottom-3 left-3 z-[65] flex items-center gap-2 rounded-2xl bg-[#ffd43b] text-[#2b2140] border-2 border-[#2b2140] px-3 py-1.5 text-[11px] font-black shadow-[0_4px_0_#2b2140] transition-all">
       <span className="h-2.5 w-2.5 rounded-full bg-[#e67700] border border-[#2b2140] animate-pulse shrink-0" />
       <span>📴 Modo Sin Internet · Local, Bots y Torneo disponibles</span>
     </div>

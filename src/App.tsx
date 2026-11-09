@@ -1107,23 +1107,51 @@ export const App: React.FC = () => {
     ? estado.jugadores.filter((p) => p.tipo === 'humano').length >= 2
     : false;
   const kvDesconectado = diagRed.checkedOnce && (!diagRed.isOnline || !diagRed.kvConnected);
+  const [mostrarBannerDesconexion, setMostrarBannerDesconexion] = useState<boolean>(false);
+  const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (kvDesconectado) {
+      setMostrarBannerDesconexion(true);
+      if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+      bannerTimerRef.current = setTimeout(() => {
+        setMostrarBannerDesconexion(false);
+      }, 10000); // Desaparece automáticamente en 10 segundos
+    } else {
+      setMostrarBannerDesconexion(false);
+      if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+    }
+    return () => {
+      if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+    };
+  }, [kvDesconectado]);
 
   return (
     <div className="relative w-full h-full min-h-screen bg-[#74c0fc] text-[#2b2140] flex flex-col items-center justify-between overflow-x-hidden overflow-y-auto selection:bg-[#ffd43b] selection:text-[#2b2140]">
-      {/* AVISO PERMANENTE EN TODO MOMENTO CUANDO NO ESTÁ CONECTADO A LA BASE DE DATOS */}
-      {kvDesconectado && (
-        <div className="sticky top-0 left-0 right-0 z-[60] w-full bg-[#c92a2a] text-white border-b-3 border-[#2b2140] px-3 py-1.5 shadow-md flex items-center justify-center gap-3 text-xs">
-          <span className="font-black text-center leading-tight">
+      {/* Aviso que desaparece en 10 segundos al detectar desconexión */}
+      {kvDesconectado && mostrarBannerDesconexion && (
+        <div className="sticky top-0 left-0 right-0 z-[60] w-full bg-[#c92a2a] text-white border-b-3 border-[#2b2140] px-3 py-1.5 shadow-md flex items-center justify-between gap-2 text-xs animate-[slideDown_0.2s_ease-out]">
+          <span className="font-black text-center flex-1 leading-tight text-[11px] sm:text-xs">
             ⚠️ Sin conexión a la Base de Datos (Database / D1) — No se pueden enviar ni recibir cambios globales en este momento.
           </span>
-          <button
-            type="button"
-            disabled={reconectandoKv}
-            onClick={handleReintentarKv}
-            className="py-1 px-2.5 rounded-xl bg-[#ffd43b] text-[#2b2140] border-2 border-[#2b2140] font-black text-[11px] hover:bg-[#fcc419] cursor-pointer shrink-0"
-          >
-            {reconectandoKv ? '⏳ Conectando...' : '🔄 Conectar Database'}
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              disabled={reconectandoKv}
+              onClick={handleReintentarKv}
+              className="py-1 px-2.5 rounded-xl bg-[#ffd43b] text-[#2b2140] border-2 border-[#2b2140] font-black text-[11px] hover:bg-[#fcc419] cursor-pointer"
+            >
+              {reconectandoKv ? '⏳ Conectando...' : '🔄 Conectar'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setMostrarBannerDesconexion(false)}
+              className="w-6 h-6 rounded-lg bg-black/20 hover:bg-black/35 text-white flex items-center justify-center font-bold text-xs cursor-pointer"
+              title="Cerrar aviso"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 
@@ -1230,9 +1258,9 @@ export const App: React.FC = () => {
       )}
 
       {screen === 'juego' && estado && (
-        <div className="relative w-full max-w-4xl mx-auto flex-1 flex flex-col justify-between p-2 sm:p-3 z-10">
+        <div className="relative w-full max-w-4xl mx-auto flex-1 flex flex-col justify-between p-1.5 sm:p-2.5 z-10 min-h-0">
           {/* Barra superior de la partida con el ÚNICO botón de Aspecto (el que le aparece a todos) */}
-          <div className="w-full max-w-[620px] mx-auto flex items-center justify-between px-2 py-1 mb-1 bg-white/75 backdrop-blur-xs rounded-2xl border-2 border-[#2b2140] shadow-sm">
+          <div className="w-full max-w-[620px] mx-auto flex items-center justify-between px-2 py-1 mb-1 bg-white/75 backdrop-blur-xs rounded-2xl border-2 border-[#2b2140] shadow-sm shrink-0">
             <button
               onClick={handleVolverAlMenu}
               className="py-1 px-2.5 rounded-xl bg-white border border-[#2b2140] text-xs font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] cursor-pointer transition-colors"
@@ -1288,7 +1316,7 @@ export const App: React.FC = () => {
           <PlayerCards estado={estado} mostrarDistancia={ajustes.mostrarDistancia} />
 
           {/* Tablero Central */}
-          <div className="flex-1 flex items-center justify-center py-1">
+          <div className="flex-1 min-h-0 flex items-center justify-center py-0.5 sm:py-1 shrink-0">
             <MurosBoard
               estado={estado}
               onMover={handleMoverJugador}
@@ -1560,7 +1588,7 @@ export const App: React.FC = () => {
         />
       )}
 
-      <OfflineIndicator />
+      <OfflineIndicator compact={screen !== 'menu' || Boolean(modalActivo)} />
     </div>
   );
 };
