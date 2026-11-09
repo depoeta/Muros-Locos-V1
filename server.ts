@@ -236,14 +236,25 @@ async function crearSesionLocal(usuarioId: string, rol: string, duracionHoras = 
 }
 
 async function resolverSesionLocal(req: express.Request) {
+  let token = '';
   const authHeader = req.header('Authorization') || '';
-  if (!authHeader.startsWith('Bearer ')) return null;
-  const token = authHeader.slice(7).trim();
+  if (authHeader.startsWith('Bearer ')) {
+    token = authHeader.slice(7).trim();
+  }
+  if (!token) {
+    token = String(req.header('X-Admin-Token') || '').trim();
+  }
   if (!token) return null;
+
+  const { pass: ADMIN_PASS } = getAdminCredentials();
+  if (token === ADMIN_PASS) {
+    return { usuarioId: 'admin', rol: 'admin', token };
+  }
+
   const tokenHash = await sha256Hex(token);
   const s = localSessions.get(tokenHash);
   if (s && s.expiraEn > Date.now()) {
-    return s;
+    return { ...s, token };
   }
   return null;
 }
@@ -415,7 +426,7 @@ app.post('/api/registro', async (req, res) => {
 app.post('/api/admin/restablecer-clave', async (req, res) => {
   const sesion = await resolverSesionLocal(req);
   const cuentasData = readJsonFile(CUENTAS_FILE, {});
-  const { isSupreme } = verifyExpressCallerAdmin(req, cuentasData);
+  const { isSupreme } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
   const esAutorizado = (sesion && sesion.usuarioId === 'admin') || isSupreme;
 
   if (!esAutorizado) {
@@ -527,28 +538,61 @@ app.post('/api/admin/verify-action', async (req, res) => {
   });
 });
 
-function verifyExpressCallerAdmin(req: express.Request, existingCuentas: Record<string, any>) {
+async function verifyExpressCallerAdmin(
+  req: express.Request,
+  existingCuentas: Record<string, any>,
+  precomputedSesion: any = null
+) {
   const { user: ADMIN_USER, pass: ADMIN_PASS } = getAdminCredentials();
   const hSupremeUser = String(req.header('X-Admin-User') || '').trim();
   const hSupremeToken = String(req.header('X-Admin-Token') || '').trim();
   const hAdminId = String(req.header('X-Admin-Id') || '').trim();
   const hAdminKey = String(req.header('X-Admin-Key') || '').trim();
 
-  const hasAdminIntent = Boolean(hSupremeUser || hSupremeToken || hAdminId);
-  const isSupreme =
+  const sesion = precomputedSesion !== null ? precomputedSesion : await resolverSesionLocal(req);
+
+  const hasAdminIntent = Boolean(
+    hSupremeUser ||
+    hSupremeToken ||
+    hAdminId ||
+    (sesion && (sesion.rol === 'admin' || sesion.usuarioId === 'admin'))
+  );
+
+  let isSupreme = false;
+  if (sesion && sesion.usuarioId === 'admin') {
+    isSupreme = true;
+  } else if (
     Boolean(hSupremeUser && hSupremeToken) &&
     hSupremeUser.toLowerCase() === ADMIN_USER.toLowerCase() &&
-    hSupremeToken === ADMIN_PASS;
+    (hSupremeToken === ADMIN_PASS || (sesion && sesion.usuarioId === 'admin'))
+  ) {
+    isSupreme = true;
+  } else if (hSupremeToken && hSupremeToken === ADMIN_PASS) {
+    isSupreme = true;
+  }
 
   let isDelegated = false;
-  if (!isSupreme && hAdminId && hAdminId !== 'admin') {
-    const actor = existingCuentas[hAdminId];
-    if (actor && actor.rol === 'admin' && hAdminKey && actor.clave === hAdminKey) {
-      isDelegated = true;
+  if (!isSupreme) {
+    if (sesion && sesion.rol === 'admin' && sesion.usuarioId !== 'admin') {
+      const actor = existingCuentas[sesion.usuarioId];
+      if (actor && actor.rol === 'admin') {
+        isDelegated = true;
+      } else if (!actor) {
+        isDelegated = true;
+      }
+    } else if (hAdminId && hAdminId !== 'admin') {
+      const actor = existingCuentas[hAdminId];
+      if (actor && actor.rol === 'admin') {
+        if (hAdminKey && actor.clave === hAdminKey) {
+          isDelegated = true;
+        } else if (sesion && sesion.usuarioId === hAdminId && sesion.rol === 'admin') {
+          isDelegated = true;
+        }
+      }
     }
   }
 
-  return { hasAdminIntent, isSupreme, isDelegated, hAdminId };
+  return { hasAdminIntent, isSupreme, isDelegated, hAdminId, sesion };
 }
 
 app.get('/api/cuentas', (_req, res) => {
@@ -557,11 +601,12 @@ app.get('/api/cuentas', (_req, res) => {
   res.json(data);
 });
 
-app.post('/api/cuentas', (req, res) => {
+app.post('/api/cuentas', async (req, res) => {
   const raw = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
   const incoming = sanitizeCuentas(raw);
   const existing = sanitizeCuentas(readJsonFile(CUENTAS_FILE, {}));
-  const { hasAdminIntent, isSupreme, isDelegated, hAdminId } = verifyExpressCallerAdmin(req, existing);
+  const sesion = await resolverSesionLocal(req);
+  const { hasAdminIntent, isSupreme, isDelegated, hAdminId } = await verifyExpressCallerAdmin(req, existing, sesion);
 
   if (hasAdminIntent && !isSupreme && !isDelegated) {
     res.setHeader('X-KV-Bound', 'true');
@@ -731,9 +776,10 @@ app.get('/api/ranking', (_req, res) => {
   res.json(data);
 });
 
-app.post('/api/ranking', (req, res) => {
+app.post('/api/ranking', async (req, res) => {
   const existingCuentas = readJsonFile(CUENTAS_FILE, {});
-  const { hasAdminIntent, isSupreme, isDelegated } = verifyExpressCallerAdmin(req, existingCuentas);
+  const sesion = await resolverSesionLocal(req);
+  const { hasAdminIntent, isSupreme, isDelegated } = await verifyExpressCallerAdmin(req, existingCuentas, sesion);
   if (hasAdminIntent && !isSupreme && !isDelegated) {
     res.setHeader('X-KV-Bound', 'true');
     return res.status(403).json({

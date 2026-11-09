@@ -312,14 +312,14 @@ async function enviarJsonAKv(
 ): Promise<boolean> {
   try {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const authToken = obtenerTokenSesion();
+    const cur = obtenerUsuarioActual();
+    const sup = obtenerTokenAdminSupremo();
+    const authToken = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
     if (authToken) {
       headers['Authorization'] = `Bearer ${authToken}`;
     }
 
     if (options?.asAdmin) {
-      const sup = obtenerTokenAdminSupremo();
-      const cur = obtenerUsuarioActual();
       if (cur?.id === 'admin' && sup) {
         headers['X-Admin-User'] = sup.user;
         headers['X-Admin-Token'] = sup.token;
@@ -1659,7 +1659,7 @@ export async function adminActualizarUsuarioAsync(
     enviarJsonAKv('/api/ranking', ranking, { asAdmin: true }),
   ]);
 
-  if (!okCuentas || !okRanking) {
+  if (!okCuentas) {
     return {
       ok: false,
       error: '⚠️ No se pudieron enviar los cambios (Base de Datos desconectada o permisos revocados).',

@@ -244,15 +244,22 @@ export const App: React.FC = () => {
     const unsubs = suscribirCambiosNube(({ cuentas }) => {
       const current = usuarioActualRef.current;
       if (current && current.id !== 'admin') {
+        if (!cuentas || Object.keys(cuentas).length === 0) {
+          return;
+        }
         const fresh = cuentas[current.id];
         if (!fresh) {
-          setUsuarioActual(null);
-          guardarUsuarioActual(null);
-          if (modalActivoRef.current === 'admin') {
-            setModalActivo(null);
-            setModalPrevio(null);
+          // Solo desconectar si la base de datos descargada contiene usuarios y confirma que este fue borrado
+          const otrasCuentas = Object.keys(cuentas).filter((k) => k !== 'admin');
+          if (otrasCuentas.length > 0) {
+            setUsuarioActual(null);
+            guardarUsuarioActual(null);
+            if (modalActivoRef.current === 'admin') {
+              setModalActivo(null);
+              setModalPrevio(null);
+            }
+            showToast('⚠️ Tu cuenta ya no existe en la Base de Datos');
           }
-          showToast('⚠️ Tu cuenta fue eliminada de la Base de Datos');
         } else if (
           fresh.rol !== current.rol ||
           fresh.puntos !== current.puntos ||
