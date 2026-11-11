@@ -100,7 +100,7 @@ export const App: React.FC = () => {
   const [ajustes, setAjustes] = useState<AppSettings>(() => cargarAjustes());
   const [modalAspectoAbierto, setModalAspectoAbierto] = useState(false);
 
-  // Diagnóstico en tiempo real de conexión a la Base de Datos (Database / D1) (aviso permanente en todo momento)
+  // Diagnóstico en tiempo real de conexión a la Database (D1) (aviso permanente en todo momento)
   const [diagRed, setDiagRed] = useState<NetworkDiagnostic>(() => obtenerDiagnosticoRed());
   const [reconectandoKv, setReconectandoKv] = useState(false);
   const prevKvRef = useRef<boolean>(true);
@@ -186,7 +186,7 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  // Suscripción permanente al estado de la Base de Datos + resincronización automática al volver internet
+  // Suscripción permanente al estado de la Database + resincronización automática al volver internet
   useEffect(() => {
     const onBrowserOnline = () => {
       pingServidor()
@@ -203,7 +203,7 @@ export const App: React.FC = () => {
       setDiagRed(d);
       if (d.checkedOnce) {
         if (!prevKvRef.current && d.kvConnected) {
-          showToast('🟢 Conexión con la Base de Datos (Database) restablecida');
+          showToast('🟢 Conexión con la Database restablecida');
         }
         prevKvRef.current = d.kvConnected;
       }
@@ -222,9 +222,9 @@ export const App: React.FC = () => {
       const diag = await pingServidor();
       if (diag.kvConnected) {
         await sincronizarConNube(true);
-        showToast('🟢 Conectado a la Base de Datos (Database) — Datos sincronizados');
+        showToast('🟢 Conectado a la Database — Datos sincronizados');
       } else {
-        showToast('🔴 Sigue sin conexión a la Base de Datos (Database)');
+        showToast('🔴 Sigue sin conexión a la Database');
       }
     } finally {
       setReconectandoKv(false);
@@ -237,7 +237,7 @@ export const App: React.FC = () => {
   const modalActivoRef = useRef<ModalType>(modalActivo);
   modalActivoRef.current = modalActivo;
 
-  // Sincronización inicial y escucha ligera cada 90s (pausada en segundo plano) contra la Base de Datos
+  // Sincronización inicial y escucha ligera cada 90s (pausada en segundo plano) contra la Database
   useEffect(() => {
     sincronizarConNube(false).catch(() => {});
     const stopListener = iniciarEscuchaNube(90000);
@@ -258,7 +258,7 @@ export const App: React.FC = () => {
               setModalActivo(null);
               setModalPrevio(null);
             }
-            showToast('⚠️ Tu cuenta ya no existe en la Base de Datos');
+            showToast('⚠️ Tu cuenta ya no existe en la Database');
           }
         } else if (
           fresh.rol !== current.rol ||
@@ -279,7 +279,7 @@ export const App: React.FC = () => {
             }
             showToast('⛔ Tus permisos de administrador fueron revocados');
           } else {
-            showToast('☁️ Perfil sincronizado con la Base de Datos');
+            showToast('☁️ Perfil sincronizado con la Database');
           }
         }
       }
@@ -1132,7 +1132,7 @@ export const App: React.FC = () => {
       {kvDesconectado && mostrarBannerDesconexion && (
         <div className="sticky top-0 left-0 right-0 z-[60] w-full bg-[#c92a2a] text-white border-b-3 border-[#2b2140] px-3 py-1.5 shadow-md flex items-center justify-between gap-2 text-xs animate-[slideDown_0.2s_ease-out]">
           <span className="font-black text-center flex-1 leading-tight text-[11px] sm:text-xs">
-            ⚠️ Sin conexión a la Base de Datos (Database / D1) — No se pueden enviar ni recibir cambios globales en este momento.
+            ⚠️ Sin conexión a la Database (D1) — No se pueden enviar ni recibir cambios globales en este momento.
           </span>
           <div className="flex items-center gap-1.5 shrink-0">
             <button

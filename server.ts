@@ -70,10 +70,13 @@ function buildSupremeProfile(cuentas: Record<string, any>) {
     id: 'admin',
     nombre: existing.nombre || 'Admin Supremo',
     clave: '***SUPREMO***',
-    rol: 'admin' as const,
+    rol: 'dev' as const,
     esSupremo: true,
     avatarColor: existing.avatarColor || '#ffd43b',
     avatarHat: existing.avatarHat || 'corona',
+    avatarRopa: existing.avatarRopa || 'capa',
+    avatarAura: existing.avatarAura || 'dorada',
+    inventario: existing.inventario || { personajes: [] },
     temaTablero: existing.temaTablero || 'madera',
     puntos: typeof existing.puntos === 'number' ? existing.puntos : 0,
     partidas: typeof existing.partidas === 'number' ? existing.partidas : 0,
@@ -460,7 +463,300 @@ app.post('/api/admin/restablecer-clave', async (req, res) => {
   });
 });
 
-// Login verification for Supreme Admin (compatibilidad)
+// 3b. /api/admin/eliminar-usuario — Elimina definitivamente un usuario
+app.post('/api/admin/eliminar-usuario', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentasData = readJsonFile(CUENTAS_FILE, {});
+  const { isSupreme } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
+  const esAutorizado = (sesion && (sesion.usuarioId === 'admin' || sesion.rol === 'admin' || sesion.rol === 'dev')) || isSupreme;
+
+  if (!esAutorizado) {
+    return res.status(403).json({ ok: false, error: 'Solo el Admin Supremo (Dev) puede eliminar usuarios.' });
+  }
+
+  const targetId = String(req.body?.targetId || req.body?.id || '').trim().toLowerCase();
+  if (!targetId || targetId === 'admin') {
+    return res.status(400).json({ ok: false, error: 'El Admin Supremo no puede eliminarse.' });
+  }
+
+  const targetAcc = cuentasData[targetId];
+  const targetName = targetAcc?.nombre ? String(targetAcc.nombre).trim().toLowerCase() : targetId;
+  delete cuentasData[targetId];
+  writeJsonFile(CUENTAS_FILE, sanitizeCuentas(cuentasData));
+
+  const ranking = readJsonFile(RANKING_FILE, {}) as Record<string, any>;
+  delete ranking[targetId];
+  delete ranking[targetName];
+  for (const [k, v] of Object.entries(ranking)) {
+    if (String(v?.nombre || '').trim().toLowerCase() === targetName || k.toLowerCase() === targetId) {
+      delete ranking[k];
+    }
+  }
+  writeJsonFile(RANKING_FILE, ranking);
+
+  lastKvUpdate = Date.now();
+  res.setHeader('X-KV-Bound', 'true');
+  return res.json({ ok: true, mensaje: `Usuario ${targetId} eliminado definitivamente.` });
+});
+
+const CONFIG_SEMANAL_FILE = path.join(DATA_DIR, 'config_semanal.json');
+const SOLICITUD_RESET_FILE = path.join(DATA_DIR, 'solicitud_reset.json');
+const PREMIO_SEMANAL_FILE = path.join(DATA_DIR, 'premio_semanal.json');
+
+// Regalar personaje al inventario de un usuario
+app.post('/api/admin/personajes/regalar', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentasData = readJsonFile(CUENTAS_FILE, {});
+  const { isSupreme, isDelegated } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
+
+  if (!isSupreme && !isDelegated) {
+    return res.status(403).json({ ok: false, error: 'Permisos insuficientes.' });
+  }
+
+  const { targetId, personaje: rawPersonaje } = req.body || {};
+  const cleanTargetId = String(targetId || '').trim().toLowerCase();
+  const targetAcc = cuentasData[cleanTargetId];
+  if (!targetAcc) {
+    return res.status(404).json({ ok: false, error: 'Usuario no encontrado.' });
+  }
+
+  if (!targetAcc.inventario || typeof targetAcc.inventario !== 'object') {
+    targetAcc.inventario = { personajes: [] };
+  }
+  if (!Array.isArray(targetAcc.inventario.personajes)) {
+    targetAcc.inventario.personajes = [];
+  }
+
+  const actorName = isSupreme ? 'Dev Supremo' : (sesion?.usuarioId && cuentasData[sesion.usuarioId]?.nombre) || 'Admin';
+  const nuevoPersonaje = {
+    id: `char_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    nombre: String(rawPersonaje?.nombre || 'Héroe').trim().slice(0, 24),
+    color: rawPersonaje?.color || '#ffd43b',
+    hat: rawPersonaje?.hat || 'corona',
+    ropa: rawPersonaje?.ropa || 'ninguna',
+    aura: rawPersonaje?.aura || 'ninguna',
+    descripcion: rawPersonaje?.descripcion || 'Personaje exclusivo otorgado',
+    origen: {
+      tipo: isSupreme ? 'regalo_dev' : 'regalo_admin',
+      otorgadoPor: isSupreme ? `Dev ${actorName}` : `Admin ${actorName}`,
+      fecha: new Date().toISOString(),
+    },
+  };
+
+  targetAcc.inventario.personajes.push(nuevoPersonaje);
+  cuentasData[cleanTargetId] = targetAcc;
+  writeJsonFile(CUENTAS_FILE, sanitizeCuentas(cuentasData));
+  lastKvUpdate = Date.now();
+  res.setHeader('X-KV-Bound', 'true');
+
+  return res.json({
+    ok: true,
+    mensaje: `Personaje "${nuevoPersonaje.nombre}" entregado a ${targetAcc.nombre}.`,
+    personaje: nuevoPersonaje,
+    inventario: targetAcc.inventario,
+  });
+});
+
+// Revocar personaje de un inventario (Solo Dev)
+app.post('/api/admin/personajes/quitar', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentasData = readJsonFile(CUENTAS_FILE, {});
+  const { isSupreme } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
+
+  if (!isSupreme) {
+    return res.status(403).json({ ok: false, error: 'Solo el Dev puede retirar personajes de un inventario.' });
+  }
+
+  const { targetId, personajeId } = req.body || {};
+  const cleanTargetId = String(targetId || '').trim().toLowerCase();
+  const targetAcc = cuentasData[cleanTargetId];
+  if (!targetAcc) {
+    return res.status(404).json({ ok: false, error: 'Usuario no encontrado.' });
+  }
+
+  if (targetAcc.inventario && Array.isArray(targetAcc.inventario.personajes)) {
+    targetAcc.inventario.personajes = targetAcc.inventario.personajes.filter((p: any) => p.id !== personajeId);
+    if (targetAcc.inventario.activoId === personajeId) {
+      targetAcc.inventario.activoId = undefined;
+      targetAcc.avatarRopa = 'ninguna';
+      targetAcc.avatarAura = 'ninguna';
+    }
+    cuentasData[cleanTargetId] = targetAcc;
+    writeJsonFile(CUENTAS_FILE, sanitizeCuentas(cuentasData));
+    lastKvUpdate = Date.now();
+  }
+
+  res.setHeader('X-KV-Bound', 'true');
+  return res.json({ ok: true, mensaje: 'Personaje revocado del inventario.', inventario: targetAcc.inventario });
+});
+
+// Fijar personaje premio semanal
+app.post('/api/admin/personajes/fijar-premio-semanal', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentasData = readJsonFile(CUENTAS_FILE, {});
+  const { isSupreme, isDelegated } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
+
+  if (!isSupreme && !isDelegated) {
+    return res.status(403).json({ ok: false, error: 'Permisos insuficientes.' });
+  }
+
+  const rawPersonaje = req.body?.personaje;
+  const actorName = isSupreme ? 'Dev Supremo' : (sesion?.usuarioId && cuentasData[sesion.usuarioId]?.nombre) || 'Admin';
+
+  let premio = null;
+  if (rawPersonaje) {
+    premio = {
+      id: `premio_semanal_${Date.now()}`,
+      nombre: String(rawPersonaje.nombre).trim().slice(0, 24),
+      color: rawPersonaje.color || '#ffd43b',
+      hat: rawPersonaje.hat || 'corona',
+      ropa: rawPersonaje.ropa || 'ninguna',
+      aura: rawPersonaje.aura || 'dorada',
+      descripcion: `Premio exclusivo del Torneo Semanal`,
+      origen: {
+        tipo: 'torneo_semanal',
+        otorgadoPor: `Torneo Semanal creado por ${actorName}`,
+        fecha: new Date().toISOString(),
+      },
+    };
+  }
+
+  writeJsonFile(PREMIO_SEMANAL_FILE, premio || {});
+  lastKvUpdate = Date.now();
+  res.setHeader('X-KV-Bound', 'true');
+  return res.json({ ok: true, mensaje: 'Premio semanal actualizado.', premioSemanal: premio });
+});
+
+// Configuración de puntos semanales
+app.get('/api/admin/config-semanal', (_req, res) => {
+  const cfg = readJsonFile(CONFIG_SEMANAL_FILE, { primerLugar: 25, segundoLugar: 15, tercerLugar: 10 });
+  res.setHeader('X-KV-Bound', 'true');
+  res.json({ ok: true, config: cfg });
+});
+
+app.post('/api/admin/config-semanal', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentasData = readJsonFile(CUENTAS_FILE, {});
+  const { isSupreme, isDelegated } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
+
+  if (!isSupreme && !isDelegated) {
+    return res.status(403).json({ ok: false, error: 'Permisos insuficientes.' });
+  }
+
+  const cfg = {
+    primerLugar: Math.max(1, Number(req.body?.primerLugar) || 25),
+    segundoLugar: Math.max(0, Number(req.body?.segundoLugar) || 15),
+    tercerLugar: Math.max(0, Number(req.body?.tercerLugar) || 10),
+  };
+  writeJsonFile(CONFIG_SEMANAL_FILE, cfg);
+  lastKvUpdate = Date.now();
+  res.setHeader('X-KV-Bound', 'true');
+  return res.json({ ok: true, config: cfg, mensaje: 'Puntos semanales guardados.' });
+});
+
+// Configuración de puntos requeridos para desbloqueo de personajes
+const DESBLOQUEOS_FILE = path.join(DATA_DIR, 'desbloqueos.json');
+app.get('/api/admin/desbloqueos-personajes', (_req, res) => {
+  const defaultDesbloqueos = {
+    gatito: 30,
+    zorro: 60,
+    robot: 120,
+    dragon: 200,
+    ninja: 300,
+    navidad: 400,
+    granjero: 500,
+    vikingo: 650,
+    copa: 800,
+    gorra: 950,
+    boina: 1100,
+    espacial: 1300,
+  };
+  const desbloqueos = readJsonFile(DESBLOQUEOS_FILE, defaultDesbloqueos);
+  res.setHeader('X-KV-Bound', 'true');
+  res.json({ ok: true, desbloqueos });
+});
+
+app.post('/api/admin/desbloqueos-personajes', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentasData = readJsonFile(CUENTAS_FILE, {});
+  const { isSupreme, isDelegated } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
+
+  if (!isSupreme && !isDelegated) {
+    return res.status(403).json({ ok: false, error: 'Permisos insuficientes.' });
+  }
+
+  const desbloqueos = req.body?.desbloqueos || {};
+  writeJsonFile(DESBLOQUEOS_FILE, desbloqueos);
+  lastKvUpdate = Date.now();
+  res.setHeader('X-KV-Bound', 'true');
+  return res.json({ ok: true, desbloqueos, mensaje: 'Requisitos de desbloqueo guardados en Database.' });
+});
+
+// Solicitar reseteo de ranking (Admin -> Dev)
+app.post('/api/admin/ranking/solicitar-reset', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentasData = readJsonFile(CUENTAS_FILE, {});
+  const { isSupreme, isDelegated } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
+
+  if (!isSupreme && !isDelegated) {
+    return res.status(403).json({ ok: false, error: 'Permisos insuficientes.' });
+  }
+
+  const actorName = isSupreme ? 'Dev Supremo' : (sesion?.usuarioId && cuentasData[sesion.usuarioId]?.nombre) || 'Admin';
+  const solicitud = {
+    solicitada: true,
+    porNombre: actorName,
+    porId: sesion?.usuarioId || 'admin',
+    fecha: new Date().toISOString(),
+    motivo: String(req.body?.motivo || 'Reinicio periódico solicitado').trim(),
+  };
+
+  writeJsonFile(SOLICITUD_RESET_FILE, solicitud);
+  res.setHeader('X-KV-Bound', 'true');
+  return res.json({ ok: true, mensaje: 'Solicitud enviada al Dev para aprobación.', solicitud });
+});
+
+app.get('/api/admin/ranking/solicitud-reset', (_req, res) => {
+  const solicitud = readJsonFile(SOLICITUD_RESET_FILE, null);
+  res.setHeader('X-KV-Bound', 'true');
+  res.json({ ok: true, solicitud });
+});
+
+app.post('/api/admin/ranking/aprobar-reset', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentasData = readJsonFile(CUENTAS_FILE, {});
+  const { isSupreme } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
+
+  if (!isSupreme) {
+    return res.status(403).json({ ok: false, error: 'Solo el Dev puede aprobar el reseteo del ranking.' });
+  }
+
+  writeJsonFile(RANKING_FILE, {});
+  writeJsonFile(SOLICITUD_RESET_FILE, null);
+  for (const [id, acc] of Object.entries(cuentasData)) {
+    if (id !== 'admin' && acc && typeof acc === 'object') {
+      cuentasData[id] = { ...(acc as any), puntos: 0, partidas: 0, victorias: 0, derrotas: 0, empates: 0, elo: 1000 };
+    }
+  }
+  writeJsonFile(CUENTAS_FILE, sanitizeCuentas(cuentasData));
+  lastKvUpdate = Date.now();
+  res.setHeader('X-KV-Bound', 'true');
+  return res.json({ ok: true, mensaje: 'Ranking reseteado con aprobación del Dev.' });
+});
+
+app.post('/api/admin/ranking/rechazar-reset', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentasData = readJsonFile(CUENTAS_FILE, {});
+  const { isSupreme } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
+
+  if (!isSupreme) {
+    return res.status(403).json({ ok: false, error: 'Solo el Dev puede rechazar solicitudes de reseteo.' });
+  }
+
+  writeJsonFile(SOLICITUD_RESET_FILE, null);
+  res.setHeader('X-KV-Bound', 'true');
+  return res.json({ ok: true, mensaje: 'Solicitud de reseteo desestimada.' });
+});
 app.post('/api/admin/verify', async (req, res) => {
   const { usuario, clave } = req.body || {};
   const trimmedUser = String(usuario || '').trim();
@@ -503,31 +799,32 @@ app.post('/api/admin/verify-action', async (req, res) => {
   const { usuarioId, usuarioClave, adminUser, adminToken, requiereSupremo } = req.body || {};
   const { user: ADMIN_USER, pass: ADMIN_PASS } = getAdminCredentials();
 
-  // 1. Supreme Admin
-  if (
-    usuarioId === 'admin' &&
+  const sesion = await resolverSesionLocal(req);
+  const isSupreme =
+    (usuarioId === 'admin' || sesion?.usuarioId === 'admin' || sesion?.rol === 'dev') &&
     ((adminUser && adminToken && String(adminUser).trim().toLowerCase() === ADMIN_USER.toLowerCase() && String(adminToken).trim() === ADMIN_PASS) ||
-     (await resolverSesionLocal(req))?.usuarioId === 'admin')
-  ) {
+     sesion?.usuarioId === 'admin' || sesion?.rol === 'dev');
+
+  if (isSupreme) {
     res.setHeader('X-KV-Bound', 'true');
-    return res.json({ ok: true, isSupremeAdmin: true, isCloudAdmin: true, kvBound: true });
+    return res.json({ ok: true, isSupremeAdmin: true, isCloudAdmin: true, rol: 'dev', kvBound: true });
   }
 
   if (requiereSupremo) {
     return res.status(403).json({
       ok: false,
       revoked: false,
-      error: 'Solo el Admin Supremo puede otorgar o quitar el rol de Administrador.',
+      error: 'Acción exclusiva del Dev (Admin Supremo).',
     });
   }
 
-  // 2. Delegated Admin
+  // 2. Delegated Admin / Mod
   if (usuarioId && usuarioId !== 'admin') {
     const cuentasData = readJsonFile(CUENTAS_FILE, {});
     const acc = cuentasData[usuarioId];
-    if (acc && acc.rol === 'admin') {
+    if (acc && (acc.rol === 'admin' || acc.rol === 'mod')) {
       res.setHeader('X-KV-Bound', 'true');
-      return res.json({ ok: true, isSupremeAdmin: false, isCloudAdmin: true, kvBound: true });
+      return res.json({ ok: true, isSupremeAdmin: false, isCloudAdmin: true, rol: acc.rol, kvBound: true });
     }
   }
 

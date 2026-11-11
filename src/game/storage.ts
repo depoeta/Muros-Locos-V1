@@ -12,8 +12,10 @@ import {
   LevelInfo,
   MatchResultRecord,
   PERSONAJES_REGISTRO,
+  PersonajeColeccionable,
   RankEntry,
   ScoreBreakdown,
+  SolicitudResetRanking,
   UserAccount,
   WeeklyBoardData,
   WeeklyPlayerEntry,
@@ -212,7 +214,7 @@ export async function pingServidor(): Promise<NetworkDiagnostic> {
           kvConnected: isDb,
           serverPingMs: pingMs,
           lastPingTime: Date.now(),
-          lastError: isDb ? null : data.warning || 'Base de Datos (D1) no vinculada',
+          lastError: isDb ? null : data.warning || 'Database (D1) no vinculada',
           salasCount: data.salasCount || 0,
           cuentasCount: data.cuentasCount || 0,
         });
@@ -228,7 +230,7 @@ export async function pingServidor(): Promise<NetworkDiagnostic> {
           isOnline: false,
           kvConnected: false,
           lastError: !contentType.includes('application/json')
-            ? 'API / Worker de Base de Datos no detectado en esta ruta'
+            ? 'API / Worker de Database no detectado en esta ruta'
             : `Servidor HTTP ${res.status}`,
         });
       }
@@ -238,7 +240,7 @@ export async function pingServidor(): Promise<NetworkDiagnostic> {
         checkedOnce: true,
         isOnline: false,
         kvConnected: false,
-        lastError: err?.message || 'Sin conexión con el servidor / Base de Datos (Database)',
+        lastError: err?.message || 'Sin conexión con el servidor / Database (D1)',
       });
     } finally {
       inFlightPingPromise = null;
@@ -383,7 +385,7 @@ async function enviarJsonAKv(
     reportarDiagnostico({
       checkedOnce: true,
       kvConnected: false,
-      lastError: 'No se pudo guardar en la Base de Datos (Database desconectada)',
+      lastError: 'No se pudo guardar en la Database (D1 desconectada)',
     });
     return false;
   } catch {
@@ -392,7 +394,7 @@ async function enviarJsonAKv(
       checkedOnce: true,
       isOnline: false,
       kvConnected: false,
-      lastError: 'Error de red al enviar cambios a la Base de Datos (Database)',
+      lastError: 'Error de red al enviar cambios a la Database (D1)',
     });
     return false;
   }
@@ -533,7 +535,7 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
         checkedOnce: true,
         kvConnected: anyKvActive,
         isOnline: anyKvActive ? true : currentDiagnostic.isOnline,
-        lastError: anyKvActive ? null : 'Sin conexión activa a la Base de Datos (Database)',
+        lastError: anyKvActive ? null : 'Sin conexión activa a la Database',
       });
 
       if (anyKvActive) {
@@ -1523,12 +1525,12 @@ export async function verificarAccionAdminEnKV(
       reportarDiagnostico({
         checkedOnce: true,
         kvConnected: false,
-        lastError: 'Sin conexión a la Base de Datos (Database / D1)',
+        lastError: 'Sin conexión a la Database (D1)',
       });
       return {
         ok: false,
         kvDesconectado: true,
-        error: '⚠️ No hay conexión con la Base de Datos (Database). Conéctate para enviar o recibir cambios.',
+        error: '⚠️ No hay conexión con la Database (D1). Conéctate para enviar o recibir cambios.',
       };
     }
 
@@ -1545,7 +1547,7 @@ export async function verificarAccionAdminEnKV(
         return {
           ok: false,
           revocado: true,
-          error: data.error || '⛔ Tus permisos de administrador fueron revocados en la Base de Datos.',
+          error: data.error || '⛔ Tus permisos de administrador fueron revocados en la Database.',
         };
       }
       return {
@@ -1563,12 +1565,12 @@ export async function verificarAccionAdminEnKV(
       checkedOnce: true,
       isOnline: false,
       kvConnected: false,
-      lastError: 'Error de red con la Base de Datos',
+      lastError: 'Error de red con la Database',
     });
     return {
       ok: false,
       kvDesconectado: true,
-      error: '⚠️ Sin conexión al servidor / Base de Datos. No se pueden enviar cambios.',
+      error: '⚠️ Sin conexión al servidor / Database. No se pueden enviar cambios.',
     };
   }
 }
@@ -1685,7 +1687,7 @@ export async function adminActualizarUsuarioAsync(
   if (!okCuentas) {
     return {
       ok: false,
-      error: '⚠️ No se pudieron enviar los cambios (Base de Datos desconectada o permisos revocados).',
+      error: '⚠️ No se pudieron enviar los cambios (Database desconectada o permisos revocados).',
     };
   }
 
@@ -1708,50 +1710,62 @@ export async function adminEliminarUsuarioAsync(
     return { ok: false, error: 'El Admin Supremo no puede eliminarse.' };
   }
 
-  await sincronizarConNube(true);
-  const cuentas = cargarCuentas();
-  if (!cuentas[id]) {
-    return { ok: false, error: 'Usuario no encontrado en la Base de Datos.' };
-  }
-
-  const targetName = cuentas[id].nombre.trim().toLowerCase();
-  delete cuentas[id];
-
-  const ranking = cargarRanking();
-  delete ranking[targetName];
-  delete ranking[id.toLowerCase()];
-  for (const key of Object.keys(ranking)) {
-    if (
-      ranking[key].nombre.trim().toLowerCase() === targetName ||
-      key.toLowerCase() === targetName ||
-      key.toLowerCase() === id.toLowerCase()
-    ) {
-      delete ranking[key];
+  try {
+    const cur = obtenerUsuarioActual();
+    const sup = obtenerTokenAdminSupremo();
+    const authToken = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
     }
+    if (sup) {
+      headers['X-Admin-User'] = sup.user;
+      headers['X-Admin-Token'] = sup.token;
+    } else if (cur && cur.id !== 'admin') {
+      headers['X-Admin-Id'] = cur.id;
+    }
+
+    const res = await fetch(getApiBaseUrl('/api/admin/eliminar-usuario'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ targetId: id }),
+    });
+
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.ok) {
+      return { ok: false, error: data?.error || '⚠️ No se pudo eliminar (permisos revocados o desconexión).' };
+    }
+
+    // Limpiar localmente tras confirmación del servidor
+    const cuentas = cargarCuentas();
+    const targetName = cuentas[id]?.nombre?.trim().toLowerCase();
+    delete cuentas[id];
+    safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(cuentas));
+
+    const ranking = cargarRanking();
+    if (targetName) delete ranking[targetName];
+    delete ranking[id.toLowerCase()];
+    for (const key of Object.keys(ranking)) {
+      if (
+        ranking[key]?.nombre?.trim().toLowerCase() === targetName ||
+        key.toLowerCase() === targetName ||
+        key.toLowerCase() === id.toLowerCase()
+      ) {
+        delete ranking[key];
+      }
+    }
+    safeSet(STORAGE_KEY_RANKING, JSON.stringify(ranking));
+
+    if (cur && cur.id === id) {
+      cerrarSesion();
+    }
+
+    reconciliarYNotificarNube();
+    await sincronizarConNube(true);
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: '⚠️ Error de red al eliminar usuario: ' + (err?.message || 'Reintente.') };
   }
-
-  const [okCuentas, okRanking] = await Promise.all([
-    enviarJsonAKv('/api/cuentas', cuentas, { asAdmin: true }),
-    enviarJsonAKv('/api/ranking', ranking, { asAdmin: true }),
-  ]);
-
-  if (!okCuentas || !okRanking) {
-    return {
-      ok: false,
-      error: '⚠️ No se pudo eliminar (Base de Datos desconectada o permisos revocados).',
-    };
-  }
-
-  safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(cuentas));
-  safeSet(STORAGE_KEY_RANKING, JSON.stringify(ranking));
-
-  const cur = obtenerUsuarioActual();
-  if (cur && cur.id === id) {
-    cerrarSesion();
-  }
-
-  reconciliarYNotificarNube();
-  return { ok: true };
 }
 
 export async function darDeBajaUsuarioAsync(id: string): Promise<boolean> {
@@ -1779,7 +1793,7 @@ export async function darDeBajaUsuarioAsync(id: string): Promise<boolean> {
   }
 
   const [okCuentas, okRanking] = await Promise.all([
-    enviarJsonAKv('/api/cuentas', cuentas, { selfDelete: { id, clave: clavePropia } }),
+    enviarJsonAKv('/api/cuentas', cuentas, clavePropia ? { selfDelete: { id, clave: clavePropia } } : undefined),
     enviarJsonAKv('/api/ranking', ranking),
   ]);
 
@@ -1819,7 +1833,7 @@ export async function adminResetearRankingAsync(): Promise<{ ok: boolean; error?
   if (!okRanking || !okCuentas) {
     return {
       ok: false,
-      error: '⚠️ No se pudo borrar el Ranking Global (Base de Datos desconectada o permisos revocados).',
+      error: '⚠️ No se pudo borrar el Ranking Global (Database desconectada o permisos revocados).',
     };
   }
 
@@ -1834,3 +1848,353 @@ export async function adminResetearRankingAsync(): Promise<{ ok: boolean; error?
   reconciliarYNotificarNube();
   return { ok: true };
 }
+
+export async function regalarPersonajeAsync(
+  targetId: string,
+  personaje: Partial<PersonajeColeccionable>
+): Promise<{ ok: boolean; mensaje?: string; error?: string; inventario?: any }> {
+  try {
+    const cur = obtenerUsuarioActual();
+    const sup = obtenerTokenAdminSupremo();
+    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (sup) {
+      headers['X-Admin-User'] = sup.user;
+      headers['X-Admin-Token'] = sup.token;
+    } else if (cur && cur.id !== 'admin') {
+      headers['X-Admin-Id'] = cur.id;
+    }
+
+    const res = await fetch(getApiBaseUrl('/api/admin/personajes/regalar'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ targetId, personaje }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.ok) {
+      await sincronizarConNube(true);
+      return { ok: true, mensaje: data.mensaje, inventario: data.inventario };
+    }
+    return { ok: false, error: data?.error || 'No se pudo entregar el personaje.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red.' };
+  }
+}
+
+export async function quitarPersonajeInventarioAsync(
+  targetId: string,
+  personajeId: string
+): Promise<{ ok: boolean; mensaje?: string; error?: string }> {
+  try {
+    const cur = obtenerUsuarioActual();
+    const sup = obtenerTokenAdminSupremo();
+    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (sup) {
+      headers['X-Admin-User'] = sup.user;
+      headers['X-Admin-Token'] = sup.token;
+    }
+
+    const res = await fetch(getApiBaseUrl('/api/admin/personajes/quitar'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ targetId, personajeId }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.ok) {
+      await sincronizarConNube(true);
+      return { ok: true, mensaje: data.mensaje };
+    }
+    return { ok: false, error: data?.error || 'No se pudo revocar el personaje.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red.' };
+  }
+}
+
+export async function fijarPremioSemanalAsync(
+  personaje: Partial<PersonajeColeccionable> | null
+): Promise<{ ok: boolean; mensaje?: string; error?: string; premioSemanal?: any }> {
+  try {
+    const cur = obtenerUsuarioActual();
+    const sup = obtenerTokenAdminSupremo();
+    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (sup) {
+      headers['X-Admin-User'] = sup.user;
+      headers['X-Admin-Token'] = sup.token;
+    } else if (cur && cur.id !== 'admin') {
+      headers['X-Admin-Id'] = cur.id;
+    }
+
+    const res = await fetch(getApiBaseUrl('/api/admin/personajes/fijar-premio-semanal'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ personaje }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.ok) {
+      return { ok: true, mensaje: data.mensaje, premioSemanal: data.premioSemanal };
+    }
+    return { ok: false, error: data?.error || 'No se pudo fijar el premio semanal.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red.' };
+  }
+}
+
+export async function obtenerConfigSemanalAsync(): Promise<{
+  primerLugar: number;
+  segundoLugar: number;
+  tercerLugar: number;
+  participacion?: number;
+  premioSemanal?: PersonajeColeccionable;
+}> {
+  try {
+    const res = await fetch(getApiBaseUrl('/api/admin/config-semanal'));
+    const data = await res.json().catch(() => null);
+    if (data?.ok) {
+      return {
+        primerLugar: data.config?.primerLugar ?? 50,
+        segundoLugar: data.config?.segundoLugar ?? 30,
+        tercerLugar: data.config?.tercerLugar ?? 15,
+        participacion: data.config?.participacion ?? 5,
+        premioSemanal: data.premioSemanal,
+      };
+    }
+  } catch {}
+  return { primerLugar: 50, segundoLugar: 30, tercerLugar: 15, participacion: 5 };
+}
+
+export async function guardarConfigSemanalAsync(cfg: {
+  primerLugar: number;
+  segundoLugar: number;
+  tercerLugar: number;
+  participacion?: number;
+}): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const cur = obtenerUsuarioActual();
+    const sup = obtenerTokenAdminSupremo();
+    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (sup) {
+      headers['X-Admin-User'] = sup.user;
+      headers['X-Admin-Token'] = sup.token;
+    } else if (cur && cur.id !== 'admin') {
+      headers['X-Admin-Id'] = cur.id;
+    }
+
+    const res = await fetch(getApiBaseUrl('/api/admin/config-semanal'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(cfg),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.ok) {
+      return { ok: true };
+    }
+    return { ok: false, error: data?.error || 'No se pudo guardar la configuración.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de conexión.' };
+  }
+}
+
+export async function solicitarResetRankingAsync(
+  motivo?: string
+): Promise<{ ok: boolean; mensaje?: string; error?: string }> {
+  try {
+    const cur = obtenerUsuarioActual();
+    const sup = obtenerTokenAdminSupremo();
+    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (sup) {
+      headers['X-Admin-User'] = sup.user;
+      headers['X-Admin-Token'] = sup.token;
+    } else if (cur && cur.id !== 'admin') {
+      headers['X-Admin-Id'] = cur.id;
+    }
+
+    const res = await fetch(getApiBaseUrl('/api/admin/ranking/solicitar-reset'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ motivo }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.ok) {
+      return { ok: true, mensaje: data.mensaje };
+    }
+    return { ok: false, error: data?.error || 'No se pudo solicitar el reseteo.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de conexión.' };
+  }
+}
+
+export async function obtenerSolicitudResetRankingAsync(): Promise<SolicitudResetRanking | null> {
+  try {
+    const res = await fetch(getApiBaseUrl('/api/admin/ranking/solicitud-reset'));
+    const data = await res.json().catch(() => null);
+    return data?.solicitud || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function aprobarResetRankingAsync(): Promise<{ ok: boolean; mensaje?: string; error?: string }> {
+  try {
+    const cur = obtenerUsuarioActual();
+    const sup = obtenerTokenAdminSupremo();
+    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (sup) {
+      headers['X-Admin-User'] = sup.user;
+      headers['X-Admin-Token'] = sup.token;
+    }
+
+    const res = await fetch(getApiBaseUrl('/api/admin/ranking/aprobar-reset'), {
+      method: 'POST',
+      headers,
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.ok) {
+      await sincronizarConNube(true);
+      return { ok: true, mensaje: data.mensaje };
+    }
+    return { ok: false, error: data?.error || 'No se pudo aprobar el reseteo.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de conexión.' };
+  }
+}
+
+export async function rechazarResetRankingAsync(): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const cur = obtenerUsuarioActual();
+    const sup = obtenerTokenAdminSupremo();
+    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (sup) {
+      headers['X-Admin-User'] = sup.user;
+      headers['X-Admin-Token'] = sup.token;
+    }
+
+    const res = await fetch(getApiBaseUrl('/api/admin/ranking/rechazar-reset'), {
+      method: 'POST',
+      headers,
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.ok) {
+      return { ok: true };
+    }
+    return { ok: false, error: data?.error || 'No se pudo rechazar.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de conexión.' };
+  }
+}
+
+export function equiparPersonajeInventario(
+  usuario: UserAccount,
+  personajeId: string | null
+): UserAccount {
+  const inv = usuario.inventario || { personajes: [] };
+  let patch: Partial<UserAccount> = {};
+
+  if (!personajeId) {
+    // Desequipar
+    patch = {
+      inventario: { ...inv, activoId: undefined },
+      avatarRopa: 'ninguna',
+      avatarRopaColor: undefined,
+      avatarAura: 'ninguna',
+    };
+  } else {
+    const item = (inv.personajes || []).find((p) => p.id === personajeId);
+    if (item) {
+      patch = {
+        inventario: { ...inv, activoId: item.id },
+        avatarColor: item.color,
+        avatarHat: item.hat,
+        avatarRopa: item.ropa || 'ninguna',
+        avatarRopaColor: item.ropaColor,
+        avatarAura: item.aura || 'ninguna',
+      };
+    }
+  }
+
+  const updated: UserAccount = { ...usuario, ...patch };
+  actualizarCuentaUsuario(usuario.id, patch);
+  return updated;
+}
+
+const STORAGE_KEY_DESBLOQUEOS = 'muros_locos_desbloqueos_v1';
+
+export function obtenerDesbloqueosLocales(): Record<string, number> {
+  const defaults: Record<string, number> = {
+    gatito: 30,
+    zorro: 60,
+    robot: 120,
+    dragon: 200,
+    ninja: 300,
+    navidad: 400,
+    granjero: 500,
+    vikingo: 650,
+    copa: 800,
+    gorra: 950,
+    boina: 1100,
+    espacial: 1300,
+  };
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_DESBLOQUEOS);
+    if (raw) return { ...defaults, ...JSON.parse(raw) };
+  } catch {}
+  return defaults;
+}
+
+export async function obtenerDesbloqueosPersonajesAsync(): Promise<Record<string, number>> {
+  const local = obtenerDesbloqueosLocales();
+  try {
+    const res = await fetch(getApiBaseUrl('/api/admin/desbloqueos-personajes'));
+    const data = await res.json().catch(() => null);
+    if (data?.ok && data.desbloqueos) {
+      safeSet(STORAGE_KEY_DESBLOQUEOS, JSON.stringify(data.desbloqueos));
+      return { ...local, ...data.desbloqueos };
+    }
+  } catch {}
+  return local;
+}
+
+export async function guardarDesbloqueosPersonajesAsync(
+  desbloqueos: Record<string, number>
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    safeSet(STORAGE_KEY_DESBLOQUEOS, JSON.stringify(desbloqueos));
+    const cur = obtenerUsuarioActual();
+    const sup = obtenerTokenAdminSupremo();
+    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (sup) {
+      headers['X-Admin-User'] = sup.user;
+      headers['X-Admin-Token'] = sup.token;
+    } else if (cur && cur.id !== 'admin') {
+      headers['X-Admin-Id'] = cur.id;
+    }
+
+    const res = await fetch(getApiBaseUrl('/api/admin/desbloqueos-personajes'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ desbloqueos }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.ok) {
+      return { ok: true };
+    }
+    return { ok: false, error: data?.error || 'No se pudieron guardar los requisitos de desbloqueo en Database.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de conexión.' };
+  }
+}
+

@@ -17,10 +17,15 @@ import {
   HatType,
   LevelInfo,
   PERSONAJES_REGISTRO,
+  PersonajeAuraType,
+  PersonajeColeccionable,
+  PersonajeRopaType,
   RankEntry,
   ScoreBreakdown,
+  SolicitudResetRanking,
   TorneoState,
   UserAccount,
+  UserRole,
   WeeklyRankingResponse,
 } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
@@ -30,16 +35,29 @@ import {
   adminActualizarUsuarioAsync,
   adminEliminarUsuarioAsync,
   adminResetearRankingAsync,
+  aprobarResetRankingAsync,
   borrarRankingLocal,
   cargarCuentas,
   cargarRanking,
   cargarRankingLocal,
   cerrarSesion,
   darDeBajaUsuarioAsync,
+  equiparPersonajeInventario,
   exportarDatosJSON,
+  fijarPremioSemanalAsync,
+  guardarConfigSemanalAsync,
+  guardarDesbloqueosPersonajesAsync,
   importarDatosJSONAsync,
   iniciarSesionAsync,
+  obtenerConfigSemanalAsync,
+  obtenerDesbloqueosLocales,
+  obtenerDesbloqueosPersonajesAsync,
+  obtenerSolicitudResetRankingAsync,
+  quitarPersonajeInventarioAsync,
+  rechazarResetRankingAsync,
+  regalarPersonajeAsync,
   restablecerClaveUsuarioAsync,
+  solicitarResetRankingAsync,
   LOGROS_LISTA,
   NetworkDiagnostic,
   obtenerDiagnosticoRed,
@@ -71,10 +89,10 @@ export const TEMAS_LISTA: {
 // =========================================================================
 interface AspectoModalProps {
   onCerrar: () => void;
-  personajeActual: { hat: HatType; color: string };
+  personajeActual: { hat: HatType; color: string; ropa?: PersonajeRopaType; aura?: PersonajeAuraType };
   temaActual: BoardTheme;
   usuarioActual?: UserAccount | null;
-  onAplicar: (nuevoPersonaje: { hat: HatType; color: string }, nuevoTema: BoardTheme) => void;
+  onAplicar: (nuevoPersonaje: { hat: HatType; color: string; ropa?: PersonajeRopaType; aura?: PersonajeAuraType }, nuevoTema: BoardTheme) => void;
   onUsuarioActualizado?: (u: UserAccount) => void;
   onShowToast?: (msg: string) => void;
 }
@@ -88,14 +106,43 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
   onUsuarioActualizado,
   onShowToast,
 }) => {
+  const [tabPersonaje, setTabPersonaje] = useState<'base' | 'inventario'>('base');
   const [selectedHat, setSelectedHat] = useState<HatType>(personajeActual.hat || 'corona');
   const [selectedColor, setSelectedColor] = useState<string>(personajeActual.color || '#ff6b6b');
+  const [selectedRopa, setSelectedRopa] = useState<PersonajeRopaType>(
+    personajeActual.ropa || usuarioActual?.avatarRopa || 'ninguna'
+  );
+  const [selectedAura, setSelectedAura] = useState<PersonajeAuraType>(
+    personajeActual.aura || usuarioActual?.avatarAura || 'ninguna'
+  );
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(
+    usuarioActual?.inventario?.activoId || null
+  );
   const [selectedTema, setSelectedTema] = useState<BoardTheme>(temaActual || 'madera');
   const [guardarEnPerfil, setGuardarEnPerfil] = useState(Boolean(usuarioActual));
   const [guardando, setGuardando] = useState(false);
 
   const userPoints = usuarioActual?.puntos || 0;
-  const esAdmin = Boolean(usuarioActual && (usuarioActual.rol === 'admin' || usuarioActual.id === 'admin'));
+  const esAdmin = Boolean(
+    usuarioActual &&
+      (usuarioActual.rol === 'admin' || usuarioActual.rol === 'dev' || usuarioActual.id === 'admin')
+  );
+
+  const [desbloqueosPuntos, setDesbloqueosPuntos] = useState<Record<string, number>>(() => obtenerDesbloqueosLocales());
+
+  useEffect(() => {
+    obtenerDesbloqueosPersonajesAsync().then((d) => setDesbloqueosPuntos(d));
+  }, []);
+
+  const personajesBaseConPuntos = useMemo(() => {
+    return PERSONAJES_REGISTRO.map((p) => {
+      const customReq = desbloqueosPuntos[p.id];
+      return {
+        ...p,
+        puntosRequeridos: customReq !== undefined ? customReq : p.puntosRequeridos,
+      };
+    });
+  }, [desbloqueosPuntos]);
 
   const isPersonajeDesbloqueado = (puntosReq: number) => {
     if (puntosReq === 0) return true;
@@ -103,7 +150,17 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
     return userPoints >= puntosReq;
   };
 
-  const handleSeleccionarPersonaje = (p: (typeof PERSONAJES_REGISTRO)[0]) => {
+  const personajesVisibles = useMemo(() => {
+    return personajesBaseConPuntos.filter((p) => isPersonajeDesbloqueado(p.puntosRequeridos));
+  }, [personajesBaseConPuntos, userPoints, esAdmin]);
+
+  const siguientePorDesbloquear = useMemo(() => {
+    return personajesBaseConPuntos.find((p) => !isPersonajeDesbloqueado(p.puntosRequeridos));
+  }, [personajesBaseConPuntos, userPoints, esAdmin]);
+
+  const misExclusivos = usuarioActual?.inventario?.personajes || [];
+
+  const handleSeleccionarPersonajeBase = (p: (typeof PERSONAJES_REGISTRO)[0]) => {
     if (!isPersonajeDesbloqueado(p.puntosRequeridos)) {
       sounds.playError();
       onShowToast?.(`🔒 ${p.label} se desbloquea al alcanzar ${p.puntosRequeridos} puntos`);
@@ -112,6 +169,27 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
     sounds.playClick();
     setSelectedHat(p.id);
     setSelectedColor(p.defaultColor);
+    setSelectedRopa('ninguna');
+    setSelectedAura('ninguna');
+    setSelectedItemId(null);
+  };
+
+  const handleSeleccionarExclusivo = (item: PersonajeColeccionable) => {
+    sounds.playClick();
+    setSelectedHat(item.hat);
+    setSelectedColor(item.color);
+    setSelectedRopa(item.ropa || 'ninguna');
+    setSelectedAura(item.aura || 'ninguna');
+    setSelectedItemId(item.id);
+    onShowToast?.(`✨ Equipado: "${item.nombre}" (${item.origen.otorgadoPor})`);
+  };
+
+  const handleDesequiparExclusivo = () => {
+    sounds.playClick();
+    setSelectedRopa('ninguna');
+    setSelectedAura('ninguna');
+    setSelectedItemId(null);
+    onShowToast?.('Atuendo exclusivo desequipado');
   };
 
   const handleGuardarYAplicar = async () => {
@@ -120,10 +198,17 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
 
     try {
       if (usuarioActual && guardarEnPerfil) {
+        const invActual = usuarioActual.inventario || { personajes: [] };
         const updated: UserAccount = {
           ...usuarioActual,
           avatarHat: selectedHat,
           avatarColor: selectedColor,
+          avatarRopa: selectedRopa,
+          avatarAura: selectedAura,
+          inventario: {
+            ...invActual,
+            activoId: selectedItemId || undefined,
+          },
           temaTablero: selectedTema,
         };
         const freshSaved = await actualizarCuentaAsync(updated);
@@ -131,10 +216,16 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
         onShowToast?.('⭐ Personaje y terreno guardados como predeterminados en tu perfil');
       }
 
-      onAplicar({ hat: selectedHat, color: selectedColor }, selectedTema);
+      onAplicar(
+        { hat: selectedHat, color: selectedColor, ropa: selectedRopa, aura: selectedAura },
+        selectedTema
+      );
       onCerrar();
     } catch {
-      onAplicar({ hat: selectedHat, color: selectedColor }, selectedTema);
+      onAplicar(
+        { hat: selectedHat, color: selectedColor, ropa: selectedRopa, aura: selectedAura },
+        selectedTema
+      );
       onCerrar();
     } finally {
       setGuardando(false);
@@ -157,7 +248,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
               <span className="text-[11px] font-bold text-[#86542d]">
                 {usuarioActual
                   ? `⭐ Tus puntos: ${userPoints}`
-                  : '💡 Modo Invitado (Crea perfil para desbloquear más)'}
+                  : '💡 Modo Invitado (Crea perfil para guardar tus aspectos)'}
               </span>
             </div>
           </div>
@@ -172,73 +263,220 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
           </button>
         </div>
 
+        {/* Vista previa en vivo */}
         <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex items-center gap-3 mb-3">
-          <CartoonCharacter color={selectedColor} hat={selectedHat} size={54} showShadow={false} />
+          <CartoonCharacter
+            color={selectedColor}
+            hat={selectedHat}
+            ropa={selectedRopa}
+            aura={selectedAura}
+            size={58}
+            showShadow={false}
+          />
           <div className="flex-1 min-w-0">
             <span className="text-[10px] font-black text-[#593922] uppercase tracking-wider block">
               Vista Previa Activa
             </span>
-            <span className="font-extrabold text-sm text-[#2b2140] flex items-center gap-1.5">
+            <span className="font-extrabold text-sm text-[#2b2140] flex items-center gap-1.5 truncate">
               <span>{activeCharDef.icon}</span>
-              <span>{activeCharDef.label}</span>
+              <span className="truncate">
+                {selectedItemId
+                  ? misExclusivos.find((i) => i.id === selectedItemId)?.nombre || activeCharDef.label
+                  : activeCharDef.label}
+              </span>
+              {selectedItemId && (
+                <span className="text-[9px] font-black bg-[#ffd43b] text-[#5c3c00] px-1.5 py-0.5 rounded-full border border-[#2b2140]/30 shrink-0">
+                  EXCLUSIVO
+                </span>
+              )}
             </span>
             <span className="text-[11px] font-bold text-[#86542d] block truncate">
               Terreno: {TEMAS_LISTA.find((t) => t.id === selectedTema)?.label}
             </span>
+            {(selectedRopa !== 'ninguna' || selectedAura !== 'ninguna') && (
+              <span className="text-[10px] font-bold text-[#1971c2] block truncate">
+                Atuendo: {selectedRopa !== 'ninguna' ? selectedRopa : 'Normal'} · Aura: {selectedAura !== 'ninguna' ? selectedAura : 'Ninguna'}
+              </span>
+            )}
           </div>
         </div>
 
-        <div className="flex flex-col gap-1.5 mb-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
-              1. Elige tu Personaje
+        {/* Sub-tabs: Personajes Base vs Mis Exclusivos */}
+        <div className="flex items-center gap-1.5 p-1 bg-[#f1f3f5] rounded-xl border border-[#2b2140]/20 mb-3">
+          <button
+            type="button"
+            onClick={() => setTabPersonaje('base')}
+            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-black transition-all cursor-pointer ${
+              tabPersonaje === 'base'
+                ? 'bg-white text-[#2b2140] border border-[#2b2140] shadow-xs'
+                : 'text-[#86542d] hover:text-[#2b2140]'
+            }`}
+          >
+            🎮 Personajes Base
+          </button>
+          <button
+            type="button"
+            onClick={() => setTabPersonaje('inventario')}
+            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1 ${
+              tabPersonaje === 'inventario'
+                ? 'bg-[#ffd43b] text-[#5c3c00] border border-[#2b2140] shadow-xs'
+                : 'text-[#86542d] hover:text-[#2b2140]'
+            }`}
+          >
+            <span>🎒 Mis Exclusivos</span>
+            <span className="bg-[#2b2140] text-white text-[10px] px-1.5 py-0.2 rounded-full">
+              {misExclusivos.length}
             </span>
-            <span className="text-[10px] font-bold text-[#2b8a3e]">
-              {PERSONAJES_REGISTRO.filter((p) => isPersonajeDesbloqueado(p.puntosRequeridos)).length}/10 Desbloqueados
-            </span>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
-            {PERSONAJES_REGISTRO.map((p) => {
-              const isSelected = selectedHat === p.id;
-              const unlocked = isPersonajeDesbloqueado(p.puntosRequeridos);
+          </button>
+        </div>
 
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => handleSeleccionarPersonaje(p)}
-                  className={`relative p-2 rounded-2xl border-2 border-[#2b2140] cursor-pointer flex flex-col items-center gap-1 transition-all ${
-                    !unlocked
-                      ? 'bg-[#f1f3f5] opacity-70 hover:opacity-90'
-                      : isSelected
-                      ? 'bg-[#ffd43b] shadow-[0_3px_0_#2b2140] -translate-y-0.5'
-                      : 'bg-white hover:bg-[#f8f9fa]'
-                  }`}
-                  title={unlocked ? p.label : `Requiere ${p.puntosRequeridos} puntos`}
-                >
-                  {!unlocked && (
-                    <div className="absolute top-1 right-1 bg-[#2b2140] text-[#ffd43b] text-[9px] font-black rounded-full w-4 h-4 flex items-center justify-center">
-                      🔒
-                    </div>
-                  )}
+        {/* CONTENIDO SEGÚN TAB */}
+        {tabPersonaje === 'base' ? (
+          <div className="flex flex-col gap-1.5 mb-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
+                1. Tus Personajes Disponibles
+              </span>
+              <span className="text-[10px] font-bold text-[#2b8a3e]">
+                {personajesVisibles.length} desbloqueados
+              </span>
+            </div>
 
-                  <div className={!unlocked ? 'grayscale' : ''}>
-                    <CartoonCharacter color={p.defaultColor} hat={p.id} size={36} showShadow={false} />
-                  </div>
-                  <span className="text-[10px] font-extrabold text-[#2b2140] text-center leading-tight">
-                    {p.label}
-                  </span>
-                  {!unlocked && (
-                    <span className="text-[8px] font-black text-[#e03131] leading-none">
-                      {p.puntosRequeridos} pts
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+              {personajesVisibles.map((p) => {
+                const isSelected = selectedHat === p.id && !selectedItemId;
+
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => handleSeleccionarPersonajeBase(p)}
+                    className={`relative p-2 rounded-2xl border-2 border-[#2b2140] cursor-pointer flex flex-col items-center gap-1 transition-all ${
+                      isSelected
+                        ? 'bg-[#ffd43b] shadow-[0_3px_0_#2b2140] -translate-y-0.5'
+                        : 'bg-white hover:bg-[#f8f9fa]'
+                    }`}
+                    title={p.label}
+                  >
+                    <CartoonCharacter color={p.defaultColor} hat={p.id} size={38} showShadow={false} />
+                    <span className="text-[10px] font-extrabold text-[#2b2140] text-center leading-tight">
+                      {p.label}
                     </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+                    {isSelected && (
+                      <span className="text-[8px] font-black text-[#134e20] bg-[#d3f9d8] px-1 rounded border border-[#2b8a3e]">
+                        ✓ ACTIVO
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
 
+            {/* Siguiente personaje a desbloquear si aún quedan */}
+            {siguientePorDesbloquear && (
+              <div className="p-2.5 bg-gradient-to-r from-[#fff9db] to-[#f8f9fa] rounded-2xl border-2 border-[#2b2140]/25 flex items-center justify-between text-xs mt-1">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-base">🔒</span>
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-bold text-[#86542d] block uppercase tracking-wider">
+                      Próximo Desbloqueo
+                    </span>
+                    <span className="font-black text-xs text-[#2b2140] block truncate">
+                      {siguientePorDesbloquear.label} ({siguientePorDesbloquear.icon})
+                    </span>
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <span className="text-xs font-black text-[#d9480f] block">
+                    {userPoints} / {siguientePorDesbloquear.puntosRequeridos} pts
+                  </span>
+                  <span className="text-[9px] font-bold text-[#868e96] block">
+                    Faltan {Math.max(0, siguientePorDesbloquear.puntosRequeridos - userPoints)} pts
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2 mb-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
+                🎒 Colección de Personajes Exclusivos
+              </span>
+              {selectedItemId && (
+                <button
+                  type="button"
+                  onClick={handleDesequiparExclusivo}
+                  className="text-[10px] font-bold text-[#c92a2a] hover:underline cursor-pointer"
+                >
+                  ✕ Desequipar
+                </button>
+              )}
+            </div>
+
+            {misExclusivos.length === 0 ? (
+              <div className="p-4 bg-white rounded-2xl border-2 border-[#2b2140]/20 text-center flex flex-col items-center gap-1.5 my-1">
+                <span className="text-3xl">🎁</span>
+                <span className="font-black text-xs text-[#2b2140]">
+                  Aún no tienes personajes exclusivos en tu inventario
+                </span>
+                <p className="text-[11px] text-[#86542d] leading-relaxed">
+                  Gana el <strong>Torneo Semanal</strong> o recíbelo como premio/regalo de un Administrador o Dev.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {misExclusivos.map((item) => {
+                  const isEquipped = selectedItemId === item.id;
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() => handleSeleccionarExclusivo(item)}
+                      className={`p-2.5 rounded-2xl border-2 cursor-pointer transition-all flex items-center gap-2.5 ${
+                        isEquipped
+                          ? 'border-[#2b2140] bg-[#fff9db] shadow-[0_3px_0_#2b2140] -translate-y-0.5'
+                          : 'border-[#2b2140]/40 bg-white hover:bg-[#f8f9fa]'
+                      }`}
+                    >
+                      <CartoonCharacter
+                        color={item.color}
+                        hat={item.hat}
+                        ropa={item.ropa}
+                        aura={item.aura}
+                        size={42}
+                        showShadow={false}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="font-black text-xs text-[#2b2140] truncate">
+                            {item.nombre}
+                          </span>
+                          {isEquipped && (
+                            <span className="text-[9px] font-black text-[#134e20] bg-[#d3f9d8] px-1.5 py-0.5 rounded border border-[#2b8a3e]">
+                              EN USO
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] font-bold text-[#86542d] block truncate">
+                          {item.origen.tipo === 'torneo_semanal'
+                            ? '🏆 Torneo Semanal'
+                            : item.origen.tipo === 'regalo_dev'
+                            ? '👑 Regalo de Dev'
+                            : '🛡️ Regalo de Admin'}
+                        </span>
+                        <span className="text-[9px] text-[#495057] block truncate">
+                          {item.origen.otorgadoPor}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SELECCIÓN DE TERRENO */}
         <div className="flex flex-col gap-1.5 mb-3">
           <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
             2. Terreno de la Arena / Tablero
@@ -740,10 +978,10 @@ export const RankingModal: React.FC<RankingModalProps> = ({
       setLocalRankingData(cargarRankingLocal());
       setSemanalData(sem);
       if (forzar) {
-        showToast(res.kvConectado ? '🔄 Sincronizado con la Base de Datos' : '⚠️ Sin conexión a la Base de Datos');
+        showToast(res.kvConectado ? '🔄 Sincronizado con la Database' : '⚠️ Sin conexión a la Database');
       }
     } catch {
-      showToast('⚠️ No se pudo sincronizar con la Base de Datos');
+      showToast('⚠️ No se pudo sincronizar con la Database');
     } finally {
       setSincronizando(false);
     }
@@ -776,7 +1014,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
               <span className="text-[11px] font-bold text-[#2b8a3e]">
                 {tab === 'local'
                   ? '📍 Ranking Local en este Dispositivo'
-                  : '🌍 Clasificación en Base de Datos (Database)'}
+                  : '🌍 Clasificación en Database'}
               </span>
             </div>
           </div>
@@ -795,7 +1033,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
         {/* Database Disconnected Warning inside Ranking */}
         {diag.checkedOnce && !diag.kvConnected && tab !== 'local' && (
           <div className="p-2.5 bg-[#ffe3e3] rounded-2xl border-2 border-[#c92a2a] mb-2 text-[11px] font-bold text-[#c92a2a] flex items-center justify-between gap-2">
-            <span>⚠️ Sin conexión a la Base de Datos: mostrando últimos datos guardados localmente.</span>
+            <span>⚠️ Sin conexión a la Database: mostrando últimos datos guardados localmente.</span>
             <button
               type="button"
               onClick={() => refrescarRanking(true)}
@@ -1007,7 +1245,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
             className="py-1.5 px-3.5 rounded-xl font-black bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#fff9db] active:translate-y-0.5 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
           >
             <span className={sincronizando ? 'animate-spin' : ''}>🔄</span>
-            <span>{sincronizando ? 'Sincronizando...' : 'Actualizar Base de Datos'}</span>
+            <span>{sincronizando ? 'Sincronizando...' : 'Actualizar Database'}</span>
           </button>
 
           <button
@@ -1625,7 +1863,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
         setErrorMsg(res.error || 'No se pudo crear la cuenta');
       }
     } catch {
-      setErrorMsg('Error al sincronizar con la Base de Datos');
+      setErrorMsg('Error al sincronizar con la Database');
     } finally {
       setCargando(false);
     }
@@ -1649,10 +1887,10 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
           </button>
         </div>
 
-        {/* Estado Base de Datos en Perfil */}
+        {/* Estado Database en Perfil */}
         {diag.checkedOnce && !diag.kvConnected && (
           <div className="p-2.5 mb-2 bg-[#ffe3e3] rounded-xl border-2 border-[#c92a2a] text-[11px] font-bold text-[#c92a2a] flex items-center justify-between gap-2">
-            <span>⚠️ Sin conexión a la Base de Datos: no se pueden enviar o recibir cambios.</span>
+            <span>⚠️ Sin conexión a la Database: no se pueden enviar o recibir cambios.</span>
             <button
               type="button"
               onClick={() => {
@@ -1937,7 +2175,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                                 onLogout();
                                 onCerrar();
                               } else {
-                                setToastMsg('⚠️ Sin conexión a la Base de Datos para eliminar');
+                                setToastMsg('⚠️ Sin conexión a la Database para eliminar');
                               }
                             }}
                             className="flex-1 py-1.5 rounded-xl font-black text-xs bg-[#c92a2a] text-white border border-[#a61e1e] disabled:opacity-40 cursor-pointer"
@@ -2140,7 +2378,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                 {cargando && <span className="animate-spin">⏳</span>}
                 <span>
                   {cargando
-                    ? 'Verificando en la Base de Datos (Database)...'
+                    ? 'Verificando en la Database...'
                     : tab === 'login'
                     ? 'Entrar a mi Cuenta'
                     : 'Registrar y Guardar'}
@@ -2155,7 +2393,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
 };
 
 // =========================================================================
-// 8. PANEL DE ADMINISTRACIÓN (Sin pedir clave por segunda vez + Verificación en Base de Datos en cada acción)
+// 8. PANEL DE ADMINISTRACIÓN (Sin pedir clave por segunda vez + Verificación en Database en cada acción)
 // =========================================================================
 interface AdminPanelModalProps {
   onCerrar: () => void;
@@ -2172,11 +2410,13 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   onUsuarioActualizado,
   onAbrirLogin,
 }) => {
-  const tieneRolAdmin = Boolean(
-    usuarioActual && (usuarioActual.rol === 'admin' || usuarioActual.id === 'admin')
+  const tieneRolStaff = Boolean(
+    usuarioActual && (usuarioActual.rol === 'admin' || usuarioActual.rol === 'dev' || usuarioActual.id === 'admin')
   );
-  const esYoSupremo = Boolean(usuarioActual && usuarioActual.id === 'admin');
+  const esYoSupremo = Boolean(usuarioActual && (usuarioActual.rol === 'dev' || usuarioActual.id === 'admin'));
+  const esAdmin = Boolean(usuarioActual && usuarioActual.rol === 'admin');
 
+  const [adminTab, setAdminTab] = useState<'jugadores' | 'editor' | 'torneo'>('jugadores');
   const [cuentas, setCuentas] = useState<Record<string, UserAccount>>(() => cargarCuentas());
   const [filtro, setFiltro] = useState('');
   const [editandoId, setEditandoId] = useState<string | null>(null);
@@ -2184,23 +2424,50 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const [guardando, setGuardando] = useState(false);
   const [diag, setDiag] = useState<NetworkDiagnostic>(() => obtenerDiagnosticoRed());
 
-  // Estados de confirmación en pantalla (sin window.confirm bloqueado)
+  // Confirmaciones
   const [confirmandoResetRanking, setConfirmandoResetRanking] = useState(false);
   const [confirmandoEliminarId, setConfirmandoEliminarId] = useState<string | null>(null);
 
-  // Campos de edición
+  // Inspector de inventario
+  const [inspectingUser, setInspectingUser] = useState<UserAccount | null>(null);
+
+  // Solicitud de reset de ranking
+  const [solicitudReset, setSolicitudReset] = useState<SolicitudResetRanking | null>(null);
+
+  // Configuración de torneo semanal
+  const [puntos1, setPuntos1] = useState(50);
+  const [puntos2, setPuntos2] = useState(30);
+  const [puntos3, setPuntos3] = useState(15);
+  const [puntosPart, setPuntosPart] = useState(5);
+  const [premioActivo, setPremioActivo] = useState<PersonajeColeccionable | undefined>(undefined);
+  const [guardandoTorneo, setGuardandoTorneo] = useState(false);
+
+  // Editor visual de personajes
+  const [editorNombre, setEditorNombre] = useState('Campeón Legendario');
+  const [editorColor, setEditorColor] = useState('#ffd43b');
+  const [editorHat, setEditorHat] = useState<HatType>('corona');
+  const [editorRopa, setEditorRopa] = useState<PersonajeRopaType>('capa');
+  const [editorRopaColor, setEditorRopaColor] = useState<string>('#c92a2a');
+  const [editorAura, setEditorAura] = useState<PersonajeAuraType>('dorada');
+  const [editorTargetId, setEditorTargetId] = useState<string>('');
+  const [guardandoEditor, setGuardandoEditor] = useState(false);
+
+  // Configuración de desbloqueos de personajes base (Solo Dev)
+  const [desbloqueosDev, setDesbloqueosDev] = useState<Record<string, number>>(() => obtenerDesbloqueosLocales());
+  const [guardandoDesbloqueos, setGuardandoDesbloqueos] = useState(false);
+
+  // Campos de edición de jugador
   const [editNombre, setEditNombre] = useState('');
   const [editClave, setEditClave] = useState('');
-  const [editRol, setEditRol] = useState<'jugador' | 'admin'>('jugador');
+  const [editRol, setEditRol] = useState<UserRole>('jugador');
   const [editPuntos, setEditPuntos] = useState<number>(0);
   const [editVictorias, setEditVictorias] = useState<number>(0);
 
-  const eraAdminRef = React.useRef<boolean>(tieneRolAdmin);
+  const eraStaffRef = React.useRef<boolean>(tieneRolStaff);
   const revocadoNotificadoRef = React.useRef<boolean>(false);
   const usuarioActualRef = React.useRef<UserAccount | null | undefined>(usuarioActual);
   usuarioActualRef.current = usuarioActual;
 
-  // Refs estables para callbacks del padre (evita bucle infinito de peticiones al re-renderizar App)
   const onCerrarRef = React.useRef(onCerrar);
   onCerrarRef.current = onCerrar;
   const onShowToastRef = React.useRef(onShowToast);
@@ -2212,31 +2479,55 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     return suscribirDiagnostico(setDiag);
   }, []);
 
-  // Si tenía el panel abierto como admin y su rol cambia a jugador o se cierra sesión, cerrar de inmediato
+  // Si su rol cambia o se cierra sesión, cerrar modal
   useEffect(() => {
-    if (eraAdminRef.current && !tieneRolAdmin && !revocadoNotificadoRef.current) {
+    if (eraStaffRef.current && !tieneRolStaff && !revocadoNotificadoRef.current) {
       revocadoNotificadoRef.current = true;
       onCerrarRef.current();
     }
-    if (tieneRolAdmin) {
-      eraAdminRef.current = true;
+    if (tieneRolStaff) {
+      eraStaffRef.current = true;
     }
-  }, [tieneRolAdmin]);
+  }, [tieneRolStaff]);
+
+  const cargarDatosAdminAdicionales = React.useCallback(async () => {
+    try {
+      const [sol, cfg, desb] = await Promise.all([
+        obtenerSolicitudResetRankingAsync(),
+        obtenerConfigSemanalAsync(),
+        obtenerDesbloqueosPersonajesAsync(),
+      ]);
+      setSolicitudReset(sol);
+      if (desb) {
+        setDesbloqueosDev(desb);
+      }
+      if (cfg) {
+        setPuntos1(cfg.primerLugar ?? 50);
+        setPuntos2(cfg.segundoLugar ?? 30);
+        setPuntos3(cfg.tercerLugar ?? 15);
+        setPuntosPart(cfg.participacion ?? 5);
+        setPremioActivo(cfg.premioSemanal);
+      }
+    } catch {
+      // Ignorar errores transitorios de red
+    }
+  }, []);
 
   const verificarRevocacionYActualizarLista = React.useCallback(
     (accs: Record<string, UserAccount>) => {
       setCuentas(accs);
       setEditandoId((prevEdit) => (prevEdit && !accs[prevEdit] ? null : prevEdit));
       setConfirmandoEliminarId((prevDel) => (prevDel && !accs[prevDel] ? null : prevDel));
+      setInspectingUser((prevIns) => (prevIns && accs[prevIns.id] ? accs[prevIns.id] : null));
 
       const cur = usuarioActualRef.current;
-      if (cur && cur.id !== 'admin') {
+      if (cur && cur.id !== 'admin' && cur.rol !== 'dev') {
         const fresh = accs[cur.id];
         if (!fresh) {
           if (!revocadoNotificadoRef.current) {
             revocadoNotificadoRef.current = true;
             onUsuarioActualizadoRef.current?.(null);
-            onShowToastRef.current('⚠️ Tu cuenta ya no existe en la Base de Datos.');
+            onShowToastRef.current('⚠️ Tu cuenta ya no existe en la Database.');
             onCerrarRef.current();
           }
           return false;
@@ -2249,11 +2540,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         ) {
           onUsuarioActualizadoRef.current?.(fresh);
         }
-        if (fresh.rol !== 'admin') {
+        if (fresh.rol !== 'admin' && fresh.rol !== 'dev') {
           if (!revocadoNotificadoRef.current) {
             revocadoNotificadoRef.current = true;
             sounds.playError();
-            onShowToastRef.current('⛔ Tus permisos de administrador fueron revocados.');
+            onShowToastRef.current('⛔ Tus permisos de administración fueron revocados.');
             onCerrarRef.current();
           }
           return false;
@@ -2273,25 +2564,26 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         const sigueActivo = verificarRevocacionYActualizarLista(accs);
         if (!sigueActivo) return;
 
+        await cargarDatosAdminAdicionales();
+
         if (mostrarToastManual) {
           onShowToastRef.current(
             res.kvConectado
-              ? '🟢 Sincronizado con la Base de Datos (Database)'
-              : '⚠️ Sin conexión con la Base de Datos (Database)'
+              ? '🟢 Sincronizado con la Database (Database)'
+              : '⚠️ Sin conexión con la Database (Database)'
           );
         }
       } catch {
         if (mostrarToastManual) {
-          onShowToastRef.current('⚠️ Error al contactar la Base de Datos');
+          onShowToastRef.current('⚠️ Error al contactar la Database');
         }
       } finally {
         if (mostrarToastManual) setSincronizando(false);
       }
     },
-    [verificarRevocacionYActualizarLista]
+    [cargarDatosAdminAdicionales, verificarRevocacionYActualizarLista]
   );
 
-  // Carga única al abrir el panel + ping ligero cada 8s (descarga cuentas solo si hubo cambios en la Base de Datos)
   useEffect(() => {
     sincronizar(false);
 
@@ -2310,7 +2602,6 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     };
   }, [sincronizar, verificarRevocacionYActualizarLista]);
 
-  // Verifica siempre en la Base de Datos si el usuario sigue siendo Admin antes de ejecutar cualquier acción
   const verificarPermisoAccion = async (requiereSupremo: boolean = false): Promise<boolean> => {
     const check = await verificarAccionAdminEnKV(usuarioActual || null, requiereSupremo);
     if (!check.ok) {
@@ -2346,7 +2637,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     sounds.playClick();
     setEditandoId(acc.id);
     setEditNombre(acc.nombre);
-    setEditClave(''); // Nunca precargar claves
+    setEditClave('');
     setEditRol(acc.rol || 'jugador');
     setEditPuntos(acc.puntos);
     setEditVictorias(acc.victorias);
@@ -2357,9 +2648,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     const targetOriginal = cuentas[id];
     if (!targetOriginal) return;
 
-    const cambioDeRol = editRol !== (targetOriginal.rol || 'jugador');
-    // Solo el Admin Supremo puede dar o quitar el rol de Admin a otros
-    const autorizado = await verificarPermisoAccion(cambioDeRol);
+    // Solo el Dev Supremo puede alterar roles mayores a mod o tocar admins
+    const cambioRolMayor = editRol === 'admin' || editRol === 'dev' || targetOriginal.rol === 'admin';
+    const autorizado = await verificarPermisoAccion(cambioRolMayor);
     if (!autorizado) return;
 
     const nombreLimpio = editNombre.trim();
@@ -2372,12 +2663,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     try {
       const patchData: any = {
         nombre: nombreLimpio,
-        rol: esYoSupremo ? editRol : targetOriginal.rol,
+        rol: esYoSupremo ? editRol : (editRol === 'mod' ? 'mod' : 'jugador'),
         puntos: editPuntos,
         victorias: editVictorias,
       };
-      // Solo enviar clave si el admin la escribió expresamente para cambiarla
-      if (editClave.trim()) {
+      if (esYoSupremo && editClave.trim()) {
         patchData.clave = editClave.trim();
       }
 
@@ -2390,13 +2680,13 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         if (usuarioActual && usuarioActual.id === id) {
           onUsuarioActualizado?.(actualizadas[id] || null);
         }
-        onShowToast(`✅ Cambios de "${nombreLimpio}" enviados a la Base de Datos`);
+        onShowToast(`✅ Cambios de "${nombreLimpio}" guardados en Database`);
       } else {
         sounds.playError();
         onShowToast(res.error || '⚠️ No se pudo actualizar el perfil');
       }
     } catch {
-      onShowToast('❌ Error de red al guardar en la Base de Datos');
+      onShowToast('❌ Error de red al guardar en la Database');
     } finally {
       setGuardando(false);
     }
@@ -2404,10 +2694,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
   const ejecutarEliminarUsuario = async (id: string, nombre: string) => {
     sounds.playClick();
-    const targetAcc = cuentas[id];
-    // Si el objetivo es otro admin, solo el Admin Supremo puede eliminarlo
-    const requiereSup = targetAcc?.rol === 'admin';
-    const autorizado = await verificarPermisoAccion(requiereSup);
+    if (!esYoSupremo) {
+      onShowToast('⛔ Solo el Dev Supremo puede eliminar cuentas permanentemente.');
+      return;
+    }
+    const autorizado = await verificarPermisoAccion(true);
     if (!autorizado) return;
 
     setGuardando(true);
@@ -2417,21 +2708,22 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         const actualizadas = cargarCuentas();
         setCuentas(actualizadas);
         setConfirmandoEliminarId(null);
-        onShowToast(`🗑️ Usuario "${nombre}" eliminado de la Base de Datos`);
+        onShowToast(`🗑️ Usuario "${nombre}" eliminado de la Database`);
       } else {
         sounds.playError();
         onShowToast(res.error || '⚠️ No se pudo eliminar el usuario');
       }
     } catch {
-      onShowToast('❌ Error al eliminar en la Base de Datos');
+      onShowToast('❌ Error al eliminar en la Database');
     } finally {
       setGuardando(false);
     }
   };
 
+  // Reset directo para Dev
   const ejecutarResetRankingGlobal = async () => {
     sounds.playClick();
-    const autorizado = await verificarPermisoAccion(false);
+    const autorizado = await verificarPermisoAccion(true);
     if (!autorizado) return;
 
     setGuardando(true);
@@ -2441,18 +2733,184 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         const actualizadas = cargarCuentas();
         setCuentas(actualizadas);
         setConfirmandoResetRanking(false);
+        setSolicitudReset(null);
         if (usuarioActual && usuarioActual.id !== 'admin' && actualizadas[usuarioActual.id]) {
           onUsuarioActualizado?.(actualizadas[usuarioActual.id]);
         }
-        onShowToast('🧹 Ranking Global borrado y reiniciado a cero en la Base de Datos');
+        onShowToast('🧹 Ranking Global reiniciado a cero en la Database');
       } else {
         sounds.playError();
-        onShowToast(res.error || '⚠️ No se pudo reiniciar el Ranking Global');
+        onShowToast(res.error || '⚠️ No se pudo reiniciar el Ranking');
       }
     } catch {
-      onShowToast('❌ Error al reiniciar el Ranking Global');
+      onShowToast('❌ Error al reiniciar el Ranking');
     } finally {
       setGuardando(false);
+    }
+  };
+
+  // Solicitud de reset para Admin
+  const solicitarResetRanking = async () => {
+    sounds.playClick();
+    setGuardando(true);
+    try {
+      const res = await solicitarResetRankingAsync('Reinicio semanal solicitado desde el panel');
+      if (res.ok) {
+        onShowToast('📨 Solicitud enviada al Dev Supremo');
+        setSolicitudReset({
+          solicitada: true,
+          porNombre: usuarioActual?.nombre || 'Admin',
+          porId: usuarioActual?.id || 'admin',
+          fecha: new Date().toLocaleDateString(),
+          motivo: 'Reinicio semanal solicitado',
+        });
+      } else {
+        onShowToast(res.error || 'No se pudo enviar la solicitud');
+      }
+    } catch {
+      onShowToast('❌ Error al conectar con la Database');
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  const responderSolicitudReset = async (aprobar: boolean) => {
+    sounds.playClick();
+    setGuardando(true);
+    try {
+      if (aprobar) {
+        const res = await aprobarResetRankingAsync();
+        if (res.ok) {
+          const actualizadas = cargarCuentas();
+          setCuentas(actualizadas);
+          setSolicitudReset(null);
+          onShowToast('✅ Solicitud aprobada y Ranking reiniciado a 0');
+        } else {
+          onShowToast(res.error || 'Error al aprobar solicitud');
+        }
+      } else {
+        const res = await rechazarResetRankingAsync();
+        if (res.ok) {
+          setSolicitudReset(null);
+          onShowToast('❌ Solicitud de reinicio descartada');
+        } else {
+          onShowToast(res.error || 'Error al descartar solicitud');
+        }
+      }
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  // Guardar puntos de torneo semanal
+  const handleGuardarPuntosTorneo = async () => {
+    sounds.playClick();
+    setGuardandoTorneo(true);
+    try {
+      const res = await guardarConfigSemanalAsync({
+        primerLugar: puntos1,
+        segundoLugar: puntos2,
+        tercerLugar: puntos3,
+        participacion: puntosPart,
+      });
+      if (res.ok) {
+        onShowToast('✅ Puntos semanales actualizados en la Database');
+      } else {
+        onShowToast(res.error || 'Error al guardar configuración');
+      }
+    } finally {
+      setGuardandoTorneo(false);
+    }
+  };
+
+  // Regalar personaje creado
+  const handleRegalarPersonaje = async () => {
+    if (!editorTargetId) {
+      onShowToast('⚠️ Selecciona un jugador para regalar el personaje');
+      return;
+    }
+    sounds.playClick();
+    setGuardandoEditor(true);
+    try {
+      const nuevoChar: Omit<PersonajeColeccionable, 'id' | 'origen'> = {
+        nombre: editorNombre.trim() || 'Personaje Exclusivo',
+        color: editorColor,
+        hat: editorHat,
+        ropa: editorRopa,
+        ropaColor: editorRopa !== 'ninguna' ? editorRopaColor : undefined,
+        aura: editorAura,
+      };
+      const res = await regalarPersonajeAsync(editorTargetId, nuevoChar);
+      if (res.ok) {
+        sounds.playVictory();
+        const accs = cargarCuentas();
+        setCuentas(accs);
+        const targetAcc = accs[editorTargetId];
+        onShowToast(`🎁 ¡"${nuevoChar.nombre}" entregado con éxito a ${targetAcc?.nombre || 'jugador'}!`);
+      } else {
+        onShowToast(res.error || 'Error al entregar personaje');
+      }
+    } finally {
+      setGuardandoEditor(false);
+    }
+  };
+
+  // Fijar como premio semanal activo
+  const handleFijarPremioSemanal = async () => {
+    sounds.playClick();
+    setGuardandoEditor(true);
+    try {
+      const nuevoPremio: Omit<PersonajeColeccionable, 'id' | 'origen'> = {
+        nombre: editorNombre.trim() || 'Campeón Semanal',
+        color: editorColor,
+        hat: editorHat,
+        ropa: editorRopa,
+        ropaColor: editorRopa !== 'ninguna' ? editorRopaColor : undefined,
+        aura: editorAura,
+      };
+      const res = await fijarPremioSemanalAsync(nuevoPremio);
+      if (res.ok) {
+        sounds.playVictory();
+        const premioGuardado = (res.premioSemanal || nuevoPremio) as PersonajeColeccionable;
+        setPremioActivo(premioGuardado);
+        onShowToast(`🏆 ¡"${nuevoPremio.nombre}" fijado como premio del Torneo Semanal!`);
+      } else {
+        onShowToast(res.error || 'Error al fijar premio semanal');
+      }
+    } finally {
+      setGuardandoEditor(false);
+    }
+  };
+
+  // Guardar requisitos de puntos para desbloqueo de personajes base (Solo Dev)
+  const handleGuardarDesbloqueosBase = async () => {
+    sounds.playClick();
+    setGuardandoDesbloqueos(true);
+    try {
+      const res = await guardarDesbloqueosPersonajesAsync(desbloqueosDev);
+      if (res.ok) {
+        onShowToast('✅ Requisitos de puntos actualizados en Database');
+      } else {
+        onShowToast(res.error || 'Error al guardar requisitos');
+      }
+    } finally {
+      setGuardandoDesbloqueos(false);
+    }
+  };
+
+  // Quitar personaje del inventario (exclusivo Dev)
+  const handleQuitarPersonaje = async (userId: string, personajeId: string) => {
+    sounds.playClick();
+    const res = await quitarPersonajeInventarioAsync(userId, personajeId);
+    if (res.ok) {
+      const accs = cargarCuentas();
+      setCuentas(accs);
+      if (inspectingUser && inspectingUser.id === userId) {
+        setInspectingUser(accs[userId] || null);
+      }
+      onShowToast('🗑️ Personaje retirado del inventario');
+    } else {
+      onShowToast(res.error || 'No se pudo retirar el personaje');
     }
   };
 
@@ -2482,7 +2940,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       const ok = await importarDatosJSONAsync(content);
       if (ok) {
         setCuentas(cargarCuentas());
-        onShowToast('✅ Base de datos restaurada');
+        onShowToast('✅ Database restaurada');
       } else {
         onShowToast('❌ Archivo de respaldo inválido');
       }
@@ -2494,13 +2952,64 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     acc.nombre.toLowerCase().includes(filtro.toLowerCase())
   );
 
+  const listaJugadoresNormales = Object.values(cuentas).filter(
+    (acc) => acc.id !== 'admin'
+  );
+
+  // Paleta de colores predefinidos para el editor
+  const coloresDisponibles = [
+    '#ffd43b', '#ff6b6b', '#339af0', '#51cf66',
+    '#cc5de8', '#ff922b', '#20c997', '#f06595',
+    '#845ef7', '#4dabf7', '#343a40', '#adb5bd',
+  ];
+
+  // Paleta de colores para atuendos y ropas
+  const coloresRopaDisponibles = [
+    '#c92a2a', '#1971c2', '#212529', '#2b8a3e',
+    '#7048e8', '#f59f00', '#868e96', '#ffffff',
+    '#fab005', '#e03131', '#1098ad', '#5c7cfa',
+  ];
+
+  const sombrerosDisponibles: HatType[] = [
+    'corona', 'pompon', 'antena', 'brote', 'mago',
+    'gatito', 'zorro', 'robot', 'dragon', 'ninja',
+    'navidad', 'granjero', 'vikingo', 'copa', 'gorra', 'boina', 'espacial',
+  ];
+
+  const ropasDisponibles: { id: PersonajeRopaType; label: string; icon: string }[] = [
+    { id: 'ninguna', label: 'Sin Ropa', icon: '👕' },
+    { id: 'capa', label: 'Capa Real', icon: '🧣' },
+    { id: 'armadura', label: 'Armadura', icon: '🛡️' },
+    { id: 'tunica', label: 'Túnica', icon: '🥋' },
+    { id: 'smoking', label: 'Smoking', icon: '🤵' },
+    { id: 'cinturon', label: 'Cinturón Oro', icon: '🥋' },
+    { id: 'alas', label: 'Alas Cósmicas', icon: '🪽' },
+  ];
+
+  const aurasDisponibles: { id: PersonajeAuraType; label: string; icon: string }[] = [
+    { id: 'ninguna', label: 'Sin Aura', icon: '⚪' },
+    { id: 'dorada', label: 'Dorada', icon: '✨' },
+    { id: 'fuego', label: 'Fuego', icon: '🔥' },
+    { id: 'ciber', label: 'Cíber Neón', icon: '⚡' },
+    { id: 'arcoiris', label: 'Arcoíris', icon: '🌈' },
+  ];
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/65 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-      <div className="relative w-full max-w-lg bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col max-h-[92vh]">
+      <div className="relative w-full max-w-xl bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col max-h-[92vh]">
+        {/* Header */}
         <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
-          <h3 className="text-xl font-black text-[#2b2140] flex items-center gap-2">
-            <span>🛡️</span> Panel de Administración
-          </h3>
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">{esYoSupremo ? '👑' : '🛡️'}</span>
+            <div>
+              <h3 className="text-lg sm:text-xl font-black text-[#2b2140] leading-none">
+                {esYoSupremo ? 'Consola de Desarrollo (Dev)' : 'Panel de Moderación & Admin'}
+              </h3>
+              <span className="text-[11px] font-bold text-[#86542d]">
+                {esYoSupremo ? 'Control Total de la Database D1' : `Administrador: ${usuarioActual?.nombre}`}
+              </span>
+            </div>
+          </div>
           <button
             onClick={() => {
               sounds.playClick();
@@ -2512,11 +3021,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           </button>
         </div>
 
-        {!tieneRolAdmin ? (
+        {!tieneRolStaff ? (
           <div className="flex flex-col items-center gap-3 my-6 text-center">
             <span className="text-4xl">🔒</span>
             <p className="text-xs sm:text-sm text-[#593922] font-bold leading-relaxed">
-              Para acceder al Panel de Administración, inicia sesión una sola vez desde <strong>Mi Perfil</strong> con tu cuenta de Administrador o con las credenciales del Admin Supremo del Worker.
+              Para acceder al Panel de Administración, inicia sesión con tu cuenta de Staff o con el Dev Supremo en la Database.
             </p>
             {onAbrirLogin && (
               <button
@@ -2533,44 +3042,44 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 my-1">
-            {/* Estado de Conexión Base de Datos en tiempo real */}
+            {/* Status Bar */}
             {!diag.kvConnected ? (
-              <div className="p-3 rounded-2xl border-2 border-[#c92a2a] bg-[#ffe3e3] text-[#c92a2a] text-xs font-bold flex items-center justify-between gap-2 shadow-sm">
+              <div className="p-2.5 rounded-2xl border-2 border-[#c92a2a] bg-[#ffe3e3] text-[#c92a2a] text-xs font-bold flex items-center justify-between gap-2 shadow-sm">
                 <div className="flex-1">
                   <div className="font-black text-[#a61e1e] flex items-center gap-1">
                     <span>⚠️</span>
-                    <span>NO CONECTADO A LA BASE DE DATOS (DATABASE)</span>
+                    <span>SIN CONEXIÓN A DATABASE (D1)</span>
                   </div>
-                  <p className="text-[11px] leading-tight mt-0.5">
-                    No se pueden enviar ni recibir cambios globales hasta restablecer la conexión con la Base de Datos.
+                  <p className="text-[10px] leading-tight mt-0.5">
+                    Las acciones se sincronizarán en cuanto se restablezca la conexión con la Database.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => sincronizar(true)}
                   disabled={sincronizando}
-                  className="py-1.5 px-2.5 rounded-xl bg-white border-2 border-[#c92a2a] text-[11px] font-black text-[#c92a2a] cursor-pointer shrink-0"
+                  className="py-1 px-2 rounded-xl bg-white border-2 border-[#c92a2a] text-[11px] font-black text-[#c92a2a] cursor-pointer shrink-0"
                 >
-                  {sincronizando ? '⏳...' : '🔄 Conectar'}
+                  {sincronizando ? '⏳...' : '🔄 Reconectar'}
                 </button>
               </div>
             ) : (
-              <div className="p-2.5 rounded-2xl border-2 border-[#2b2140] bg-[#d3f9d8] text-[#134e20] text-xs font-black flex items-center justify-between gap-2 shadow-sm">
+              <div className="p-2 rounded-2xl border-2 border-[#2b2140] bg-[#d3f9d8] text-[#134e20] text-xs font-black flex items-center justify-between gap-2 shadow-sm">
                 <div className="flex items-center gap-1.5 min-w-0">
                   <span className="text-base">{esYoSupremo ? '👑' : '🛡️'}</span>
                   <div className="leading-tight truncate">
-                    <span className="block truncate">
-                      {esYoSupremo ? 'Admin Supremo Activo' : `Admin: ${usuarioActual?.nombre}`}
+                    <span className="block truncate text-xs">
+                      {esYoSupremo ? 'Sesión Suprema: Dev Activo' : `Admin: ${usuarioActual?.nombre}`}
                     </span>
                     <span className="text-[10px] font-bold text-[#2b8a3e]">
-                      🟢 Conectado a la Base de Datos (Database) ({diag.serverPingMs} ms)
+                      🟢 Database D1 Conectada ({diag.serverPingMs} ms)
                     </span>
                   </div>
                 </div>
                 <button
                   onClick={() => sincronizar(true)}
                   disabled={sincronizando}
-                  className="py-1 px-2.5 rounded-lg bg-white border border-[#2b2140] text-[11px] font-black text-[#2b2140] shadow-sm hover:bg-[#f1f3f5] cursor-pointer flex items-center gap-1 shrink-0"
+                  className="py-1 px-2 rounded-lg bg-white border border-[#2b2140] text-[10px] font-black text-[#2b2140] shadow-sm hover:bg-[#f1f3f5] cursor-pointer flex items-center gap-1 shrink-0"
                 >
                   <span className={sincronizando ? 'animate-spin' : ''}>🔄</span>
                   <span>Sincronizar</span>
@@ -2578,325 +3087,963 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
               </div>
             )}
 
-            {/* Buscador */}
-            <div className="flex items-center justify-between gap-2">
-              <input
-                type="text"
-                placeholder="🔍 Buscar jugador..."
-                value={filtro}
-                onChange={(e) => setFiltro(e.target.value)}
-                className="w-full text-xs font-bold bg-white border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none"
-              />
-              <span className="text-xs font-bold text-[#86542d] whitespace-nowrap">
-                {cuentasFiltradas.length} cuentas
-              </span>
+            {/* Pestañas de Navegación */}
+            <div className="flex gap-1.5 bg-[#ebdcc2] p-1 rounded-2xl border-2 border-[#2b2140]">
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setAdminTab('jugadores');
+                }}
+                className={`flex-1 py-1.5 px-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  adminTab === 'jugadores'
+                    ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                    : 'text-[#5c3c00] hover:bg-white/40'
+                }`}
+              >
+                <span>👥</span>
+                <span>Jugadores</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setAdminTab('editor');
+                }}
+                className={`flex-1 py-1.5 px-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  adminTab === 'editor'
+                    ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                    : 'text-[#5c3c00] hover:bg-white/40'
+                }`}
+              >
+                <span>🎨</span>
+                <span>Editor de Personajes</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setAdminTab('torneo');
+                }}
+                className={`flex-1 py-1.5 px-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  adminTab === 'torneo'
+                    ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                    : 'text-[#5c3c00] hover:bg-white/40'
+                }`}
+              >
+                <span>🏆</span>
+                <span>Torneo & Premios</span>
+              </button>
             </div>
 
-            {/* Alerta de Clave Temporal */}
-            {claveTemporalInfo && (
-              <div className="p-3 bg-[#e7f5ff] border-2 border-[#1971c2] rounded-2xl flex items-start justify-between gap-3 text-xs shadow-sm">
-                <div className="flex-1 min-w-0">
-                  <div className="font-black text-[#1864ab] flex items-center gap-1.5">
-                    <span>🔑</span>
-                    <span>Nueva clave temporal generada para <strong>{claveTemporalInfo.nombre}</strong></span>
+            {/* Banner de Solicitud de Reset Pendiente */}
+            {solicitudReset?.solicitada && (
+              <div className="p-3 bg-[#fff3bf] border-2 border-[#f59f00] rounded-2xl text-xs flex flex-col gap-2 shadow-sm">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">📨</span>
+                    <div>
+                      <span className="font-black text-[#d9480f] block">
+                        Solicitud de Reinicio de Ranking Semanal
+                      </span>
+                      <span className="text-[11px] text-[#7f4f10] block">
+                        Pedida por <strong>{solicitudReset.porNombre}</strong> ({solicitudReset.fecha})
+                      </span>
+                    </div>
                   </div>
-                  <div className="mt-1.5 flex items-center gap-2">
-                    <code className="px-2 py-1 bg-white border border-[#1971c2]/40 rounded font-mono font-black text-sm text-[#0c8599] select-all">
-                      {claveTemporalInfo.clave}
-                    </code>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard?.writeText(claveTemporalInfo.clave);
-                        alert(`Clave copiada al portapapeles: ${claveTemporalInfo.clave}`);
-                      }}
-                      className="px-2 py-1 bg-[#1971c2] text-white rounded text-[11px] font-bold cursor-pointer hover:bg-[#1864ab]"
-                    >
-                      Copiar
-                    </button>
-                  </div>
-                  <p className="mt-1 text-[11px] text-[#495057]">
-                    Comparte esta clave con el jugador. El servidor la ha protegido y no se volverá a mostrar.
-                  </p>
+                  {esYoSupremo ? (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        disabled={guardando}
+                        onClick={() => responderSolicitudReset(true)}
+                        className="py-1 px-2 rounded-lg bg-[#51cf66] text-[#134e20] border border-[#2b2140] font-black text-[11px] hover:bg-[#40c057] cursor-pointer"
+                      >
+                        ✓ Aprobar y Reiniciar
+                      </button>
+                      <button
+                        type="button"
+                        disabled={guardando}
+                        onClick={() => responderSolicitudReset(false)}
+                        className="py-1 px-2 rounded-lg bg-[#ffc9c9] text-[#c92a2a] border border-[#2b2140] font-black text-[11px] hover:bg-[#ffa8a8] cursor-pointer"
+                      >
+                        ✕ Rechazar
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-[10px] bg-white px-2 py-0.5 rounded-full border border-[#f59f00] font-black text-[#d9480f]">
+                      ⏳ Esperando al Dev
+                    </span>
+                  )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setClaveTemporalInfo(null)}
-                  className="p-1 rounded text-[#1971c2] hover:bg-[#d0ebff] font-bold cursor-pointer"
-                  title="Cerrar aviso"
-                >
-                  ✕
-                </button>
               </div>
             )}
 
-            {/* Lista de Usuarios */}
-            <div className="flex flex-col gap-2">
-              {cuentasFiltradas.map((acc) => {
-                const isEditing = editandoId === acc.id;
-                const isSupreme = acc.id === 'admin';
-                const isConfirmingDelete = confirmandoEliminarId === acc.id;
-                const puedeGestionarEstaCuenta =
-                  !isSupreme && (esYoSupremo || acc.rol !== 'admin' || acc.id === usuarioActual?.id);
+            {/* TAB 1: JUGADORES */}
+            {adminTab === 'jugadores' && (
+              <div className="flex flex-col gap-3">
+                {/* Buscador */}
+                <div className="flex items-center justify-between gap-2">
+                  <input
+                    type="text"
+                    placeholder="🔍 Buscar jugador..."
+                    value={filtro}
+                    onChange={(e) => setFiltro(e.target.value)}
+                    className="w-full text-xs font-bold bg-white border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none"
+                  />
+                  <span className="text-xs font-bold text-[#86542d] whitespace-nowrap">
+                    {cuentasFiltradas.length} cuentas
+                  </span>
+                </div>
 
-                return (
-                  <div
-                    key={acc.id}
-                    className="p-3 rounded-2xl border-2 border-[#2b2140] bg-white shadow-sm flex flex-col gap-2"
-                  >
-                    {!isEditing ? (
-                      <>
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <CartoonCharacter
-                              color={acc.avatarColor}
-                              hat={acc.avatarHat}
-                              size={34}
-                              showShadow={false}
-                            />
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="font-black text-xs sm:text-sm text-[#2b2140] truncate">
-                                  {acc.nombre}
-                                </span>
-                                {acc.rol === 'admin' && (
-                                  <span className="text-[10px] font-black text-[#8f4b00]">
-                                    · 👑 {isSupreme ? 'SUPREMO' : 'ADMIN'}
+                {/* Alerta de Clave Temporal */}
+                {claveTemporalInfo && (
+                  <div className="p-3 bg-[#e7f5ff] border-2 border-[#1971c2] rounded-2xl flex items-start justify-between gap-3 text-xs shadow-sm">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-black text-[#1864ab] flex items-center gap-1.5">
+                        <span>🔑</span>
+                        <span>Nueva clave temporal generada para <strong>{claveTemporalInfo.nombre}</strong></span>
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <code className="px-2 py-1 bg-white border border-[#1971c2]/40 rounded font-mono font-black text-sm text-[#0c8599] select-all">
+                          {claveTemporalInfo.clave}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard?.writeText(claveTemporalInfo.clave);
+                            onShowToast('📋 Clave copiada al portapapeles');
+                          }}
+                          className="px-2 py-1 bg-[#1971c2] text-white rounded text-[11px] font-bold cursor-pointer hover:bg-[#1864ab]"
+                        >
+                          Copiar
+                        </button>
+                      </div>
+                      <p className="mt-1 text-[11px] text-[#495057]">
+                        Esta clave fue cifrada en la Database. Pásasela al usuario.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setClaveTemporalInfo(null)}
+                      className="p-1 rounded text-[#1971c2] hover:bg-[#d0ebff] font-bold cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
+                {/* Lista de Cuentas */}
+                <div className="flex flex-col gap-2">
+                  {cuentasFiltradas.map((acc) => {
+                    const isEditing = editandoId === acc.id;
+                    const isSupreme = acc.id === 'admin' || acc.rol === 'dev';
+                    const isConfirmingDelete = confirmandoEliminarId === acc.id;
+                    const cantInventario = acc.inventario?.personajes?.length || 0;
+
+                    const puedeEditarEstaCuenta =
+                      !isSupreme && (esYoSupremo || acc.rol === 'jugador' || !acc.rol);
+
+                    const badgeRol =
+                      acc.id === 'admin' || acc.rol === 'dev' ? (
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full bg-[#ffe8cc] text-[#d9480f] border border-[#ffa94d]">
+                          👑 DEV
+                        </span>
+                      ) : acc.rol === 'admin' ? (
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full bg-[#dbe4ff] text-[#364fc7] border border-[#91a7ff]">
+                          🛡️ ADMIN
+                        </span>
+                      ) : acc.rol === 'mod' ? (
+                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full bg-[#e6fcf5] text-[#099268] border border-[#63e6be]">
+                          🔰 MOD
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#f1f3f5] text-[#495057]">
+                          🎮 JUGADOR
+                        </span>
+                      );
+
+                    return (
+                      <div
+                        key={acc.id}
+                        className="p-3 rounded-2xl border-2 border-[#2b2140] bg-white shadow-sm flex flex-col gap-2"
+                      >
+                        {!isEditing ? (
+                          <>
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <CartoonCharacter
+                                  color={acc.avatarColor}
+                                  hat={acc.avatarHat}
+                                  ropa={acc.avatarRopa}
+                                  aura={acc.avatarAura}
+                                  size={36}
+                                  showShadow={false}
+                                />
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-black text-xs sm:text-sm text-[#2b2140] truncate">
+                                      {acc.nombre}
+                                    </span>
+                                    {badgeRol}
+                                  </div>
+                                  <span className="text-[11px] text-[#86542d] font-semibold block truncate">
+                                    {acc.puntos} pts · {acc.victorias} vic · ELO {acc.elo || 1000}
                                   </span>
-                                )}
+                                </div>
                               </div>
-                              <span className="text-[11px] text-[#86542d] font-semibold block truncate">
-                                {acc.puntos} pts · {acc.victorias} vic · ELO {acc.elo || 1000}
-                              </span>
-                            </div>
-                          </div>
 
-                          {isSupreme ? (
-                            <span className="text-[10px] font-black text-[#5c3c00] whitespace-nowrap">
-                              👑 Supremo
-                            </span>
-                          ) : puedeGestionarEstaCuenta ? (
-                            <div className="flex items-center gap-1 shrink-0">
-                              {esYoSupremo && acc.id !== 'admin' && (
+                              <div className="flex items-center gap-1 shrink-0">
+                                {/* Botón ver Inventario */}
                                 <button
-                                  onClick={() => handleRestablecerClave(acc.id, acc.nombre)}
-                                  className="p-1.5 rounded-lg border border-[#2b2140] bg-[#e7f5ff] text-xs hover:bg-[#d0ebff] cursor-pointer"
-                                  title="Restablecer clave temporal"
-                                >
-                                  🔑
-                                </button>
-                              )}
-                              <button
-                                onClick={() => iniciarEdicion(acc)}
-                                className="p-1.5 rounded-lg border border-[#2b2140] bg-[#fff9db] text-xs hover:bg-[#fff3bf] cursor-pointer"
-                                title="Editar usuario"
-                              >
-                                ✏️
-                              </button>
-                              {acc.id !== usuarioActual?.id && (
-                                <button
+                                  type="button"
                                   onClick={() => {
                                     sounds.playClick();
-                                    setConfirmandoEliminarId(acc.id);
+                                    setInspectingUser(acc);
                                   }}
-                                  className="p-1.5 rounded-lg border border-[#2b2140] bg-[#ffe3e3] text-xs hover:bg-[#ffc9c9] cursor-pointer"
-                                  title="Eliminar usuario"
+                                  className="py-1 px-2 rounded-lg border border-[#2b2140] bg-[#fff3bf] text-[11px] font-black text-[#5c3c00] hover:bg-[#ffe066] cursor-pointer flex items-center gap-1"
+                                  title="Ver inventario de personajes exclusivos"
                                 >
-                                  🗑️
+                                  <span>🎒</span>
+                                  <span>{cantInventario}</span>
                                 </button>
+
+                                {puedeEditarEstaCuenta && (
+                                  <>
+                                    {esYoSupremo && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRestablecerClave(acc.id, acc.nombre)}
+                                        className="p-1.5 rounded-lg border border-[#2b2140] bg-[#e7f5ff] text-xs hover:bg-[#d0ebff] cursor-pointer"
+                                        title="Restablecer clave temporal (Solo Dev)"
+                                      >
+                                        🔑
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => iniciarEdicion(acc)}
+                                      className="p-1.5 rounded-lg border border-[#2b2140] bg-[#fff9db] text-xs hover:bg-[#fff3bf] cursor-pointer"
+                                      title="Editar jugador"
+                                    >
+                                      ✏️
+                                    </button>
+                                  </>
+                                )}
+
+                                {esYoSupremo && acc.id !== 'admin' && acc.id !== usuarioActual?.id && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      sounds.playClick();
+                                      setConfirmandoEliminarId(acc.id);
+                                    }}
+                                    className="p-1.5 rounded-lg border border-[#2b2140] bg-[#ffe3e3] text-xs hover:bg-[#ffc9c9] cursor-pointer"
+                                    title="Eliminar permanentemente de la Database"
+                                  >
+                                    🗑️
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Confirmación eliminación */}
+                            {isConfirmingDelete && (
+                              <div className="p-2.5 bg-[#ffe3e3] rounded-xl border border-[#c92a2a] flex items-center justify-between gap-2 text-xs">
+                                <span className="font-black text-[#c92a2a]">
+                                  ¿Eliminar a "{acc.nombre}" de la Database?
+                                </span>
+                                <div className="flex gap-1.5 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmandoEliminarId(null)}
+                                    className="py-1 px-2 rounded-lg bg-white border border-[#ced4da] font-bold text-[11px] cursor-pointer"
+                                  >
+                                    Cancelar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={guardando}
+                                    onClick={() => ejecutarEliminarUsuario(acc.id, acc.nombre)}
+                                    className="py-1 px-2.5 rounded-lg bg-[#c92a2a] text-white font-black text-[11px] cursor-pointer"
+                                  >
+                                    {guardando ? 'Borrando...' : 'Sí, eliminar'}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          /* Formulario de Edición */
+                          <div className="flex flex-col gap-2 pt-1 border-t border-[#2b2140]/10">
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              <div>
+                                <label className="font-bold text-[#86542d] block">Nombre:</label>
+                                <input
+                                  type="text"
+                                  minLength={3}
+                                  maxLength={15}
+                                  value={editNombre}
+                                  onChange={(e) => setEditNombre(e.target.value)}
+                                  className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
+                                />
+                              </div>
+                              {esYoSupremo ? (
+                                <div>
+                                  <label className="font-bold text-[#86542d] block">Nueva Clave (Solo Dev):</label>
+                                  <input
+                                    type="password"
+                                    placeholder="Dejar vacío para no cambiar"
+                                    value={editClave}
+                                    onChange={(e) => setEditClave(e.target.value)}
+                                    className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs"
+                                  />
+                                </div>
+                              ) : (
+                                <div className="flex items-center text-[10px] text-[#86542d] italic pt-4">
+                                  🔒 Claves protegidas (Solo Dev)
+                                </div>
                               )}
                             </div>
-                          ) : (
-                            <span className="text-[10px] font-bold text-[#868e96]">Protegido</span>
-                          )}
-                        </div>
 
-                        {isConfirmingDelete && (
-                          <div className="p-2.5 bg-[#ffe3e3] rounded-xl border border-[#c92a2a] flex items-center justify-between gap-2 text-xs">
-                            <span className="font-black text-[#c92a2a]">
-                              ¿Eliminar a "{acc.nombre}" de la Base de Datos?
-                            </span>
-                            <div className="flex gap-1.5 shrink-0">
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              <div>
+                                <label className="font-bold text-[#86542d] block">Puntos:</label>
+                                <input
+                                  type="number"
+                                  value={editPuntos}
+                                  onChange={(e) => setEditPuntos(Number(e.target.value))}
+                                  className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
+                                />
+                              </div>
+                              <div>
+                                <label className="font-bold text-[#86542d] block">Victorias:</label>
+                                <input
+                                  type="number"
+                                  value={editVictorias}
+                                  onChange={(e) => setEditVictorias(Number(e.target.value))}
+                                  className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="text-xs">
+                              <label className="font-bold text-[#86542d] block">Rol Asignado:</label>
+                              {esYoSupremo ? (
+                                <select
+                                  value={editRol}
+                                  onChange={(e) => setEditRol(e.target.value as UserRole)}
+                                  className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs cursor-pointer"
+                                >
+                                  <option value="jugador">🎮 Jugador Normal</option>
+                                  <option value="mod">🔰 Moderador</option>
+                                  <option value="admin">🛡️ Administrador</option>
+                                  <option value="dev">👑 Dev Supremo</option>
+                                </select>
+                              ) : (
+                                <select
+                                  value={editRol === 'mod' ? 'mod' : 'jugador'}
+                                  onChange={(e) => setEditRol(e.target.value as UserRole)}
+                                  className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs cursor-pointer"
+                                >
+                                  <option value="jugador">🎮 Jugador Normal</option>
+                                  <option value="mod">🔰 Promover a Moderador</option>
+                                </select>
+                              )}
+                            </div>
+
+                            <div className="flex justify-end gap-2 mt-1">
                               <button
                                 type="button"
-                                onClick={() => setConfirmandoEliminarId(null)}
-                                className="py-1 px-2 rounded-lg bg-white border border-[#ced4da] font-bold text-[11px] cursor-pointer"
+                                onClick={() => setEditandoId(null)}
+                                className="px-2.5 py-1 rounded bg-[#f1f3f5] border border-[#2b2140] text-xs font-bold cursor-pointer"
                               >
                                 Cancelar
                               </button>
                               <button
                                 type="button"
                                 disabled={guardando}
-                                onClick={() => ejecutarEliminarUsuario(acc.id, acc.nombre)}
-                                className="py-1 px-2.5 rounded-lg bg-[#c92a2a] text-white font-black text-[11px] cursor-pointer"
+                                onClick={() => guardarEdicion(acc.id)}
+                                className="px-3 py-1 rounded bg-[#51cf66] text-[#134e20] border border-[#2b2140] text-xs font-black cursor-pointer shadow-sm"
                               >
-                                {guardando ? 'Borrando...' : 'Sí, eliminar'}
+                                {guardando ? 'Guardando...' : '💾 Guardar Cambios'}
                               </button>
                             </div>
                           </div>
                         )}
-                      </>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Zona de Peligro / Reset de Ranking */}
+                <div className="p-3 bg-[#fff5f5] rounded-2xl border-2 border-[#ffc9c9] shadow-sm flex flex-col gap-2 mt-1">
+                  <span className="font-black text-xs text-[#c92a2a] flex items-center gap-1.5">
+                    <span>⚠️</span> Reinicio de Ranking Semanal
+                  </span>
+                  <p className="text-[11px] text-[#e03131] font-medium leading-relaxed">
+                    {esYoSupremo
+                      ? 'Como Dev Supremo, puedes reiniciar inmediatamente todos los puntos del Ranking a cero.'
+                      : 'Como Admin, puedes solicitar formalmente al Dev el reinicio del ranking semanal.'}
+                  </p>
+
+                  {esYoSupremo ? (
+                    !confirmandoResetRanking ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          sounds.playClick();
+                          setConfirmandoResetRanking(true);
+                        }}
+                        className="w-full py-2 px-3 rounded-xl font-black text-xs bg-[#ffe3e3] text-[#c92a2a] border-2 border-[#ffa8a8] hover:bg-[#ffc9c9] cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                      >
+                        <span>🧹</span>
+                        <span>Reiniciar Todo el Ranking Global a Cero</span>
+                      </button>
                     ) : (
-                      <div className="flex flex-col gap-2 pt-1 border-t border-[#2b2140]/10">
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                          <div>
-                            <label className="font-bold text-[#86542d] block">Nombre:</label>
-                            <input
-                              type="text"
-                              minLength={3}
-                              maxLength={15}
-                              value={editNombre}
-                              onChange={(e) => setEditNombre(e.target.value)}
-                              className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
-                            />
-                          </div>
-                          <div>
-                            <label className="font-bold text-[#86542d] block">Nueva clave (opcional):</label>
-                            <input
-                              type="password"
-                              placeholder="Dejar vacío para no cambiar"
-                              value={editClave}
-                              onChange={(e) => setEditClave(e.target.value)}
-                              className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs"
-                            />
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                          <div>
-                            <label className="font-bold text-[#86542d] block">Puntos Ranking:</label>
-                            <input
-                              type="number"
-                              value={editPuntos}
-                              onChange={(e) => setEditPuntos(Number(e.target.value))}
-                              className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
-                            />
-                          </div>
-                          <div>
-                            <label className="font-bold text-[#86542d] block">Victorias:</label>
-                            <input
-                              type="number"
-                              value={editVictorias}
-                              onChange={(e) => setEditVictorias(Number(e.target.value))}
-                              className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Solo el Admin Supremo puede dar o quitar el rol de Admin a los demás */}
-                        {esYoSupremo ? (
-                          <div className="text-xs">
-                            <label className="font-bold text-[#86542d] block">
-                              Rol del Usuario (exclusivo Admin Supremo):
-                            </label>
-                            <select
-                              value={editRol}
-                              onChange={(e) => setEditRol(e.target.value as 'jugador' | 'admin')}
-                              className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs cursor-pointer"
-                            >
-                              <option value="jugador">🎮 Jugador Normal</option>
-                              <option value="admin">
-                                👑 Administrador (Entra sin clave maestra)
-                              </option>
-                            </select>
-                          </div>
-                        ) : (
-                          <div className="text-[11px] text-[#86542d] font-semibold">
-                            ℹ️ Solo el Admin Supremo puede otorgar o quitar el rol de Administrador.
-                          </div>
-                        )}
-
-                        <div className="flex justify-end gap-2 mt-1">
+                      <div className="p-3 bg-[#ffe3e3] rounded-xl border-2 border-[#c92a2a] flex flex-col gap-2">
+                        <span className="text-xs font-black text-[#a61e1e]">
+                          🚨 ¿CONFIRMAS reiniciar todo el Ranking Global a 0 en la Database D1?
+                        </span>
+                        <div className="flex gap-2">
                           <button
-                            onClick={() => setEditandoId(null)}
-                            className="px-2.5 py-1 rounded bg-[#f1f3f5] border border-[#2b2140] text-xs font-bold cursor-pointer"
+                            type="button"
+                            disabled={guardando}
+                            onClick={() => setConfirmandoResetRanking(false)}
+                            className="flex-1 py-1.5 rounded-xl bg-white border border-[#2b2140] text-xs font-bold text-[#2b2140] cursor-pointer"
                           >
                             Cancelar
                           </button>
                           <button
+                            type="button"
                             disabled={guardando}
-                            onClick={() => guardarEdicion(acc.id)}
-                            className="px-3 py-1 rounded bg-[#51cf66] text-[#134e20] border border-[#2b2140] text-xs font-black cursor-pointer shadow-sm"
+                            onClick={ejecutarResetRankingGlobal}
+                            className="flex-1 py-1.5 rounded-xl bg-[#c92a2a] border-2 border-[#2b2140] text-xs font-black text-white hover:bg-[#a61e1e] cursor-pointer shadow-sm"
                           >
-                            {guardando ? 'Guardando...' : 'Guardar en Base de Datos'}
+                            {guardando ? '⏳ Borrando...' : '✓ Sí, reiniciar'}
                           </button>
+                        </div>
+                      </div>
+                    )
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={guardando || Boolean(solicitudReset?.solicitada)}
+                      onClick={solicitarResetRanking}
+                      className="w-full py-2 px-3 rounded-xl font-black text-xs bg-[#fff3bf] text-[#d9480f] border-2 border-[#f59f00] hover:bg-[#ffe066] cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                    >
+                      <span>📨</span>
+                      <span>
+                        {solicitudReset?.solicitada
+                          ? '⏳ Solicitud enviada al Dev (Pendiente)'
+                          : 'Solicitar Reinicio de Ranking al Dev'}
+                      </span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Copia de Seguridad */}
+                <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-2">
+                  <span className="font-black text-xs text-[#2b2140] flex items-center gap-1.5">
+                    <span>📦</span> Copia de Seguridad JSON
+                  </span>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={handleExportBackup}
+                      className="py-1.5 px-3 rounded-xl font-bold bg-[#f8f9fa] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#e9ecef] cursor-pointer flex items-center justify-center gap-1"
+                    >
+                      📥 Descargar Copia
+                    </button>
+                    {esYoSupremo ? (
+                      <label className="py-1.5 px-3 rounded-xl font-bold bg-[#f8f9fa] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#e9ecef] cursor-pointer flex items-center justify-center gap-1">
+                        📤 Restaurar Copia
+                        <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
+                      </label>
+                    ) : (
+                      <div className="py-1.5 px-3 rounded-xl font-bold bg-[#f1f3f5] text-[#868e96] border border-[#ced4da] flex items-center justify-center text-[11px]">
+                        🔒 Restaurar (Dev)
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB 2: EDITOR VISUAL DE PERSONAJES */}
+            {adminTab === 'editor' && (
+              <div className="flex flex-col gap-3">
+                {/* Tarjeta de Previsualización en Vivo */}
+                <div className="p-4 bg-gradient-to-b from-[#f8f0fc] to-[#eebefa] rounded-3xl border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140] flex flex-col sm:flex-row items-center gap-4 justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-white/70 rounded-2xl border-2 border-[#2b2140] shadow-sm flex items-center justify-center">
+                      <CartoonCharacter
+                        size={84}
+                        color={editorColor}
+                        hat={editorHat}
+                        ropa={editorRopa}
+                        ropaColor={editorRopa !== 'ninguna' ? editorRopaColor : undefined}
+                        aura={editorAura}
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-black tracking-wider uppercase text-[#862e9c] bg-white px-2 py-0.5 rounded-full border border-[#da77f2]">
+                        Edición Exclusiva
+                      </span>
+                      <h4 className="text-base sm:text-lg font-black text-[#2b2140] leading-tight mt-1">
+                        {editorNombre.trim() || 'Sin Nombre'}
+                      </h4>
+                      <div className="flex flex-wrap gap-1 mt-1 text-[10px] font-bold">
+                        <span className="bg-white/80 px-1.5 py-0.5 rounded border border-[#2b2140]/20 text-[#495057]">
+                          👒 {editorHat}
+                        </span>
+                        <span className="bg-white/80 px-1.5 py-0.5 rounded border border-[#2b2140]/20 text-[#495057]">
+                          👕 {editorRopa}
+                        </span>
+                        <span className="bg-white/80 px-1.5 py-0.5 rounded border border-[#2b2140]/20 text-[#495057]">
+                          ✨ {editorAura}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Controles de Diseño */}
+                <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-2.5 text-xs">
+                  <div>
+                    <label className="font-black text-[#86542d] block mb-1">
+                      Nombre del Personaje Exclusivo:
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={24}
+                      value={editorNombre}
+                      onChange={(e) => setEditorNombre(e.target.value)}
+                      placeholder="Ej: Guerrero del Dragón, Neón Ninja..."
+                      className="w-full text-xs font-black bg-[#f8f9fa] border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none"
+                    />
+                  </div>
+
+                  {/* Selector de Color */}
+                  <div>
+                    <label className="font-black text-[#86542d] block mb-1">Color Base del Cuerpo:</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {coloresDisponibles.map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => {
+                            sounds.playClick();
+                            setEditorColor(c);
+                          }}
+                          style={{ backgroundColor: c }}
+                          className={`w-7 h-7 rounded-full border-2 border-[#2b2140] transition-transform cursor-pointer ${
+                            editorColor === c ? 'scale-115 ring-3 ring-[#2b2140] shadow-md' : 'hover:scale-105'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Selector de Sombreros */}
+                  <div>
+                    <label className="font-black text-[#86542d] block mb-1">Sombrero / Accesorio Cabeza:</label>
+                    <div className="flex flex-wrap gap-1">
+                      {sombrerosDisponibles.map((h) => (
+                        <button
+                          key={h}
+                          type="button"
+                          onClick={() => {
+                            sounds.playClick();
+                            setEditorHat(h);
+                          }}
+                          className={`py-1 px-2 rounded-lg text-[11px] font-bold border capitalize transition-all cursor-pointer ${
+                            editorHat === h
+                              ? 'bg-[#ffd43b] text-[#5c3c00] border-[#2b2140] font-black shadow-sm'
+                              : 'bg-[#f8f9fa] text-[#495057] border-[#ced4da] hover:bg-[#e9ecef]'
+                          }`}
+                        >
+                          {h}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Selector de Ropa */}
+                  <div>
+                    <label className="font-black text-[#86542d] block mb-1">Ropa & Atuendo Exclusivo:</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1">
+                      {ropasDisponibles.map((r) => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          onClick={() => {
+                            sounds.playClick();
+                            setEditorRopa(r.id);
+                          }}
+                          className={`py-1.5 px-2 rounded-xl text-[11px] font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                            editorRopa === r.id
+                              ? 'bg-[#d3f9d8] text-[#134e20] border-[#2b2140] font-black shadow-sm'
+                              : 'bg-[#f8f9fa] text-[#495057] border-[#ced4da] hover:bg-[#e9ecef]'
+                          }`}
+                        >
+                          <span>{r.icon}</span>
+                          <span className="truncate">{r.label}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Selector de Color de Ropa */}
+                    {editorRopa !== 'ninguna' && (
+                      <div className="mt-2 p-2 bg-[#f8f9fa] rounded-xl border border-[#ced4da]">
+                        <label className="font-bold text-[#86542d] block text-[11px] mb-1">
+                          🎨 Color del Atuendo / Ropa:
+                        </label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {coloresRopaDisponibles.map((rc) => (
+                            <button
+                              key={rc}
+                              type="button"
+                              onClick={() => {
+                                sounds.playClick();
+                                setEditorRopaColor(rc);
+                              }}
+                              style={{ backgroundColor: rc }}
+                              className={`w-6 h-6 rounded-full border-2 border-[#2b2140] transition-transform cursor-pointer ${
+                                editorRopaColor === rc ? 'scale-120 ring-2 ring-[#2b2140] shadow-md' : 'hover:scale-105'
+                              }`}
+                            />
+                          ))}
                         </div>
                       </div>
                     )}
                   </div>
-                );
-              })}
-            </div>
 
-            {/* Zona de Peligro: Borrar Ranking Global con Confirmación integrada */}
-            <div className="p-3 bg-[#fff5f5] rounded-2xl border-2 border-[#ffc9c9] shadow-sm flex flex-col gap-2 mt-2">
-              <span className="font-black text-xs text-[#c92a2a] flex items-center gap-1.5">
-                <span>⚠️</span> Zona de Peligro: Reiniciar Ranking Global
-              </span>
-              <p className="text-[11px] text-[#e03131] font-medium leading-relaxed">
-                Borra todas las entradas del Ranking Global en la Base de Datos y reinicia a 0 los puntos, partidas y victorias de todos los jugadores.
-              </p>
+                  {/* Selector de Aura */}
+                  <div>
+                    <label className="font-black text-[#86542d] block mb-1">Efecto Especial de Aura:</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-1">
+                      {aurasDisponibles.map((a) => (
+                        <button
+                          key={a.id}
+                          type="button"
+                          onClick={() => {
+                            sounds.playClick();
+                            setEditorAura(a.id);
+                          }}
+                          className={`py-1.5 px-2 rounded-xl text-[11px] font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                            editorAura === a.id
+                              ? 'bg-[#e7f5ff] text-[#1864ab] border-[#2b2140] font-black shadow-sm'
+                              : 'bg-[#f8f9fa] text-[#495057] border-[#ced4da] hover:bg-[#e9ecef]'
+                          }`}
+                        >
+                          <span>{a.icon}</span>
+                          <span className="truncate">{a.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
 
-              {!confirmandoResetRanking ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    sounds.playClick();
-                    setConfirmandoResetRanking(true);
-                  }}
-                  className="w-full py-2 px-3 rounded-xl font-black text-xs bg-[#ffe3e3] text-[#c92a2a] border-2 border-[#ffa8a8] hover:bg-[#ffc9c9] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
-                >
-                  <span>🧹</span>
-                  <span>Reiniciar Todo el Ranking Global a Cero</span>
-                </button>
-              ) : (
-                <div className="p-3 bg-[#ffe3e3] rounded-xl border-2 border-[#c92a2a] flex flex-col gap-2 animate-[fadeIn_0.15s_ease-out]">
-                  <span className="text-xs font-black text-[#a61e1e]">
-                    🚨 ¿CONFIRMAS borrar TODO el Ranking Global en la Base de Datos? Esta acción dejará en 0 puntos a todos los jugadores.
-                  </span>
-                  <div className="flex gap-2">
+                {/* Acciones del Editor */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {/* Opción 1: Regalar a un Jugador */}
+                  <div className="p-3 bg-[#e7f5ff] rounded-2xl border-2 border-[#1971c2] flex flex-col gap-2">
+                    <span className="text-xs font-black text-[#1864ab] flex items-center gap-1">
+                      <span>🎁</span> Opción A: Regalar a un Jugador
+                    </span>
+                    <select
+                      value={editorTargetId}
+                      onChange={(e) => setEditorTargetId(e.target.value)}
+                      className="w-full text-xs font-bold bg-white border-2 border-[#1971c2] rounded-xl px-2 py-1.5 outline-none cursor-pointer"
+                    >
+                      <option value="">Selecciona destinatario...</option>
+                      {listaJugadoresNormales.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nombre} ({p.puntos} pts)
+                        </option>
+                      ))}
+                    </select>
                     <button
                       type="button"
-                      disabled={guardando}
-                      onClick={() => setConfirmandoResetRanking(false)}
-                      className="flex-1 py-2 rounded-xl bg-white border border-[#2b2140] text-xs font-bold text-[#2b2140] hover:bg-[#f8f9fa] cursor-pointer"
+                      disabled={guardandoEditor || !editorTargetId}
+                      onClick={handleRegalarPersonaje}
+                      className="w-full py-2 rounded-xl font-black text-xs bg-[#339af0] text-white border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#228be6] disabled:opacity-50 cursor-pointer"
                     >
-                      Cancelar
+                      {guardandoEditor ? '⏳ Entregando...' : '🎁 Otorgar a Inventario'}
                     </button>
+                  </div>
+
+                  {/* Opción 2: Fijar como Premio Semanal */}
+                  <div className="p-3 bg-[#fff9db] rounded-2xl border-2 border-[#f59f00] flex flex-col gap-2 justify-between">
+                    <div>
+                      <span className="text-xs font-black text-[#d9480f] flex items-center gap-1">
+                        <span>🏆</span> Opción B: Premio de Torneo
+                      </span>
+                      <p className="text-[11px] text-[#7f4f10] font-medium leading-tight mt-1">
+                        El jugador que termine en 1er lugar del torneo el domingo se lo llevará de forma exclusiva a su inventario.
+                      </p>
+                    </div>
                     <button
                       type="button"
-                      disabled={guardando}
-                      onClick={ejecutarResetRankingGlobal}
-                      className="flex-1 py-2 rounded-xl bg-[#c92a2a] border-2 border-[#2b2140] text-xs font-black text-white hover:bg-[#a61e1e] cursor-pointer shadow-sm"
+                      disabled={guardandoEditor}
+                      onClick={handleFijarPremioSemanal}
+                      className="w-full py-2 rounded-xl font-black text-xs bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer"
                     >
-                      {guardando ? '⏳ Borrando en Base de Datos...' : '✓ Sí, borrar Ranking Global'}
+                      {guardandoEditor ? '⏳ Fijando...' : '🏆 Fijar como Premio Semanal'}
                     </button>
                   </div>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
-            {/* Respaldo */}
-            <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-2 mt-1">
-              <span className="font-black text-xs text-[#2b2140] flex items-center gap-1.5">
-                <span>📦</span> Copia de Seguridad JSON
-              </span>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <button
-                  onClick={handleExportBackup}
-                  className="py-1.5 px-3 rounded-xl font-bold bg-[#f8f9fa] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#e9ecef] cursor-pointer flex items-center justify-center gap-1"
-                >
-                  📥 Descargar Copia
-                </button>
-                {esYoSupremo ? (
-                  <label className="py-1.5 px-3 rounded-xl font-bold bg-[#f8f9fa] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#e9ecef] cursor-pointer flex items-center justify-center gap-1">
-                    📤 Restaurar Copia
-                    <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
-                  </label>
-                ) : (
-                  <div className="py-1.5 px-3 rounded-xl font-bold bg-[#f1f3f5] text-[#868e96] border border-[#ced4da] flex items-center justify-center text-[11px]">
-                    🔒 Restaurar (Supremo)
+            {/* TAB 3: TORNEO & PREMIOS */}
+            {adminTab === 'torneo' && (
+              <div className="flex flex-col gap-3">
+                {/* Premio Semanal Activo */}
+                <div className="p-3.5 bg-gradient-to-r from-[#fff9db] to-[#ffe8cc] rounded-2xl border-2 border-[#f59f00] shadow-sm flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-[#d9480f] flex items-center gap-1.5">
+                      <span>🏆</span> Premio Activo para el Ganador de la Semana
+                    </span>
+                    <span className="text-[10px] bg-white px-2 py-0.5 rounded-full border border-[#f59f00] font-bold text-[#d9480f]">
+                      Domingo medianoche
+                    </span>
                   </div>
+
+                  {premioActivo ? (
+                    <div className="flex items-center gap-3 bg-white/80 p-2.5 rounded-xl border border-[#f59f00]/40">
+                      <CartoonCharacter
+                        size={56}
+                        color={premioActivo.color}
+                        hat={premioActivo.hat}
+                        ropa={premioActivo.ropa}
+                        ropaColor={premioActivo.ropaColor}
+                        aura={premioActivo.aura}
+                      />
+                      <div className="min-w-0">
+                        <h4 className="font-black text-sm text-[#2b2140] truncate">{premioActivo.nombre}</h4>
+                        <span className="text-[11px] text-[#86542d] font-bold block">
+                          Atuendo: {premioActivo.ropa || 'básico'} · Aura: {premioActivo.aura || 'ninguna'}
+                        </span>
+                        <span className="text-[10px] text-[#2b8a3e] font-black">
+                          ✓ Se otorga automáticamente al 1er puesto del Ranking
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-white/70 rounded-xl text-center text-xs text-[#86542d] font-bold">
+                      No hay premio exclusivo activo esta semana. Diseña uno en la pestaña <strong>[🎨 Editor de Personajes]</strong> y fíjalo como premio.
+                    </div>
+                  )}
+                </div>
+
+                {/* Configuración de Puntos Semanales */}
+                <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-3">
+                  <div>
+                    <h4 className="text-xs font-black text-[#2b2140] flex items-center gap-1.5">
+                      <span>⚙️</span> Escala de Puntos Semanales
+                    </h4>
+                    <p className="text-[11px] text-[#86542d] font-medium mt-0.5">
+                      Puntos sumados al Ranking Global al cerrar el Torneo Semanal cada domingo.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                    <div className="p-2 bg-[#fff9db] rounded-xl border border-[#ffd43b]">
+                      <label className="font-black text-[#5c3c00] block text-[11px]">🥇 1er Puesto:</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={500}
+                        value={puntos1}
+                        onChange={(e) => setPuntos1(Number(e.target.value))}
+                        className="w-full bg-white border border-[#2b2140] rounded px-1.5 py-1 font-black text-xs mt-1"
+                      />
+                    </div>
+                    <div className="p-2 bg-[#f1f3f5] rounded-xl border border-[#ced4da]">
+                      <label className="font-black text-[#495057] block text-[11px]">🥈 2do Puesto:</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={500}
+                        value={puntos2}
+                        onChange={(e) => setPuntos2(Number(e.target.value))}
+                        className="w-full bg-white border border-[#2b2140] rounded px-1.5 py-1 font-black text-xs mt-1"
+                      />
+                    </div>
+                    <div className="p-2 bg-[#ffe8cc] rounded-xl border border-[#ffa94d]">
+                      <label className="font-black text-[#d9480f] block text-[11px]">🥉 3er Puesto:</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={500}
+                        value={puntos3}
+                        onChange={(e) => setPuntos3(Number(e.target.value))}
+                        className="w-full bg-white border border-[#2b2140] rounded px-1.5 py-1 font-black text-xs mt-1"
+                      />
+                    </div>
+                    <div className="p-2 bg-[#e7f5ff] rounded-xl border border-[#a5d8ff]">
+                      <label className="font-black text-[#1864ab] block text-[11px]">🎮 Participar:</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={puntosPart}
+                        onChange={(e) => setPuntosPart(Number(e.target.value))}
+                        className="w-full bg-white border border-[#2b2140] rounded px-1.5 py-1 font-black text-xs mt-1"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={guardandoTorneo}
+                    onClick={handleGuardarPuntosTorneo}
+                    className="w-full py-2 rounded-xl font-black text-xs bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#40c057] cursor-pointer"
+                  >
+                    {guardandoTorneo ? '⏳ Guardando en Database...' : '💾 Guardar Escala de Puntos en Database'}
+                  </button>
+                </div>
+
+                {/* Requisitos de Desbloqueo de Personajes Base (Solo Dev) */}
+                {esYoSupremo && (
+                  <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-3">
+                    <div>
+                      <h4 className="text-xs font-black text-[#2b2140] flex items-center gap-1.5">
+                        <span>🔓</span> Requisitos de Desbloqueo de Personajes Base (Solo Dev)
+                      </h4>
+                      <p className="text-[11px] text-[#86542d] font-medium mt-0.5">
+                        Puntos requeridos en el Ranking Global para que cada personaje base aparezca y se desbloquee a los usuarios. Los 5 iniciales siempre están disponibles desde 0 pts.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                      {[
+                        { id: 'gatito', nombre: 'Gatito Curioso', icon: '🐱' },
+                        { id: 'zorro', nombre: 'Zorro Astuto', icon: '🦊' },
+                        { id: 'robot', nombre: 'Cyber Bot', icon: '🤖' },
+                        { id: 'dragon', nombre: 'Dragón Guardián', icon: '🐲' },
+                        { id: 'ninja', nombre: 'Ninja Maestro', icon: '🥷' },
+                      ].map((item) => (
+                        <div key={item.id} className="p-2 bg-[#f8f9fa] rounded-xl border border-[#2b2140]/20 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg">{item.icon}</span>
+                            <div>
+                              <span className="font-black text-xs text-[#2b2140] block">{item.nombre}</span>
+                              <span className="text-[10px] text-[#86542d] block">Puntos mínimos:</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              min={0}
+                              max={10000}
+                              value={desbloqueosDev[item.id] ?? 0}
+                              onChange={(e) => {
+                                const val = Math.max(0, Number(e.target.value));
+                                setDesbloqueosDev((prev) => ({ ...prev, [item.id]: val }));
+                              }}
+                              className="w-16 bg-white border border-[#2b2140] rounded px-1.5 py-1 font-black text-xs text-center"
+                            />
+                            <span className="text-[11px] font-bold text-[#86542d]">pts</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={guardandoDesbloqueos}
+                      onClick={handleGuardarDesbloqueosBase}
+                      className="w-full py-2 rounded-xl font-black text-xs bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer"
+                    >
+                      {guardandoDesbloqueos ? '⏳ Guardando Requisitos...' : '💾 Guardar Requisitos de Desbloqueo en Database'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Submodal Inspector de Inventario */}
+        {inspectingUser && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-3 bg-black/70 backdrop-blur-sm animate-[fadeIn_0.15s_ease-out]">
+            <div className="relative w-full max-w-md bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-4 shadow-[0_10px_0_#2b2140] flex flex-col max-h-[85vh]">
+              <div className="flex items-center justify-between pb-2 mb-2 border-b-2 border-[#2b2140]/15">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">🎒</span>
+                  <div>
+                    <h4 className="font-black text-sm text-[#2b2140] leading-tight">
+                      Inventario de {inspectingUser.nombre}
+                    </h4>
+                    <span className="text-[10px] text-[#86542d] font-bold">
+                      Personajes exclusivos coleccionados
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setInspectingUser(null)}
+                  className="w-7 h-7 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-xs font-black hover:bg-[#ffe3e3] cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-2 my-1">
+                {(!inspectingUser.inventario?.personajes || inspectingUser.inventario.personajes.length === 0) ? (
+                  <div className="p-6 text-center text-xs text-[#86542d] font-bold">
+                    Este jugador no tiene personajes exclusivos aún en su inventario.
+                    <br />
+                    Puedes regalarle uno desde la pestaña <strong>[🎨 Editor de Personajes]</strong>.
+                  </div>
+                ) : (
+                  inspectingUser.inventario.personajes.map((char) => (
+                    <div
+                      key={char.id}
+                      className="p-2.5 rounded-2xl border-2 border-[#2b2140] bg-white flex items-center justify-between gap-2 shadow-sm"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <CartoonCharacter
+                          size={44}
+                          color={char.color}
+                          hat={char.hat}
+                          ropa={char.ropa}
+                          ropaColor={char.ropaColor}
+                          aura={char.aura}
+                        />
+                        <div className="min-w-0">
+                          <span className="font-black text-xs text-[#2b2140] block truncate">
+                            {char.nombre}
+                          </span>
+                          <span className="text-[10px] text-[#86542d] block">
+                            Atuendo: {char.ropa || 'ninguno'} · Aura: {char.aura || 'ninguna'}
+                          </span>
+                          <span className="text-[9px] text-[#2b8a3e] font-black block">
+                            {char.origen?.tipo === 'torneo_semanal'
+                              ? '🏆 Premio Torneo Semanal'
+                              : char.origen?.tipo === 'regalo_dev'
+                              ? '👑 Regalo Dev Supremo'
+                              : `🎁 Regalo de ${char.origen?.otorgadoPor || 'Admin'}`}
+                            {char.origen?.fecha ? ` · ${char.origen.fecha}` : ''}
+                          </span>
+                        </div>
+                      </div>
+
+                      {esYoSupremo && (
+                        <button
+                          type="button"
+                          onClick={() => handleQuitarPersonaje(inspectingUser.id, char.id)}
+                          className="py-1 px-2 rounded-lg bg-[#ffe3e3] border border-[#c92a2a] text-[10px] font-black text-[#c92a2a] hover:bg-[#ffc9c9] cursor-pointer shrink-0"
+                          title="Retirar personaje del inventario del usuario"
+                        >
+                          🗑️ Retirar
+                        </button>
+                      )}
+                    </div>
+                  ))
                 )}
               </div>
             </div>

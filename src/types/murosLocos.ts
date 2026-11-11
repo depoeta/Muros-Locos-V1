@@ -15,7 +15,63 @@ export type HatType =
   | 'robot'
   | 'dragon'
   | 'ninja'
-  | 'bot_cpu';
+  | 'bot_cpu'
+  | 'navidad'
+  | 'granjero'
+  | 'vikingo'
+  | 'copa'
+  | 'gorra'
+  | 'boina'
+  | 'espacial';
+
+export type PersonajeRopaType =
+  | 'ninguna'
+  | 'capa'
+  | 'armadura'
+  | 'tunica'
+  | 'smoking'
+  | 'cinturon'
+  | 'alas';
+
+export type PersonajeAuraType =
+  | 'ninguna'
+  | 'dorada'
+  | 'fuego'
+  | 'ciber'
+  | 'arcoiris';
+
+export type UserRole = 'dev' | 'admin' | 'mod' | 'jugador';
+
+export interface PersonajeColeccionable {
+  id: string;
+  nombre: string;
+  color: string;
+  hat: HatType;
+  ropa?: PersonajeRopaType;
+  ropaColor?: string;
+  aura?: PersonajeAuraType;
+  descripcion?: string;
+  origen: {
+    tipo: 'torneo_semanal' | 'regalo_dev' | 'regalo_admin';
+    otorgadoPor: string;
+    fecha: string;
+    semanaTorneo?: string;
+  };
+}
+
+export interface UserInventario {
+  personajes: PersonajeColeccionable[];
+  activoId?: string;
+}
+
+export interface SolicitudResetRanking {
+  solicitada: boolean;
+  porNombre: string;
+  porId: string;
+  fecha: string;
+  motivo?: string;
+}
+
 export type EstiloVisual = 'clasico' | 'minimalista';
 export type WallOrientation = 'H' | 'V';
 
@@ -28,17 +84,31 @@ export interface CharacterDef {
   descripcion: string;
 }
 
+export type ConfigDesbloqueoPersonajes = Record<string, number>;
+
 export const PERSONAJES_REGISTRO: CharacterDef[] = [
-  { id: 'corona', label: 'Corona', icon: '👑', defaultColor: '#ff6b6b', puntosRequeridos: 0, descripcion: 'Inicial' },
+  // 5 Personajes Iniciales Disponibles desde el principio (0 pts)
+  { id: 'corona', label: 'Corona Real', icon: '👑', defaultColor: '#ff6b6b', puntosRequeridos: 0, descripcion: 'Inicial' },
   { id: 'pompon', label: 'Pompón', icon: '🧶', defaultColor: '#4dabf7', puntosRequeridos: 0, descripcion: 'Inicial' },
   { id: 'antena', label: 'Antena', icon: '📡', defaultColor: '#ffd43b', puntosRequeridos: 0, descripcion: 'Inicial' },
   { id: 'brote', label: 'Brote', icon: '🌱', defaultColor: '#51cf66', puntosRequeridos: 0, descripcion: 'Inicial' },
-  { id: 'mago', label: 'Mago', icon: '🧙', defaultColor: '#9775fa', puntosRequeridos: 0, descripcion: 'Inicial' },
-  { id: 'gatito', label: 'Gatito', icon: '🐱', defaultColor: '#f06595', puntosRequeridos: 0, descripcion: 'Inicial' },
-  { id: 'zorro', label: 'Zorro Astuto', icon: '🦊', defaultColor: '#f76707', puntosRequeridos: 25, descripcion: 'Requiere 25 pts' },
-  { id: 'robot', label: 'Cyber Bot', icon: '🤖', defaultColor: '#22b8cf', puntosRequeridos: 60, descripcion: 'Requiere 60 pts' },
-  { id: 'dragon', label: 'Dragón Mítico', icon: '🐲', defaultColor: '#12b886', puntosRequeridos: 120, descripcion: 'Requiere 120 pts' },
-  { id: 'ninja', label: 'Sombra Ninja', icon: '🥷', defaultColor: '#495057', puntosRequeridos: 200, descripcion: 'Requiere 200 pts' },
+  { id: 'mago', label: 'Mago Místico', icon: '🧙', defaultColor: '#9775fa', puntosRequeridos: 0, descripcion: 'Inicial' },
+
+  // Personajes Desbloqueables por Puntos (Ajustables por el Dev)
+  { id: 'gatito', label: 'Gatito Curioso', icon: '🐱', defaultColor: '#f06595', puntosRequeridos: 30, descripcion: 'Requiere 30 pts' },
+  { id: 'zorro', label: 'Zorro Astuto', icon: '🦊', defaultColor: '#f76707', puntosRequeridos: 60, descripcion: 'Requiere 60 pts' },
+  { id: 'robot', label: 'Cyber Bot', icon: '🤖', defaultColor: '#22b8cf', puntosRequeridos: 120, descripcion: 'Requiere 120 pts' },
+  { id: 'dragon', label: 'Dragón Mítico', icon: '🐲', defaultColor: '#12b886', puntosRequeridos: 200, descripcion: 'Requiere 200 pts' },
+  { id: 'ninja', label: 'Sombra Ninja', icon: '🥷', defaultColor: '#495057', puntosRequeridos: 300, descripcion: 'Requiere 300 pts' },
+
+  // Nuevos Sombreros & Personajes Temáticos
+  { id: 'navidad', label: 'Gorro Navideño', icon: '🎅', defaultColor: '#e03131', puntosRequeridos: 400, descripcion: 'Requiere 400 pts' },
+  { id: 'granjero', label: 'Granjero', icon: '🌾', defaultColor: '#f59f00', puntosRequeridos: 500, descripcion: 'Requiere 500 pts' },
+  { id: 'vikingo', label: 'Casco Vikingo', icon: '🪓', defaultColor: '#868e96', puntosRequeridos: 650, descripcion: 'Requiere 650 pts' },
+  { id: 'copa', label: 'Chistera Elegante', icon: '🎩', defaultColor: '#212529', puntosRequeridos: 800, descripcion: 'Requiere 800 pts' },
+  { id: 'gorra', label: 'Gorra Deportiva', icon: '🧢', defaultColor: '#1971c2', puntosRequeridos: 950, descripcion: 'Requiere 950 pts' },
+  { id: 'boina', label: 'Boina Artista', icon: '🎨', defaultColor: '#ae3ec9', puntosRequeridos: 1100, descripcion: 'Requiere 1100 pts' },
+  { id: 'espacial', label: 'Casco Espacial', icon: '🚀', defaultColor: '#3bc9db', puntosRequeridos: 1300, descripcion: 'Requiere 1300 pts' },
 ];
 
 export interface Coord {
@@ -320,11 +390,15 @@ export interface PublicRoomInfo {
 export interface UserAccount {
   id: string;
   nombre: string;
-  clave: string;
-  rol: 'jugador' | 'admin';
+  clave?: string;
+  rol: UserRole;
   esSupremo?: boolean;
   avatarColor: string;
   avatarHat: HatType;
+  avatarRopa?: PersonajeRopaType;
+  avatarRopaColor?: string;
+  avatarAura?: PersonajeAuraType;
+  inventario?: UserInventario;
   puntos: number;
   partidas: number;
   victorias: number;
@@ -348,6 +422,9 @@ export interface WeeklyPlayerEntry {
   nombre: string;
   avatarColor: string;
   avatarHat: HatType;
+  avatarRopa?: PersonajeRopaType;
+  avatarRopaColor?: string;
+  avatarAura?: PersonajeAuraType;
   puntos: number;
   partidas: number;
   victorias: number;
@@ -358,7 +435,9 @@ export interface WeeklyPlayerEntry {
 export interface WeeklyBoardData {
   semanaId: string;
   premiada?: boolean;
-  premiados?: { nombre: string; puesto: number; bono: number }[];
+  premiados?: { nombre: string; puesto: number; bono: number; personajePremio?: PersonajeColeccionable }[];
+  premioSemanal?: PersonajeColeccionable;
+  puntosConfig?: { primerLugar: number; segundoLugar: number; tercerLugar: number };
   jugadores: Record<string, WeeklyPlayerEntry>;
 }
 

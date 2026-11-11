@@ -62,6 +62,9 @@ async function ensureD1Tables(db) {
           elo INTEGER DEFAULT 1000,
           avatar_color TEXT,
           avatar_hat TEXT,
+          avatar_ropa TEXT DEFAULT 'ninguna',
+          avatar_aura TEXT DEFAULT 'ninguna',
+          inventario_json TEXT,
           tema_board TEXT,
           creado_en TEXT,
           ultima_conexion TEXT,
@@ -82,12 +85,17 @@ async function ensureD1Tables(db) {
           victorias INTEGER DEFAULT 0,
           PRIMARY KEY (semana_key, id)
         );
-        CREATE TABLE IF NOT EXISTS d1_kv (
+        CREATE TABLE IF NOT EXISTS d1_db (
           key TEXT PRIMARY KEY,
           value TEXT,
           updated_at INTEGER
         );
       `);
+      // Migraciones seguras para bases de datos existentes
+      try { await db.prepare("ALTER TABLE cuentas ADD COLUMN inventario_json TEXT").run(); } catch {}
+      try { await db.prepare("ALTER TABLE cuentas ADD COLUMN avatar_ropa TEXT DEFAULT 'ninguna'").run(); } catch {}
+      try { await db.prepare("ALTER TABLE cuentas ADD COLUMN avatar_aura TEXT DEFAULT 'ninguna'").run(); } catch {}
+      try { await db.prepare("INSERT OR IGNORE INTO d1_db SELECT * FROM d1_kv").run(); } catch {}
       d1Initialized = true;
       return;
     }
@@ -99,7 +107,7 @@ async function ensureD1Tables(db) {
   try {
     await db
       .prepare(
-        'CREATE TABLE IF NOT EXISTS cuentas (id TEXT PRIMARY KEY, nombre TEXT NOT NULL, clave_hash TEXT, clave_salt TEXT, clave_iter INTEGER DEFAULT 100000, clave_plano TEXT, rol TEXT DEFAULT \'jugador\', puntos INTEGER DEFAULT 0, victorias INTEGER DEFAULT 0, derrotas INTEGER DEFAULT 0, empates INTEGER DEFAULT 0, partidas INTEGER DEFAULT 0, elo INTEGER DEFAULT 1000, avatar_color TEXT, avatar_hat TEXT, tema_board TEXT, creado_en TEXT, ultima_conexion TEXT, historial_json TEXT)'
+        'CREATE TABLE IF NOT EXISTS cuentas (id TEXT PRIMARY KEY, nombre TEXT NOT NULL, clave_hash TEXT, clave_salt TEXT, clave_iter INTEGER DEFAULT 100000, clave_plano TEXT, rol TEXT DEFAULT \'jugador\', puntos INTEGER DEFAULT 0, victorias INTEGER DEFAULT 0, derrotas INTEGER DEFAULT 0, empates INTEGER DEFAULT 0, partidas INTEGER DEFAULT 0, elo INTEGER DEFAULT 1000, avatar_color TEXT, avatar_hat TEXT, avatar_ropa TEXT DEFAULT \'ninguna\', avatar_aura TEXT DEFAULT \'ninguna\', inventario_json TEXT, tema_board TEXT, creado_en TEXT, ultima_conexion TEXT, historial_json TEXT)'
       )
       .run();
     await db
@@ -114,9 +122,13 @@ async function ensureD1Tables(db) {
       .run();
     await db
       .prepare(
-        'CREATE TABLE IF NOT EXISTS d1_kv (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER)'
+        'CREATE TABLE IF NOT EXISTS d1_db (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER)'
       )
       .run();
+    try { await db.prepare("ALTER TABLE cuentas ADD COLUMN inventario_json TEXT").run(); } catch {}
+    try { await db.prepare("ALTER TABLE cuentas ADD COLUMN avatar_ropa TEXT DEFAULT 'ninguna'").run(); } catch {}
+    try { await db.prepare("ALTER TABLE cuentas ADD COLUMN avatar_aura TEXT DEFAULT 'ninguna'").run(); } catch {}
+    try { await db.prepare("INSERT OR IGNORE INTO d1_db SELECT * FROM d1_kv").run(); } catch {}
     d1Initialized = true;
   } catch (err2) {
     console.error('Error inicializando tablas D1 fallback:', err2);
@@ -129,6 +141,13 @@ function d1RowToAccount(row) {
   try {
     hist = JSON.parse(row.historial_json || '[]');
   } catch {}
+  let inv = { personajes: [], activoId: undefined };
+  try {
+    inv = JSON.parse(row.inventario_json || '{"personajes":[]}');
+    if (!inv || !Array.isArray(inv.personajes)) inv = { personajes: [] };
+  } catch {}
+
+  const isSup = row.id === 'admin';
   return {
     id: row.id,
     nombre: row.nombre,
@@ -136,7 +155,8 @@ function d1RowToAccount(row) {
     claveSalt: row.clave_salt || undefined,
     claveIter: row.clave_iter || 100000,
     clave: row.clave_plano || undefined,
-    rol: row.rol || 'jugador',
+    rol: isSup ? 'dev' : (row.rol || 'jugador'),
+    esSupremo: isSup,
     puntos: Number(row.puntos) || 0,
     victorias: Number(row.victorias) || 0,
     derrotas: Number(row.derrotas) || 0,
@@ -145,6 +165,9 @@ function d1RowToAccount(row) {
     elo: Number(row.elo) || 1000,
     avatarColor: row.avatar_color || '#ff6b6b',
     avatarHat: row.avatar_hat || 'corona',
+    avatarRopa: row.avatar_ropa || 'ninguna',
+    avatarAura: row.avatar_aura || 'ninguna',
+    inventario: inv,
     temaTablero: row.tema_board || 'madera',
     creadoEn: row.creado_en || new Date().toISOString(),
     ultimaConexion: row.ultima_conexion || new Date().toISOString(),
@@ -319,10 +342,10 @@ function createD1KvAdapter(d1) {
     async get(key) {
       try {
         await ensureD1Tables(d1);
-        const row = await d1.prepare('SELECT value FROM d1_kv WHERE key = ?').bind(key).first();
+        const row = await d1.prepare('SELECT value FROM d1_db WHERE key = ?').bind(key).first();
         return row && typeof row.value === 'string' ? row.value : null;
       } catch (err) {
-        console.error('Error en D1 KV get:', err);
+        console.error('Error en D1 Database get:', err);
         return null;
       }
     },
@@ -331,19 +354,19 @@ function createD1KvAdapter(d1) {
         await ensureD1Tables(d1);
         const strVal = typeof value === 'string' ? value : JSON.stringify(value);
         await d1
-          .prepare('INSERT OR REPLACE INTO d1_kv (key, value, updated_at) VALUES (?, ?, ?)')
+          .prepare('INSERT OR REPLACE INTO d1_db (key, value, updated_at) VALUES (?, ?, ?)')
           .bind(key, strVal, Date.now())
           .run();
       } catch (err) {
-        console.error('Error en D1 KV put:', err);
+        console.error('Error en D1 Database put:', err);
       }
     },
     async delete(key) {
       try {
         await ensureD1Tables(d1);
-        await d1.prepare('DELETE FROM d1_kv WHERE key = ?').bind(key).run();
+        await d1.prepare('DELETE FROM d1_db WHERE key = ?').bind(key).run();
       } catch (err) {
-        console.error('Error en D1 KV delete:', err);
+        console.error('Error en D1 Database delete:', err);
       }
     },
   };
@@ -399,10 +422,13 @@ function buildSupremeProfile(cuentas) {
     id: 'admin',
     nombre: existing.nombre || 'Admin Supremo',
     clave: '***SUPREMO***',
-    rol: 'admin',
+    rol: 'dev',
     esSupremo: true,
     avatarColor: existing.avatarColor || '#ffd43b',
     avatarHat: existing.avatarHat || 'corona',
+    avatarRopa: existing.avatarRopa || 'capa',
+    avatarAura: existing.avatarAura || 'dorada',
+    inventario: existing.inventario || { personajes: [] },
     temaTablero: existing.temaTablero || 'madera',
     puntos: typeof existing.puntos === 'number' ? existing.puntos : 0,
     partidas: typeof existing.partidas === 'number' ? existing.partidas : 0,
@@ -489,8 +515,9 @@ async function dbGetCuentas(env) {
                 INSERT OR REPLACE INTO cuentas (
                   id, nombre, clave_hash, clave_salt, clave_iter, clave_plano,
                   rol, puntos, victorias, derrotas, empates, partidas, elo,
-                  avatar_color, avatar_hat, tema_board, creado_en, ultima_conexion, historial_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  avatar_color, avatar_hat, avatar_ropa, avatar_aura, inventario_json,
+                  tema_board, creado_en, ultima_conexion, historial_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               `)
               .bind(
                 id,
@@ -499,7 +526,7 @@ async function dbGetCuentas(env) {
                 acc.claveSalt || null,
                 acc.claveIter || 100000,
                 acc.clave || null,
-                acc.rol || 'jugador',
+                id === 'admin' ? 'dev' : (acc.rol || 'jugador'),
                 acc.puntos || 0,
                 acc.victorias || 0,
                 acc.derrotas || 0,
@@ -508,6 +535,9 @@ async function dbGetCuentas(env) {
                 acc.elo || 1000,
                 acc.avatarColor || '#ff6b6b',
                 acc.avatarHat || 'corona',
+                acc.avatarRopa || 'ninguna',
+                acc.avatarAura || 'ninguna',
+                JSON.stringify(acc.inventario || { personajes: [] }),
                 acc.temaTablero || 'madera',
                 acc.creadoEn || new Date().toISOString(),
                 acc.ultimaConexion || new Date().toISOString(),
@@ -543,8 +573,9 @@ async function dbInsertOrUpdateCuenta(env, acc, touchGlobalUpdate = true) {
           INSERT OR REPLACE INTO cuentas (
             id, nombre, clave_hash, clave_salt, clave_iter, clave_plano,
             rol, puntos, victorias, derrotas, empates, partidas, elo,
-            avatar_color, avatar_hat, tema_board, creado_en, ultima_conexion, historial_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            avatar_color, avatar_hat, avatar_ropa, avatar_aura, inventario_json,
+            tema_board, creado_en, ultima_conexion, historial_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .bind(
           acc.id,
@@ -553,7 +584,7 @@ async function dbInsertOrUpdateCuenta(env, acc, touchGlobalUpdate = true) {
           acc.claveSalt || null,
           Number(acc.claveIter) || 100000,
           acc.clave || null,
-          acc.rol || 'jugador',
+          acc.id === 'admin' ? 'dev' : (acc.rol || 'jugador'),
           Number(acc.puntos) || 0,
           Number(acc.victorias) || 0,
           Number(acc.derrotas) || 0,
@@ -562,6 +593,9 @@ async function dbInsertOrUpdateCuenta(env, acc, touchGlobalUpdate = true) {
           Number(acc.elo) || 1000,
           acc.avatarColor || '#ff6b6b',
           acc.avatarHat || 'corona',
+          acc.avatarRopa || 'ninguna',
+          acc.avatarAura || 'ninguna',
+          JSON.stringify(acc.inventario || { personajes: [] }),
           acc.temaTablero || 'madera',
           acc.creadoEn || new Date().toISOString(),
           acc.ultimaConexion || new Date().toISOString(),
@@ -573,7 +607,7 @@ async function dbInsertOrUpdateCuenta(env, acc, touchGlobalUpdate = true) {
     }
   }
 
-  // Mantener actualizado en memoria y en la tabla de respaldo d1_kv
+  // Mantener actualizado en memoria y en la tabla de respaldo d1_db
   const mem = getKvMemCache();
   if (mem.cuentas) {
     mem.cuentas[acc.id] = sanitizeCuentas({ [acc.id]: acc })[acc.id];
@@ -612,8 +646,9 @@ async function dbSaveCuentas(env, cleanCuentas, touchGlobalUpdate = false, allow
             INSERT OR REPLACE INTO cuentas (
               id, nombre, clave_hash, clave_salt, clave_iter, clave_plano,
               rol, puntos, victorias, derrotas, empates, partidas, elo,
-              avatar_color, avatar_hat, tema_board, creado_en, ultima_conexion, historial_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              avatar_color, avatar_hat, avatar_ropa, avatar_aura, inventario_json,
+              tema_board, creado_en, ultima_conexion, historial_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `)
           .bind(
             id,
@@ -622,7 +657,7 @@ async function dbSaveCuentas(env, cleanCuentas, touchGlobalUpdate = false, allow
             acc.claveSalt || null,
             Number(acc.claveIter) || 100000,
             acc.clave || null,
-            acc.rol || 'jugador',
+            id === 'admin' ? 'dev' : (acc.rol || 'jugador'),
             Number(acc.puntos) || 0,
             Number(acc.victorias) || 0,
             Number(acc.derrotas) || 0,
@@ -631,6 +666,9 @@ async function dbSaveCuentas(env, cleanCuentas, touchGlobalUpdate = false, allow
             Number(acc.elo) || 1000,
             acc.avatarColor || '#ff6b6b',
             acc.avatarHat || 'corona',
+            acc.avatarRopa || 'ninguna',
+            acc.avatarAura || 'ninguna',
+            JSON.stringify(acc.inventario || { personajes: [] }),
             acc.temaTablero || 'madera',
             acc.creadoEn || new Date().toISOString(),
             acc.ultimaConexion || new Date().toISOString(),
@@ -1084,7 +1122,7 @@ export async function handleApiRequest(request, env) {
           JSON.stringify({
             ok: false,
             error:
-              '⚠️ La Base de Datos D1 no está vinculada al Worker en Cloudflare. Configúrala en: Workers > tu-worker > Settings > Bindings > D1 Database (Variable: DB).',
+              '⚠️ La Database D1 no está vinculada al Worker en Cloudflare. Configúrala en: Workers > tu-worker > Settings > Bindings > D1 Database (Variable: DB).',
           }),
           { status: 503, headers: jsonHeaders }
         );
@@ -1191,6 +1229,80 @@ export async function handleApiRequest(request, env) {
     }
   }
 
+  // 4b. /api/admin/eliminar-usuario — Elimina definitivamente un usuario de D1, KV, sesiones y ranking
+  if (pathname === '/api/admin/eliminar-usuario' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env);
+    const cuentas = await dbGetCuentas(env);
+    const { isSupreme } = await verifyCallerAdmin(cuentas, sesion);
+    const esAutorizado = (sesion && (sesion.usuarioId === 'admin' || sesion.rol === 'admin' || sesion.rol === 'dev')) || isSupreme;
+
+    if (!esAutorizado) {
+      return new Response(JSON.stringify({ ok: false, error: 'Solo el Admin Supremo (Dev) puede eliminar usuarios.' }), {
+        status: 403,
+        headers: jsonHeaders,
+      });
+    }
+
+    try {
+      const body = await request.json().catch(() => ({}));
+      const targetId = String(body.targetId || body.id || '').trim().toLowerCase();
+
+      if (!targetId || targetId === 'admin') {
+        return new Response(JSON.stringify({ ok: false, error: 'El Admin Supremo no puede eliminarse.' }), {
+          status: 400,
+          headers: jsonHeaders,
+        });
+      }
+
+      // 1. Eliminar de D1
+      if (d1) {
+        await ensureD1Tables(d1);
+        try {
+          await d1.prepare('DELETE FROM cuentas WHERE id = ?').bind(targetId).run();
+          await d1.prepare('DELETE FROM sesiones WHERE usuario_id = ?').bind(targetId).run();
+        } catch (err) {
+          console.error('Error eliminando de D1:', err);
+        }
+      }
+
+      // 2. Eliminar de memoria y mapa de cuentas
+      const existing = await dbGetCuentas(env);
+      const targetAcc = existing[targetId];
+      const targetName = targetAcc?.nombre ? String(targetAcc.nombre).trim().toLowerCase() : targetId;
+      delete existing[targetId];
+
+      const mem = getKvMemCache();
+      if (mem.cuentas) delete mem.cuentas[targetId];
+
+      // 3. Eliminar de ranking
+      if (kv) {
+        await kvPutCuentasCached(kv, existing, true);
+        const rank = await kvGetRankingCached(kv, 0);
+        delete rank[targetId];
+        delete rank[targetName];
+        for (const [k, v] of Object.entries(rank)) {
+          if (String(v?.nombre || '').trim().toLowerCase() === targetName || k.toLowerCase() === targetId) {
+            delete rank[k];
+          }
+        }
+        await kvPutRankingCached(kv, rank, true);
+      }
+
+      // 4. Guardar cuentas actualizadas en D1 con eliminación permitida
+      await dbSaveCuentas(env, existing, true, true);
+
+      return new Response(
+        JSON.stringify({ ok: true, mensaje: `Usuario ${targetId} eliminado definitivamente.` }),
+        { headers: jsonHeaders }
+      );
+    } catch (err) {
+      return new Response(JSON.stringify({ ok: false, error: String(err) }), {
+        status: 500,
+        headers: jsonHeaders,
+      });
+    }
+  }
+
   // 5. /api/admin/verify — Valida usuario + clave del Admin Supremo y emite token de sesión seguro
   if (pathname === '/api/admin/verify' && request.method === 'POST') {
     try {
@@ -1260,19 +1372,19 @@ export async function handleApiRequest(request, env) {
       const isSupreme =
         (Boolean(adminUser && adminToken) &&
           String(adminUser).trim().toLowerCase() === ADMIN_USER.toLowerCase() &&
-          (timeConstantCompare(String(adminToken).trim(), ADMIN_PASS) || (sesion && sesion.usuarioId === 'admin'))) ||
-        (sesion && sesion.usuarioId === 'admin');
+          (timeConstantCompare(String(adminToken).trim(), ADMIN_PASS) || (sesion && (sesion.usuarioId === 'admin' || sesion.rol === 'dev')))) ||
+        (sesion && (sesion.usuarioId === 'admin' || sesion.rol === 'dev'));
 
-      if (usuarioId === 'admin' && isSupreme) {
+      if ((usuarioId === 'admin' || sesion?.usuarioId === 'admin') && isSupreme) {
         return new Response(
-          JSON.stringify({ ok: true, isSupremeAdmin: true, isCloudAdmin: true, kvBound: kvBound || d1Bound }),
+          JSON.stringify({ ok: true, isSupremeAdmin: true, isCloudAdmin: true, rol: 'dev', kvBound: kvBound || d1Bound }),
           { headers: { ...jsonHeaders, 'X-KV-Bound': 'true' } }
         );
       }
 
       if (requiereSupremo) {
         return new Response(
-          JSON.stringify({ ok: false, revoked: false, error: 'Solo el Admin Supremo puede otorgar o quitar el rol de Administrador.' }),
+          JSON.stringify({ ok: false, revoked: false, error: 'Acción exclusiva del Dev (Admin Supremo).' }),
           { status: 403, headers: { ...jsonHeaders, 'X-KV-Bound': 'true' } }
         );
       }
@@ -1280,16 +1392,16 @@ export async function handleApiRequest(request, env) {
       if (usuarioId && usuarioId !== 'admin') {
         const cuentas = await dbGetCuentas(env);
         const acc = cuentas[usuarioId];
-        if (acc && acc.rol === 'admin') {
+        if (acc && (acc.rol === 'admin' || acc.rol === 'mod')) {
           return new Response(
-            JSON.stringify({ ok: true, isSupremeAdmin: false, isCloudAdmin: true, kvBound: kvBound || d1Bound }),
+            JSON.stringify({ ok: true, isSupremeAdmin: false, isCloudAdmin: true, rol: acc.rol, kvBound: kvBound || d1Bound }),
             { headers: { ...jsonHeaders, 'X-KV-Bound': 'true' } }
           );
         }
       }
 
       return new Response(
-        JSON.stringify({ ok: false, revoked: true, error: 'Tus permisos de administrador no son válidos o fueron revocados.' }),
+        JSON.stringify({ ok: false, revoked: true, error: 'Tus permisos de administración no son válidos o fueron revocados.' }),
         { status: 403, headers: { ...jsonHeaders, 'X-KV-Bound': 'true' } }
       );
     } catch (err) {
@@ -1298,6 +1410,393 @@ export async function handleApiRequest(request, env) {
         headers: jsonHeaders,
       });
     }
+  }
+
+  // 5c. /api/admin/personajes/regalar — Dev o Admin regala un personaje personalizado al inventario de un usuario
+  if (pathname === '/api/admin/personajes/regalar' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env);
+    const cuentas = await dbGetCuentas(env);
+    const { isSupreme, isDelegated } = await verifyCallerAdmin(cuentas, sesion);
+    const puedeRegalar = isSupreme || isDelegated;
+
+    if (!puedeRegalar) {
+      return new Response(JSON.stringify({ ok: false, error: 'No tienes permisos de Administrador o Dev para regalar personajes.' }), {
+        status: 403,
+        headers: jsonHeaders,
+      });
+    }
+
+    try {
+      const body = await request.json().catch(() => ({}));
+      const targetId = String(body.targetId || '').trim().toLowerCase();
+      const rawPersonaje = body.personaje;
+
+      if (!targetId || !rawPersonaje || !rawPersonaje.nombre) {
+        return new Response(JSON.stringify({ ok: false, error: 'Usuario destino y datos del personaje requeridos.' }), {
+          status: 400,
+          headers: jsonHeaders,
+        });
+      }
+
+      const targetAcc = cuentas[targetId];
+      if (!targetAcc) {
+        return new Response(JSON.stringify({ ok: false, error: 'El usuario destino no existe en la Database.' }), {
+          status: 404,
+          headers: jsonHeaders,
+        });
+      }
+
+      if (!targetAcc.inventario || typeof targetAcc.inventario !== 'object') {
+        targetAcc.inventario = { personajes: [] };
+      }
+      if (!Array.isArray(targetAcc.inventario.personajes)) {
+        targetAcc.inventario.personajes = [];
+      }
+
+      const actorName = isSupreme ? 'Dev Supremo' : (sesion?.usuarioId && cuentas[sesion.usuarioId]?.nombre) || 'Admin';
+      const nuevoPersonaje = {
+        id: `char_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        nombre: String(rawPersonaje.nombre).trim().slice(0, 24),
+        color: rawPersonaje.color || '#ffd43b',
+        hat: rawPersonaje.hat || 'corona',
+        ropa: rawPersonaje.ropa || 'ninguna',
+        aura: rawPersonaje.aura || 'ninguna',
+        descripcion: rawPersonaje.descripcion || `Personaje exclusivo regalado`,
+        origen: {
+          tipo: isSupreme ? 'regalo_dev' : 'regalo_admin',
+          otorgadoPor: isSupreme ? `Dev ${actorName}` : `Admin ${actorName}`,
+          fecha: new Date().toISOString(),
+        },
+      };
+
+      targetAcc.inventario.personajes.push(nuevoPersonaje);
+      cuentas[targetId] = targetAcc;
+      await dbSaveCuentas(env, cuentas, true);
+
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          mensaje: `Personaje "${nuevoPersonaje.nombre}" añadido al inventario de ${targetAcc.nombre}.`,
+          personaje: nuevoPersonaje,
+          inventario: targetAcc.inventario,
+        }),
+        { headers: jsonHeaders }
+      );
+    } catch (err) {
+      return new Response(JSON.stringify({ ok: false, error: String(err) }), {
+        status: 500,
+        headers: jsonHeaders,
+      });
+    }
+  }
+
+  // 5d. /api/admin/personajes/quitar — Exclusivo Dev: retira un personaje del inventario de un usuario
+  if (pathname === '/api/admin/personajes/quitar' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env);
+    const cuentas = await dbGetCuentas(env);
+    const { isSupreme } = await verifyCallerAdmin(cuentas, sesion);
+
+    if (!isSupreme) {
+      return new Response(JSON.stringify({ ok: false, error: 'Solo el Dev puede retirar personajes de un inventario.' }), {
+        status: 403,
+        headers: jsonHeaders,
+      });
+    }
+
+    try {
+      const body = await request.json().catch(() => ({}));
+      const targetId = String(body.targetId || '').trim().toLowerCase();
+      const personajeId = String(body.personajeId || '').trim();
+
+      const targetAcc = cuentas[targetId];
+      if (!targetAcc) {
+        return new Response(JSON.stringify({ ok: false, error: 'Usuario no encontrado.' }), {
+          status: 404,
+          headers: jsonHeaders,
+        });
+      }
+
+      if (targetAcc.inventario && Array.isArray(targetAcc.inventario.personajes)) {
+        targetAcc.inventario.personajes = targetAcc.inventario.personajes.filter((p) => p.id !== personajeId);
+        if (targetAcc.inventario.activoId === personajeId) {
+          targetAcc.inventario.activoId = undefined;
+          targetAcc.avatarRopa = 'ninguna';
+          targetAcc.avatarAura = 'ninguna';
+        }
+        cuentas[targetId] = targetAcc;
+        await dbSaveCuentas(env, cuentas, true);
+      }
+
+      return new Response(
+        JSON.stringify({ ok: true, mensaje: 'Personaje revocado del inventario.', inventario: targetAcc.inventario }),
+        { headers: jsonHeaders }
+      );
+    } catch (err) {
+      return new Response(JSON.stringify({ ok: false, error: String(err) }), {
+        status: 500,
+        headers: jsonHeaders,
+      });
+    }
+  }
+
+  // 5e. /api/admin/personajes/fijar-premio-semanal — Dev o Admin fija el personaje premio del torneo semanal
+  if (pathname === '/api/admin/personajes/fijar-premio-semanal' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env);
+    const cuentas = await dbGetCuentas(env);
+    const { isSupreme, isDelegated } = await verifyCallerAdmin(cuentas, sesion);
+
+    if (!isSupreme && !isDelegated) {
+      return new Response(JSON.stringify({ ok: false, error: 'Permisos insuficientes para fijar premios semanales.' }), {
+        status: 403,
+        headers: jsonHeaders,
+      });
+    }
+
+    try {
+      const body = await request.json().catch(() => ({}));
+      const rawPersonaje = body.personaje;
+      const actorName = isSupreme ? 'Dev Supremo' : (sesion?.usuarioId && cuentas[sesion.usuarioId]?.nombre) || 'Admin';
+
+      const w = getWeekInfo();
+      const keyActual = `semanal_${w.semanaActualId}`;
+      let actual = { semanaId: w.semanaActualId, jugadores: {} };
+      if (kv) {
+        try {
+          const rawA = await kv.get(keyActual);
+          if (rawA) actual = { ...actual, ...JSON.parse(rawA) };
+        } catch {}
+      }
+
+      let premio = null;
+      if (rawPersonaje) {
+        premio = {
+          id: `premio_semanal_${w.semanaActualId}`,
+          nombre: String(rawPersonaje.nombre).trim().slice(0, 24),
+          color: rawPersonaje.color || '#ffd43b',
+          hat: rawPersonaje.hat || 'corona',
+          ropa: rawPersonaje.ropa || 'ninguna',
+          aura: rawPersonaje.aura || 'dorada',
+          descripcion: `Premio exclusivo de la Semana ${w.semanaActualId}`,
+          origen: {
+            tipo: 'torneo_semanal',
+            otorgadoPor: `Torneo Semanal (${w.semanaActualId}) creado por ${actorName}`,
+            fecha: new Date().toISOString(),
+            semanaTorneo: w.semanaActualId,
+          },
+        };
+      }
+
+      actual.premioSemanal = premio || undefined;
+      if (kv) {
+        await kv.put(keyActual, JSON.stringify(actual), { expirationTtl: 60 * 60 * 24 * 28 });
+        await kv.put('premio_semanal_global', JSON.stringify(premio || {}));
+      }
+
+      return new Response(
+        JSON.stringify({ ok: true, mensaje: 'Premio del torneo semanal actualizado.', premioSemanal: premio }),
+        { headers: jsonHeaders }
+      );
+    } catch (err) {
+      return new Response(JSON.stringify({ ok: false, error: String(err) }), {
+        status: 500,
+        headers: jsonHeaders,
+      });
+    }
+  }
+
+  // 5f. /api/admin/config-semanal — Dev y Admin configuran los puntos semanales
+  if (pathname === '/api/admin/config-semanal') {
+    if (request.method === 'GET') {
+      let cfg = { primerLugar: 25, segundoLugar: 15, tercerLugar: 10 };
+      if (kv) {
+        try {
+          const raw = await kv.get('config_semanal_puntos');
+          if (raw) cfg = { ...cfg, ...JSON.parse(raw) };
+        } catch {}
+      }
+      return new Response(JSON.stringify({ ok: true, config: cfg }), { headers: jsonHeaders });
+    }
+    if (request.method === 'POST') {
+      const sesion = await resolverSesion(request, env);
+      const cuentas = await dbGetCuentas(env);
+      const { isSupreme, isDelegated } = await verifyCallerAdmin(cuentas, sesion);
+      if (!isSupreme && !isDelegated) {
+        return new Response(JSON.stringify({ ok: false, error: 'Permisos insuficientes.' }), {
+          status: 403,
+          headers: jsonHeaders,
+        });
+      }
+      const body = await request.json().catch(() => ({}));
+      const cfg = {
+        primerLugar: Math.max(1, Number(body.primerLugar) || 25),
+        segundoLugar: Math.max(0, Number(body.segundoLugar) || 15),
+        tercerLugar: Math.max(0, Number(body.tercerLugar) || 10),
+      };
+      if (kv) {
+        await kv.put('config_semanal_puntos', JSON.stringify(cfg));
+      }
+      return new Response(JSON.stringify({ ok: true, config: cfg, mensaje: 'Puntos semanales guardados.' }), {
+        headers: jsonHeaders,
+      });
+    }
+  }
+
+  // 5f2. /api/admin/desbloqueos-personajes — Obtener y configurar puntos requeridos para personajes
+  if (pathname === '/api/admin/desbloqueos-personajes') {
+    if (request.method === 'GET') {
+      let desbloqueos = {
+        gatito: 30,
+        zorro: 60,
+        robot: 120,
+        dragon: 200,
+        ninja: 300,
+        navidad: 400,
+        granjero: 500,
+        vikingo: 650,
+        copa: 800,
+        gorra: 950,
+        boina: 1100,
+        espacial: 1300,
+      };
+      if (kv) {
+        try {
+          const raw = await kv.get('config_desbloqueos_personajes');
+          if (raw) desbloqueos = { ...desbloqueos, ...JSON.parse(raw) };
+        } catch {}
+      }
+      return new Response(JSON.stringify({ ok: true, desbloqueos }), { headers: jsonHeaders });
+    }
+
+    if (request.method === 'POST') {
+      const sesion = await resolverSesion(request, env);
+      const cuentas = await dbGetCuentas(env);
+      const { isSupreme, isDelegated } = await verifyCallerAdmin(cuentas, sesion);
+      if (!isSupreme && !isDelegated) {
+        return new Response(JSON.stringify({ ok: false, error: 'Permisos insuficientes. Exclusivo de Moderación/Dev.' }), {
+          status: 403,
+          headers: jsonHeaders,
+        });
+      }
+      const body = await request.json().catch(() => ({}));
+      const desbloqueos = body.desbloqueos || {};
+      if (kv) {
+        await kv.put('config_desbloqueos_personajes', JSON.stringify(desbloqueos));
+      }
+      return new Response(JSON.stringify({ ok: true, desbloqueos, mensaje: 'Requisitos de desbloqueo guardados en Database.' }), {
+        headers: jsonHeaders,
+      });
+    }
+  }
+
+  // 5g. /api/admin/ranking/solicitar-reset — Admin solicita reset de ranking al Dev
+  if (pathname === '/api/admin/ranking/solicitar-reset' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env);
+    const cuentas = await dbGetCuentas(env);
+    const { isSupreme, isDelegated } = await verifyCallerAdmin(cuentas, sesion);
+
+    if (!isSupreme && !isDelegated) {
+      return new Response(JSON.stringify({ ok: false, error: 'Debes ser Administrador para solicitar el reseteo.' }), {
+        status: 403,
+        headers: jsonHeaders,
+      });
+    }
+
+    try {
+      const body = await request.json().catch(() => ({}));
+      const actorName = isSupreme ? 'Dev Supremo' : (sesion?.usuarioId && cuentas[sesion.usuarioId]?.nombre) || 'Admin';
+      const solicitud = {
+        solicitada: true,
+        porNombre: actorName,
+        porId: sesion?.usuarioId || 'admin',
+        fecha: new Date().toISOString(),
+        motivo: String(body.motivo || 'Reinicio periódico del ranking solicitado por admin').trim(),
+      };
+      if (kv) {
+        await kv.put('solicitud_reset_ranking', JSON.stringify(solicitud));
+      }
+      return new Response(
+        JSON.stringify({ ok: true, mensaje: 'Solicitud enviada. Requiere aprobación del Dev Supremo.', solicitud }),
+        { headers: jsonHeaders }
+      );
+    } catch (err) {
+      return new Response(JSON.stringify({ ok: false, error: String(err) }), {
+        status: 500,
+        headers: jsonHeaders,
+      });
+    }
+  }
+
+  // 5h. /api/admin/ranking/solicitud-reset — Consulta si hay una solicitud pendiente
+  if (pathname === '/api/admin/ranking/solicitud-reset' && request.method === 'GET') {
+    let solicitud = null;
+    if (kv) {
+      try {
+        const raw = await kv.get('solicitud_reset_ranking');
+        if (raw) solicitud = JSON.parse(raw);
+      } catch {}
+    }
+    return new Response(JSON.stringify({ ok: true, solicitud }), { headers: jsonHeaders });
+  }
+
+  // 5i. /api/admin/ranking/aprobar-reset — Exclusivo Dev: aprueba y borra el ranking
+  if (pathname === '/api/admin/ranking/aprobar-reset' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env);
+    const cuentas = await dbGetCuentas(env);
+    const { isSupreme } = await verifyCallerAdmin(cuentas, sesion);
+
+    if (!isSupreme) {
+      return new Response(JSON.stringify({ ok: false, error: 'Solo el Dev Supremo puede aprobar el reseteo del ranking.' }), {
+        status: 403,
+        headers: jsonHeaders,
+      });
+    }
+
+    try {
+      // 1. Limpiar ranking en KV y D1
+      if (kv) {
+        await kvPutRankingCached(kv, {}, true);
+        await kv.delete('solicitud_reset_ranking');
+        const w = getWeekInfo();
+        await kv.put(`semanal_${w.semanaActualId}`, JSON.stringify({ semanaId: w.semanaActualId, jugadores: {} }));
+      }
+      // 2. Resetear puntos de jugadores a cero
+      for (const [id, acc] of Object.entries(cuentas)) {
+        if (id !== 'admin') {
+          cuentas[id] = { ...acc, puntos: 0, partidas: 0, victorias: 0, derrotas: 0, empates: 0, elo: 1000 };
+        }
+      }
+      await dbSaveCuentas(env, cuentas, true);
+
+      return new Response(JSON.stringify({ ok: true, mensaje: 'Ranking reseteado exitosamente con aprobación del Dev.' }), {
+        headers: jsonHeaders,
+      });
+    } catch (err) {
+      return new Response(JSON.stringify({ ok: false, error: String(err) }), {
+        status: 500,
+        headers: jsonHeaders,
+      });
+    }
+  }
+
+  // 5j. /api/admin/ranking/rechazar-reset — Exclusivo Dev: rechaza solicitud de reseteo
+  if (pathname === '/api/admin/ranking/rechazar-reset' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env);
+    const cuentas = await dbGetCuentas(env);
+    const { isSupreme } = await verifyCallerAdmin(cuentas, sesion);
+
+    if (!isSupreme) {
+      return new Response(JSON.stringify({ ok: false, error: 'Solo el Dev Supremo puede rechazar la solicitud.' }), {
+        status: 403,
+        headers: jsonHeaders,
+      });
+    }
+
+    if (kv) {
+      await kv.delete('solicitud_reset_ranking');
+    }
+    return new Response(JSON.stringify({ ok: true, mensaje: 'Solicitud de reseteo desestimada.' }), {
+      headers: jsonHeaders,
+    });
   }
 
   // 6. /api/cuentas — GET sanitizado y POST protegido
@@ -1316,33 +1815,55 @@ export async function handleApiRequest(request, env) {
 
       const existing = await dbGetCuentas(env);
       const { isSupreme, isDelegated } = await verifyCallerAdmin(existing, sesion);
-      const esAdmin = (sesion && (sesion.rol === 'admin' || sesion.usuarioId === 'admin')) || isSupreme || isDelegated;
+      const esAdmin = (sesion && (sesion.rol === 'admin' || sesion.usuarioId === 'admin' || sesion.rol === 'dev')) || isSupreme || isDelegated;
 
       let finalCuentas = { ...existing };
 
       if (esAdmin) {
-        // Admin: puede gestionar usuarios
+        // Admin / Dev: puede gestionar usuarios según su rol
         for (const [id, acc] of Object.entries(incoming)) {
           if (!acc || typeof acc !== 'object') continue;
           if (id === 'admin') continue;
           const prevAcc = existing[id];
+
+          // Validaciones de roles estrictas:
+          let assignedRol = prevAcc?.rol || 'jugador';
+          if (isSupreme) {
+            // El Dev puede asignar cualquier rol: dev, admin, mod o jugador
+            assignedRol = acc.rol || prevAcc?.rol || 'jugador';
+          } else {
+            // Un Admin regular NO puede modificar a otros admins ni al Dev
+            if (prevAcc && (prevAcc.rol === 'admin' || prevAcc.rol === 'dev')) {
+              continue;
+            }
+            // Un Admin regular solo puede promover a 'mod' o revertir a 'jugador'
+            if (acc.rol === 'mod' || acc.rol === 'jugador') {
+              assignedRol = acc.rol;
+            }
+          }
+
           finalCuentas[id] = {
             ...(prevAcc || {}),
             ...acc,
             id,
-            rol: isSupreme ? acc.rol || prevAcc?.rol || 'jugador' : prevAcc?.rol === 'admin' ? 'admin' : 'jugador',
+            rol: assignedRol,
+            inventario: acc.inventario || prevAcc?.inventario || { personajes: [] },
           };
-          // Nunca sobrescribir hash a menos que se envíe explícitamente nueva clave
-          if (acc.clave && acc.clave !== '***SUPREMO***') {
+
+          // CLAVE: Solo el Dev (isSupreme) puede alterar la contraseña
+          if (isSupreme && acc.clave && acc.clave !== '***SUPREMO***') {
             const h = await hashClavePBKDF2(acc.clave);
             finalCuentas[id].claveHash = h.claveHash;
             finalCuentas[id].claveSalt = h.claveSalt;
             finalCuentas[id].claveIter = h.claveIter;
             delete finalCuentas[id].clave;
+          } else {
+            // Eliminar clave en plano si un admin regular intentó enviarla
+            delete finalCuentas[id].clave;
           }
         }
       } else if (sesion && sesion.usuarioId && finalCuentas[sesion.usuarioId]) {
-        // Usuario normal solo puede actualizar sus preferencias visuales de su propia cuenta
+        // Usuario normal solo puede actualizar sus preferencias visuales y personaje equipado
         const id = sesion.usuarioId;
         const myPatch = incoming[id];
         if (myPatch && typeof myPatch === 'object') {
@@ -1351,6 +1872,9 @@ export async function handleApiRequest(request, env) {
             nombre: myPatch.nombre && myPatch.nombre.length >= 3 && myPatch.nombre.length <= 15 ? myPatch.nombre : finalCuentas[id].nombre,
             avatarColor: myPatch.avatarColor || finalCuentas[id].avatarColor,
             avatarHat: myPatch.avatarHat || finalCuentas[id].avatarHat,
+            avatarRopa: myPatch.avatarRopa || finalCuentas[id].avatarRopa || 'ninguna',
+            avatarAura: myPatch.avatarAura || finalCuentas[id].avatarAura || 'ninguna',
+            inventario: myPatch.inventario || finalCuentas[id].inventario || { personajes: [] },
             temaTablero: myPatch.temaTablero || finalCuentas[id].temaTablero,
             ultimaConexion: new Date().toISOString(),
           };
@@ -1363,8 +1887,34 @@ export async function handleApiRequest(request, env) {
         });
       }
 
+      const delId = (request.headers.get('X-Admin-Delete-Id') || '').trim().toLowerCase();
+      if (esAdmin && delId && delId !== 'admin') {
+        delete finalCuentas[delId];
+        if (d1) {
+          try {
+            await d1.prepare('DELETE FROM cuentas WHERE id = ?').bind(delId).run();
+            await d1.prepare('DELETE FROM sesiones WHERE usuario_id = ?').bind(delId).run();
+          } catch {}
+        }
+      }
+
+      const selfDelId = (request.headers.get('X-Self-Delete-Id') || '').trim().toLowerCase();
+      const selfDelKey = (request.headers.get('X-Self-Delete-Key') || '').trim();
+      if (selfDelId && selfDelId !== 'admin' && existing[selfDelId]) {
+        const canSelfDel = (sesion && sesion.usuarioId === selfDelId) || (selfDelKey && (await verificarClaveCuenta(existing[selfDelId], selfDelKey)));
+        if (canSelfDel) {
+          delete finalCuentas[selfDelId];
+          if (d1) {
+            try {
+              await d1.prepare('DELETE FROM cuentas WHERE id = ?').bind(selfDelId).run();
+              await d1.prepare('DELETE FROM sesiones WHERE usuario_id = ?').bind(selfDelId).run();
+            } catch {}
+          }
+        }
+      }
+
       finalCuentas['admin'] = buildSupremeProfile(finalCuentas);
-      await dbSaveCuentas(env, finalCuentas, true);
+      await dbSaveCuentas(env, finalCuentas, true, Boolean(delId || selfDelId));
 
       return new Response(
         JSON.stringify({ ok: true, cuentas: sanitizeCuentasParaEnviar(finalCuentas) }),
@@ -1640,15 +2190,48 @@ export async function handleApiRequest(request, env) {
           let cuentasChanged = false;
           let rankChanged = false;
 
+          let bonosSemanales = PREMIOS_SEMANALES;
+          try {
+            const rawCfg = await kv.get('config_semanal_puntos');
+            if (rawCfg) {
+              const parsedCfg = JSON.parse(rawCfg);
+              if (parsedCfg && typeof parsedCfg.primerLugar === 'number') {
+                bonosSemanales = [parsedCfg.primerLugar, parsedCfg.segundoLugar || 15, parsedCfg.tercerLugar || 10];
+              }
+            }
+          } catch {}
+
           candidatosPasada.slice(0, 3).forEach((ganadorSem, idx) => {
-            const bono = PREMIOS_SEMANALES[idx] || 0;
-            if (bono <= 0) return;
+            const bono = bonosSemanales[idx] || 0;
             const normName = String(ganadorSem.nombre).trim().toLowerCase();
             const accEntry = Object.values(existingCuentas).find(
               (a) => a && typeof a === 'object' && String(a.nombre || '').trim().toLowerCase() === normName
             );
+            let personajePremio = undefined;
             if (accEntry && accEntry.id) {
               accEntry.puntos = (Number(accEntry.puntos) || 0) + bono;
+
+              // Otorgar personaje de premio semanal al ganador del 1er puesto
+              if (idx === 0 && pasada.premioSemanal) {
+                if (!accEntry.inventario || typeof accEntry.inventario !== 'object') {
+                  accEntry.inventario = { personajes: [] };
+                }
+                if (!Array.isArray(accEntry.inventario.personajes)) {
+                  accEntry.inventario.personajes = [];
+                }
+                personajePremio = {
+                  ...pasada.premioSemanal,
+                  id: `premio_${pasada.semanaId}_${Date.now()}`,
+                  origen: {
+                    tipo: 'torneo_semanal',
+                    otorgadoPor: `Torneo Semanal (${pasada.semanaId})`,
+                    fecha: new Date().toISOString(),
+                    semanaTorneo: pasada.semanaId,
+                  },
+                };
+                accEntry.inventario.personajes.push(personajePremio);
+              }
+
               existingCuentas[accEntry.id] = accEntry;
               cuentasChanged = true;
             }
@@ -1657,7 +2240,7 @@ export async function handleApiRequest(request, env) {
                 (Number(existingRank[normName].puntosTotales) || 0) + bono;
               rankChanged = true;
             }
-            premiados.push({ nombre: ganadorSem.nombre, puesto: idx + 1, bono });
+            premiados.push({ nombre: ganadorSem.nombre, puesto: idx + 1, bono, personajePremio });
           });
 
           pasada.premiada = true;
