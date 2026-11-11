@@ -57,6 +57,9 @@ import {
   rechazarResetRankingAsync,
   regalarPersonajeAsync,
   restablecerClaveUsuarioAsync,
+  crearSalaPersonalizadaAsync,
+  eliminarSalaPersonalizadaAsync,
+  obtenerSalasPersonalizadasAsync,
   solicitarResetRankingAsync,
   LOGROS_LISTA,
   NetworkDiagnostic,
@@ -70,6 +73,7 @@ import {
   suscribirDiagnostico,
   verificarAccionAdminEnKV,
 } from '../game/storage';
+import { SalaPersonalizada } from '../types/murosLocos';
 
 export const TEMAS_LISTA: {
   id: BoardTheme;
@@ -2410,19 +2414,36 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   onUsuarioActualizado,
   onAbrirLogin,
 }) => {
-  const tieneRolStaff = Boolean(
-    usuarioActual && (usuarioActual.rol === 'admin' || usuarioActual.rol === 'dev' || usuarioActual.id === 'admin')
+  const esAdminSupremoUnico = Boolean(
+    usuarioActual && (usuarioActual.id === 'admin' || usuarioActual.esSupremo)
   );
-  const esYoSupremo = Boolean(usuarioActual && (usuarioActual.rol === 'dev' || usuarioActual.id === 'admin'));
-  const esAdmin = Boolean(usuarioActual && usuarioActual.rol === 'admin');
+  const esYoSupremo = Boolean(
+    usuarioActual && (usuarioActual.rol === 'dev' || esAdminSupremoUnico)
+  );
+  const esAdmin = Boolean(usuarioActual && (usuarioActual.rol === 'admin' || esYoSupremo));
+  const esMod = Boolean(usuarioActual && usuarioActual.rol === 'mod');
+  const tieneRolStaff = esYoSupremo || esAdmin || esMod;
 
-  const [adminTab, setAdminTab] = useState<'jugadores' | 'editor' | 'torneo'>('jugadores');
+  const [adminTab, setAdminTab] = useState<'jugadores' | 'editor' | 'torneo' | 'salas'>(() => {
+    if (esMod && !esAdmin) return 'salas';
+    return 'jugadores';
+  });
   const [cuentas, setCuentas] = useState<Record<string, UserAccount>>(() => cargarCuentas());
   const [filtro, setFiltro] = useState('');
   const [editandoId, setEditandoId] = useState<string | null>(null);
   const [sincronizando, setSincronizando] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [diag, setDiag] = useState<NetworkDiagnostic>(() => obtenerDiagnosticoRed());
+
+  // Salas Personalizadas (Dev, Admin, Mod)
+  const [salasPersonalizadas, setSalasPersonalizadas] = useState<SalaPersonalizada[]>([]);
+  const [creandoSala, setCreandoSala] = useState(false);
+  const [nuevaSalaCodigo, setNuevaSalaCodigo] = useState('');
+  const [nuevaSalaNombre, setNuevaSalaNombre] = useState('');
+  const [nuevaSalaMaxJugadores, setNuevaSalaMaxJugadores] = useState<2 | 4>(2);
+  const [nuevaSalaModo, setNuevaSalaModo] = useState<'estandar' | 'caos' | 'tactico'>('estandar');
+  const [nuevaSalaTablero, setNuevaSalaTablero] = useState<7 | 9>(9);
+  const [nuevaSalaMensaje, setNuevaSalaMensaje] = useState('');
 
   // Confirmaciones
   const [confirmandoResetRanking, setConfirmandoResetRanking] = useState(false);
@@ -2492,14 +2513,18 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
   const cargarDatosAdminAdicionales = React.useCallback(async () => {
     try {
-      const [sol, cfg, desb] = await Promise.all([
+      const [sol, cfg, desb, salas] = await Promise.all([
         obtenerSolicitudResetRankingAsync(),
         obtenerConfigSemanalAsync(),
         obtenerDesbloqueosPersonajesAsync(),
+        obtenerSalasPersonalizadasAsync(),
       ]);
       setSolicitudReset(sol);
       if (desb) {
         setDesbloqueosDev(desb);
+      }
+      if (salas) {
+        setSalasPersonalizadas(salas);
       }
       if (cfg) {
         setPuntos1(cfg.primerLugar ?? 50);
@@ -2898,6 +2923,52 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     }
   };
 
+  // Crear Sala Personalizada en Línea (Staff)
+  const handleCrearSalaPersonalizada = async () => {
+    const cleanCode = nuevaSalaCodigo.toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+    if (!cleanCode || cleanCode.length < 3) {
+      onShowToast('⚠️ El código de sala debe tener al menos 3 caracteres alfanuméricos.');
+      return;
+    }
+    sounds.playClick();
+    setCreandoSala(true);
+    try {
+      const res = await crearSalaPersonalizadaAsync({
+        codigo: cleanCode,
+        nombre: nuevaSalaNombre.trim() || `Sala Oficial ${cleanCode}`,
+        maxJugadores: nuevaSalaMaxJugadores,
+        modoMuros: nuevaSalaModo,
+        tamanoTablero: nuevaSalaTablero,
+        mensajeEspecial: nuevaSalaMensaje.trim(),
+        destacada: true,
+      });
+      if (res.ok && res.sala) {
+        sounds.playVictory();
+        setSalasPersonalizadas((prev) => [res.sala!, ...prev.filter((s) => s.codigo !== cleanCode)]);
+        setNuevaSalaCodigo('');
+        setNuevaSalaNombre('');
+        setNuevaSalaMensaje('');
+        onShowToast(`🎉 ¡Sala personalizada "${cleanCode}" creada y publicada en el Lobby!`);
+      } else {
+        onShowToast(res.error || 'No se pudo crear la sala.');
+      }
+    } finally {
+      setCreandoSala(false);
+    }
+  };
+
+  // Eliminar Sala Personalizada (Staff)
+  const handleEliminarSalaPersonalizada = async (codigo: string) => {
+    sounds.playClick();
+    const res = await eliminarSalaPersonalizadaAsync(codigo);
+    if (res.ok) {
+      setSalasPersonalizadas((prev) => prev.filter((s) => s.codigo !== codigo));
+      onShowToast(`🗑️ Sala "${codigo}" eliminada.`);
+    } else {
+      onShowToast(res.error || 'No se pudo eliminar la sala.');
+    }
+  };
+
   // Quitar personaje del inventario (exclusivo Dev)
   const handleQuitarPersonaje = async (userId: string, personajeId: string) => {
     sounds.playClick();
@@ -3134,6 +3205,21 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 <span>🏆</span>
                 <span>Torneo & Premios</span>
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setAdminTab('salas');
+                }}
+                className={`flex-1 py-1.5 px-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  adminTab === 'salas'
+                    ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                    : 'text-[#5c3c00] hover:bg-white/40'
+                }`}
+              >
+                <span>🎮</span>
+                <span>Salas Online (Mod)</span>
+              </button>
             </div>
 
             {/* Banner de Solicitud de Reset Pendiente */}
@@ -3237,12 +3323,22 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 <div className="flex flex-col gap-2">
                   {cuentasFiltradas.map((acc) => {
                     const isEditing = editandoId === acc.id;
-                    const isSupreme = acc.id === 'admin' || acc.rol === 'dev';
+                    const isRootAdmin = acc.id === 'admin';
+                    const isAccountDev = acc.rol === 'dev' || isRootAdmin;
                     const isConfirmingDelete = confirmandoEliminarId === acc.id;
                     const cantInventario = acc.inventario?.personajes?.length || 0;
 
-                    const puedeEditarEstaCuenta =
-                      !isSupreme && (esYoSupremo || acc.rol === 'jugador' || !acc.rol);
+                    // El root dev ('admin') no puede ser modificado por nadie.
+                    // Si la cuenta es 'dev', solo el Admin Supremo Único puede editarla o revocarla.
+                    // Si la cuenta es 'admin', cualquier Dev (Supremo) puede editarla.
+                    // Si la cuenta es 'mod' o 'jugador', cualquier Admin o Dev puede editarla.
+                    const puedeEditarEstaCuenta = !isRootAdmin && (
+                      isAccountDev
+                        ? esAdminSupremoUnico
+                        : acc.rol === 'admin'
+                        ? esYoSupremo
+                        : esAdmin
+                    );
 
                     const badgeRol =
                       acc.id === 'admin' || acc.rol === 'dev' ? (
@@ -3429,7 +3525,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
                             <div className="text-xs">
                               <label className="font-bold text-[#86542d] block">Rol Asignado:</label>
-                              {esYoSupremo ? (
+                              {esAdminSupremoUnico ? (
                                 <select
                                   value={editRol}
                                   onChange={(e) => setEditRol(e.target.value as UserRole)}
@@ -3438,7 +3534,18 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                   <option value="jugador">🎮 Jugador Normal</option>
                                   <option value="mod">🔰 Moderador</option>
                                   <option value="admin">🛡️ Administrador</option>
-                                  <option value="dev">👑 Dev Supremo</option>
+                                  <option value="dev">👑 Dev Supremo (Acceso Total)</option>
+                                </select>
+                              ) : esYoSupremo ? (
+                                <select
+                                  value={editRol === 'dev' ? 'dev' : editRol}
+                                  disabled={editRol === 'dev'}
+                                  onChange={(e) => setEditRol(e.target.value as UserRole)}
+                                  className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs cursor-pointer"
+                                >
+                                  <option value="jugador">🎮 Jugador Normal</option>
+                                  <option value="mod">🔰 Moderador</option>
+                                  <option value="admin">🛡️ Administrador</option>
                                 </select>
                               ) : (
                                 <select
@@ -3962,6 +4069,174 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     </button>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* TAB 4: SALAS PERSONALIZADAS EN LÍNEA (MOD, ADMIN, DEV) */}
+            {adminTab === 'salas' && (
+              <div className="flex flex-col gap-3">
+                {/* Formulario de Creación de Sala Oficial */}
+                <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-2.5">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black text-[#2b2140] flex items-center gap-1.5">
+                      <span>🔰</span> Crear Sala Oficial / Evento Personalizado
+                    </h4>
+                    <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-[#d3f9d8] text-[#134e20] border border-[#2b2140]">
+                      Staff {esYoSupremo ? 'Dev' : esAdmin ? 'Admin' : 'Mod'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#86542d] leading-tight font-medium">
+                    Las salas creadas aquí aparecen destacadas en la parte superior del Lobby Online para todos los jugadores con reglas personalizadas.
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <label className="font-bold text-[#86542d] block text-[11px]">Código de Sala:</label>
+                      <input
+                        type="text"
+                        maxLength={10}
+                        placeholder="Ej: TORNEO1"
+                        value={nuevaSalaCodigo}
+                        onChange={(e) => setNuevaSalaCodigo(e.target.value.toUpperCase())}
+                        className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-black text-xs uppercase"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-bold text-[#86542d] block text-[11px]">Nombre de la Sala / Evento:</label>
+                      <input
+                        type="text"
+                        maxLength={32}
+                        placeholder="Ej: Sala Oficial Moderación"
+                        value={nuevaSalaNombre}
+                        onChange={(e) => setNuevaSalaNombre(e.target.value)}
+                        className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <div>
+                      <label className="font-bold text-[#86542d] block text-[11px]">Jugadores:</label>
+                      <select
+                        value={nuevaSalaMaxJugadores}
+                        onChange={(e) => setNuevaSalaMaxJugadores(Number(e.target.value) as 2 | 4)}
+                        className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-1.5 py-1 font-bold text-xs cursor-pointer"
+                      >
+                        <option value={2}>2 Jugadores (1v1)</option>
+                        <option value={4}>4 Jugadores (FFA)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="font-bold text-[#86542d] block text-[11px]">Modo de Muros:</label>
+                      <select
+                        value={nuevaSalaModo}
+                        onChange={(e) => setNuevaSalaModo(e.target.value as any)}
+                        className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-1.5 py-1 font-bold text-xs cursor-pointer"
+                      >
+                        <option value="estandar">🧱 Estándar (10 muros)</option>
+                        <option value="tactico">🎯 Táctico (5 muros)</option>
+                        <option value="caos">💥 Caos (15 muros)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="font-bold text-[#86542d] block text-[11px]">Tablero:</label>
+                      <select
+                        value={nuevaSalaTablero}
+                        onChange={(e) => setNuevaSalaTablero(Number(e.target.value) as 7 | 9)}
+                        className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-1.5 py-1 font-bold text-xs cursor-pointer"
+                      >
+                        <option value={9}>9 × 9 (Clásico)</option>
+                        <option value={7}>7 × 7 (Rápido)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-[#86542d] block text-[11px]">Mensaje o Regla Especial (Opcional):</label>
+                    <input
+                      type="text"
+                      maxLength={80}
+                      placeholder="Ej: Sala de entrenamiento oficial para el torneo del fin de semana"
+                      value={nuevaSalaMensaje}
+                      onChange={(e) => setNuevaSalaMensaje(e.target.value)}
+                      className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-medium text-xs"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={creandoSala}
+                    onClick={handleCrearSalaPersonalizada}
+                    className="w-full py-2 rounded-xl font-black text-xs bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#40c057] cursor-pointer"
+                  >
+                    {creandoSala ? '⏳ Creando Sala Oficial...' : '✨ Publicar Sala Oficial en Lobby'}
+                  </button>
+                </div>
+
+                {/* Lista de Salas Oficiales Activas */}
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-[#2b2140]">
+                      Salas Oficiales Destacadas ({salasPersonalizadas.length})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const s = await obtenerSalasPersonalizadasAsync();
+                        setSalasPersonalizadas(s);
+                      }}
+                      className="text-[10px] font-bold text-[#1971c2] hover:underline cursor-pointer"
+                    >
+                      🔄 Actualizar
+                    </button>
+                  </div>
+
+                  {salasPersonalizadas.length === 0 ? (
+                    <div className="p-4 bg-white rounded-2xl border-2 border-dashed border-[#2b2140]/30 text-center text-xs text-[#86542d] font-bold">
+                      No hay salas personalizadas creadas actualmente.
+                      <br />
+                      ¡Crea una arriba para que los jugadores la vean destacada en el Lobby!
+                    </div>
+                  ) : (
+                    salasPersonalizadas.map((sala) => (
+                      <div
+                        key={sala.codigo}
+                        className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono font-black text-sm text-[#d9480f] bg-[#ffe8cc] px-2 py-0.5 rounded-lg border border-[#ffa94d]">
+                              {sala.codigo}
+                            </span>
+                            <span className="font-black text-xs text-[#2b2140] truncate">
+                              {sala.nombre}
+                            </span>
+                            <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full bg-[#dbe4ff] text-[#364fc7]">
+                              {sala.maxJugadores} Jugadores · {sala.tamanoTablero || 9}x{sala.tamanoTablero || 9}
+                            </span>
+                          </div>
+                          {sala.mensajeEspecial && (
+                            <p className="text-[11px] text-[#2b8a3e] font-semibold mt-0.5 truncate">
+                              💬 {sala.mensajeEspecial}
+                            </p>
+                          )}
+                          <span className="text-[10px] text-[#86542d] block mt-0.5">
+                            Creada por: <strong>{sala.creador}</strong> ({sala.creadorRol?.toUpperCase() || 'MOD'})
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleEliminarSalaPersonalizada(sala.codigo)}
+                          className="p-1.5 rounded-xl bg-[#ffe3e3] border border-[#c92a2a] text-[#c92a2a] hover:bg-[#ffc9c9] cursor-pointer text-xs font-black shrink-0"
+                          title="Eliminar esta sala oficial"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
             )}
           </div>

@@ -847,49 +847,51 @@ export async function handleApiRequest(request, env) {
 
     const sesion = precomputedSesion !== null ? precomputedSesion : await resolverSesion(request, env);
 
+    // 1. Identificar actor
+    const actorId = sesion?.usuarioId || hAdminId || (hSupremeUser ? 'admin' : null);
+    const actor = actorId ? existingCuentas[actorId] : null;
+
+    // 2. Comprobar si es el Dev Supremo único ('admin' o clave de entorno ADMIN_PASS)
+    const isDirectSupremePass = Boolean(
+      (hSupremeToken && timeConstantCompare(hSupremeToken, ADMIN_PASS)) ||
+      (sesion?.token && timeConstantCompare(sesion.token, ADMIN_PASS))
+    );
+    const isSupremeOwner = Boolean(
+      (sesion && sesion.usuarioId === 'admin') ||
+      (actorId === 'admin' && (isDirectSupremePass || sesion)) ||
+      (hSupremeUser && hSupremeUser.toLowerCase() === ADMIN_USER.toLowerCase() && isDirectSupremePass)
+    );
+
+    // 3. Obtener el rol efectivo (el de la cuenta en Database tiene prioridad sobre el token viejo)
+    const effectiveRole = isSupremeOwner
+      ? 'dev'
+      : (actor?.rol || sesion?.rol || 'jugador');
+
+    // 4. Jerarquía de privilegios: Dev > Admin > Mod > Jugador
+    const isDev = isSupremeOwner || effectiveRole === 'dev';
+    const isAdmin = isDev || effectiveRole === 'admin';
+    const isMod = isAdmin || effectiveRole === 'mod';
+
     const hasAdminIntent = Boolean(
       hSupremeUser ||
       hSupremeToken ||
       hAdminId ||
-      (sesion && (sesion.rol === 'admin' || sesion.usuarioId === 'admin'))
+      (sesion && (sesion.rol === 'admin' || sesion.rol === 'dev' || sesion.rol === 'mod' || sesion.usuarioId === 'admin'))
     );
 
-    let isSupreme = false;
-    if (sesion && sesion.usuarioId === 'admin') {
-      isSupreme = true;
-    } else if (
-      Boolean(hSupremeUser && hSupremeToken) &&
-      hSupremeUser.toLowerCase() === ADMIN_USER.toLowerCase() &&
-      (timeConstantCompare(hSupremeToken, ADMIN_PASS) || (sesion && sesion.usuarioId === 'admin'))
-    ) {
-      isSupreme = true;
-    } else if (hSupremeToken && timeConstantCompare(hSupremeToken, ADMIN_PASS)) {
-      isSupreme = true;
-    }
-
-    let isDelegated = false;
-    if (!isSupreme) {
-      if (sesion && sesion.rol === 'admin' && sesion.usuarioId !== 'admin') {
-        const actor = existingCuentas[sesion.usuarioId];
-        if (actor && actor.rol === 'admin') {
-          isDelegated = true;
-        } else if (!actor) {
-          isDelegated = true;
-        }
-      } else if (hAdminId && hAdminId !== 'admin') {
-        const actor = existingCuentas[hAdminId];
-        if (actor && actor.rol === 'admin') {
-          if (hAdminKey) {
-            const okPass = await verificarClaveCuenta(actor, hAdminKey);
-            if (okPass) isDelegated = true;
-          } else if (sesion && sesion.usuarioId === hAdminId && sesion.rol === 'admin') {
-            isDelegated = true;
-          }
-        }
-      }
-    }
-
-    return { hasAdminIntent, isSupreme, isDelegated, sesion };
+    return {
+      hasAdminIntent,
+      isSupremeOwner, // Exclusivo del Dev único ('admin')
+      isSupreme: isDev, // Compatibilidad: cualquier Dev tiene permisos de ejecución Dev
+      isDev,
+      isAdmin,
+      isMod,
+      isDelegated: isAdmin, // Compatibilidad: administradores y devs
+      actorId,
+      actor,
+      effectiveRole,
+      sesion,
+    };
   }
 
   function verifyCallerAdminHeaders(existingCuentas) {
@@ -899,21 +901,20 @@ export async function handleApiRequest(request, env) {
     const hAdminKey = (request.headers.get('X-Admin-Key') || '').trim();
 
     const hasAdminIntent = Boolean(hSupremeUser || hSupremeToken || hAdminId);
-    const isSupreme =
+    const isSupremeOwner =
       (Boolean(hSupremeUser && hSupremeToken) &&
         hSupremeUser.toLowerCase() === ADMIN_USER.toLowerCase() &&
         timeConstantCompare(hSupremeToken, ADMIN_PASS)) ||
       (hSupremeToken && timeConstantCompare(hSupremeToken, ADMIN_PASS));
 
-    let isDelegated = false;
-    if (!isSupreme && hAdminId && hAdminId !== 'admin') {
-      const actor = existingCuentas[hAdminId];
-      if (actor && actor.rol === 'admin' && hAdminKey && (actor.clave === hAdminKey || actor.clave_plano === hAdminKey)) {
-        isDelegated = true;
-      }
-    }
+    const actor = hAdminId ? existingCuentas[hAdminId] : null;
+    const effectiveRole = isSupremeOwner ? 'dev' : (actor?.rol || 'jugador');
 
-    return { hasAdminIntent, isSupreme, isDelegated };
+    const isDev = isSupremeOwner || effectiveRole === 'dev';
+    const isAdmin = isDev || effectiveRole === 'admin';
+    const isMod = isAdmin || effectiveRole === 'mod';
+
+    return { hasAdminIntent, isSupremeOwner, isSupreme: isDev, isDev, isAdmin, isMod, isDelegated: isAdmin };
   }
 
   // Normalizar ruta por si está montado bajo subruta como /app/muro/api/...
@@ -1543,9 +1544,9 @@ export async function handleApiRequest(request, env) {
   if (pathname === '/api/admin/personajes/fijar-premio-semanal' && request.method === 'POST') {
     const sesion = await resolverSesion(request, env);
     const cuentas = await dbGetCuentas(env);
-    const { isSupreme, isDelegated } = await verifyCallerAdmin(cuentas, sesion);
+    const { isDev, isAdmin, isSupremeOwner } = await verifyCallerAdmin(cuentas, sesion);
 
-    if (!isSupreme && !isDelegated) {
+    if (!isDev && !isAdmin) {
       return new Response(JSON.stringify({ ok: false, error: 'Permisos insuficientes para fijar premios semanales.' }), {
         status: 403,
         headers: jsonHeaders,
@@ -1555,7 +1556,7 @@ export async function handleApiRequest(request, env) {
     try {
       const body = await request.json().catch(() => ({}));
       const rawPersonaje = body.personaje;
-      const actorName = isSupreme ? 'Dev Supremo' : (sesion?.usuarioId && cuentas[sesion.usuarioId]?.nombre) || 'Admin';
+      const actorName = isSupremeOwner ? 'Dev Supremo' : (sesion?.usuarioId && cuentas[sesion.usuarioId]?.nombre) || (isDev ? 'Dev' : 'Admin');
 
       const w = getWeekInfo();
       const keyActual = `semanal_${w.semanaActualId}`;
@@ -1575,11 +1576,12 @@ export async function handleApiRequest(request, env) {
           color: rawPersonaje.color || '#ffd43b',
           hat: rawPersonaje.hat || 'corona',
           ropa: rawPersonaje.ropa || 'ninguna',
+          ropaColor: rawPersonaje.ropaColor,
           aura: rawPersonaje.aura || 'dorada',
           descripcion: `Premio exclusivo de la Semana ${w.semanaActualId}`,
           origen: {
             tipo: 'torneo_semanal',
-            otorgadoPor: `Torneo Semanal (${w.semanaActualId}) creado por ${actorName}`,
+            otorgadoPor: `Torneo Semanal (${w.semanaActualId}) fijado por ${actorName}`,
             fecha: new Date().toISOString(),
             semanaTorneo: w.semanaActualId,
           },
@@ -1588,12 +1590,12 @@ export async function handleApiRequest(request, env) {
 
       actual.premioSemanal = premio || undefined;
       if (kv) {
-        await kv.put(keyActual, JSON.stringify(actual), { expirationTtl: 60 * 60 * 24 * 28 });
+        await kv.put(keyActual, JSON.stringify(actual));
         await kv.put('premio_semanal_global', JSON.stringify(premio || {}));
       }
 
       return new Response(
-        JSON.stringify({ ok: true, mensaje: 'Premio del torneo semanal actualizado.', premioSemanal: premio }),
+        JSON.stringify({ ok: true, mensaje: 'Premio del torneo semanal actualizado y guardado en Database.', premioSemanal: premio }),
         { headers: jsonHeaders }
       );
     } catch (err) {
@@ -1604,23 +1606,29 @@ export async function handleApiRequest(request, env) {
     }
   }
 
-  // 5f. /api/admin/config-semanal — Dev y Admin configuran los puntos semanales
+  // 5f. /api/admin/config-semanal — Dev y Admin configuran los puntos semanales y consultan premio
   if (pathname === '/api/admin/config-semanal') {
     if (request.method === 'GET') {
-      let cfg = { primerLugar: 25, segundoLugar: 15, tercerLugar: 10 };
+      let cfg = { primerLugar: 50, segundoLugar: 30, tercerLugar: 15, participacion: 5 };
+      let premioSemanal = null;
       if (kv) {
         try {
           const raw = await kv.get('config_semanal_puntos');
           if (raw) cfg = { ...cfg, ...JSON.parse(raw) };
+          const rawP = await kv.get('premio_semanal_global');
+          if (rawP) {
+            const p = JSON.parse(rawP);
+            if (p && p.id) premioSemanal = p;
+          }
         } catch {}
       }
-      return new Response(JSON.stringify({ ok: true, config: cfg }), { headers: jsonHeaders });
+      return new Response(JSON.stringify({ ok: true, config: cfg, premioSemanal }), { headers: jsonHeaders });
     }
     if (request.method === 'POST') {
       const sesion = await resolverSesion(request, env);
       const cuentas = await dbGetCuentas(env);
-      const { isSupreme, isDelegated } = await verifyCallerAdmin(cuentas, sesion);
-      if (!isSupreme && !isDelegated) {
+      const { isDev, isAdmin } = await verifyCallerAdmin(cuentas, sesion);
+      if (!isDev && !isAdmin) {
         return new Response(JSON.stringify({ ok: false, error: 'Permisos insuficientes.' }), {
           status: 403,
           headers: jsonHeaders,
@@ -1628,14 +1636,15 @@ export async function handleApiRequest(request, env) {
       }
       const body = await request.json().catch(() => ({}));
       const cfg = {
-        primerLugar: Math.max(1, Number(body.primerLugar) || 25),
-        segundoLugar: Math.max(0, Number(body.segundoLugar) || 15),
-        tercerLugar: Math.max(0, Number(body.tercerLugar) || 10),
+        primerLugar: Math.max(1, Number(body.primerLugar) || 50),
+        segundoLugar: Math.max(0, Number(body.segundoLugar) || 30),
+        tercerLugar: Math.max(0, Number(body.tercerLugar) || 15),
+        participacion: Math.max(0, Number(body.participacion) || 5),
       };
       if (kv) {
         await kv.put('config_semanal_puntos', JSON.stringify(cfg));
       }
-      return new Response(JSON.stringify({ ok: true, config: cfg, mensaje: 'Puntos semanales guardados.' }), {
+      return new Response(JSON.stringify({ ok: true, config: cfg, mensaje: 'Puntos semanales guardados en Database.' }), {
         headers: jsonHeaders,
       });
     }
@@ -1670,9 +1679,9 @@ export async function handleApiRequest(request, env) {
     if (request.method === 'POST') {
       const sesion = await resolverSesion(request, env);
       const cuentas = await dbGetCuentas(env);
-      const { isSupreme, isDelegated } = await verifyCallerAdmin(cuentas, sesion);
-      if (!isSupreme && !isDelegated) {
-        return new Response(JSON.stringify({ ok: false, error: 'Permisos insuficientes. Exclusivo de Moderación/Dev.' }), {
+      const { isDev } = await verifyCallerAdmin(cuentas, sesion);
+      if (!isDev) {
+        return new Response(JSON.stringify({ ok: false, error: 'Exclusivo del rol Dev.' }), {
           status: 403,
           headers: jsonHeaders,
         });
@@ -1685,6 +1694,103 @@ export async function handleApiRequest(request, env) {
       return new Response(JSON.stringify({ ok: true, desbloqueos, mensaje: 'Requisitos de desbloqueo guardados en Database.' }), {
         headers: jsonHeaders,
       });
+    }
+  }
+
+  // 5f3. /api/admin/salas-personalizadas — Moderadores, Admins y Devs gestionan salas personalizadas
+  if (pathname === '/api/admin/salas-personalizadas') {
+    if (request.method === 'GET') {
+      let salas = [];
+      if (kv) {
+        try {
+          const raw = await kv.get('salas_personalizadas');
+          if (raw) salas = JSON.parse(raw);
+          if (!Array.isArray(salas)) salas = [];
+        } catch {}
+      }
+      return new Response(JSON.stringify({ ok: true, salas }), { headers: jsonHeaders });
+    }
+
+    if (request.method === 'POST') {
+      const sesion = await resolverSesion(request, env);
+      const cuentas = await dbGetCuentas(env);
+      const { isMod, isAdmin, isDev } = await verifyCallerAdmin(cuentas, sesion);
+      if (!isMod && !isAdmin && !isDev) {
+        return new Response(JSON.stringify({ ok: false, error: 'Exclusivo para Moderadores, Admins o Dev.' }), {
+          status: 403,
+          headers: jsonHeaders,
+        });
+      }
+
+      const body = await request.json().catch(() => ({}));
+      const codigo = String(body.codigo || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+      const nombre = String(body.nombre || '').trim();
+      if (!codigo || !nombre) {
+        return new Response(JSON.stringify({ ok: false, error: 'Código y nombre de la sala requeridos.' }), {
+          status: 400,
+          headers: jsonHeaders,
+        });
+      }
+
+      const creadorNombre = (sesion?.usuarioId && cuentas[sesion.usuarioId]?.nombre) || (isDev ? 'Dev' : 'Moderador');
+      const nuevaSala = {
+        id: `custom_${codigo}`,
+        codigo,
+        nombre: nombre.slice(0, 30),
+        creador: creadorNombre,
+        creadorId: sesion?.usuarioId || 'admin',
+        creadoEn: Date.now(),
+        maxJugadores: body.maxJugadores === 4 ? 4 : 2,
+        modoMuros: body.modoMuros === 'caos' ? 'caos' : (body.modoMuros === 'tactico' ? 'tactico' : 'estandar'),
+        tamanoTablero: body.tamanoTablero === 7 ? 7 : 9,
+        destacada: true,
+      };
+
+      let lista = [];
+      if (kv) {
+        try {
+          const raw = await kv.get('salas_personalizadas');
+          if (raw) lista = JSON.parse(raw);
+          if (!Array.isArray(lista)) lista = [];
+        } catch {}
+      }
+
+      lista = lista.filter((s) => s.codigo !== codigo);
+      lista.unshift(nuevaSala);
+      if (lista.length > 20) lista = lista.slice(0, 20);
+
+      if (kv) {
+        await kv.put('salas_personalizadas', JSON.stringify(lista));
+      }
+
+      return new Response(JSON.stringify({ ok: true, sala: nuevaSala, salas: lista, mensaje: `Sala oficial "${nuevaSala.nombre}" creada y destacada.` }), {
+        headers: jsonHeaders,
+      });
+    }
+
+    if (request.method === 'DELETE') {
+      const sesion = await resolverSesion(request, env);
+      const cuentas = await dbGetCuentas(env);
+      const { isMod, isAdmin, isDev } = await verifyCallerAdmin(cuentas, sesion);
+      if (!isMod && !isAdmin && !isDev) {
+        return new Response(JSON.stringify({ ok: false, error: 'Permisos insuficientes.' }), {
+          status: 403,
+          headers: jsonHeaders,
+        });
+      }
+      const body = await request.json().catch(() => ({}));
+      const codigo = String(body.codigo || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+      let lista = [];
+      if (kv) {
+        try {
+          const raw = await kv.get('salas_personalizadas');
+          if (raw) lista = JSON.parse(raw);
+          if (!Array.isArray(lista)) lista = [];
+        } catch {}
+        lista = lista.filter((s) => s.codigo !== codigo);
+        await kv.put('salas_personalizadas', JSON.stringify(lista));
+      }
+      return new Response(JSON.stringify({ ok: true, salas: lista }), { headers: jsonHeaders });
     }
   }
 
@@ -1814,29 +1920,37 @@ export async function handleApiRequest(request, env) {
       } catch {}
 
       const existing = await dbGetCuentas(env);
-      const { isSupreme, isDelegated } = await verifyCallerAdmin(existing, sesion);
-      const esAdmin = (sesion && (sesion.rol === 'admin' || sesion.usuarioId === 'admin' || sesion.rol === 'dev')) || isSupreme || isDelegated;
+      const { isSupremeOwner, isDev, isAdmin } = await verifyCallerAdmin(existing, sesion);
+      const esAdmin = isDev || isAdmin;
 
       let finalCuentas = { ...existing };
 
       if (esAdmin) {
-        // Admin / Dev: puede gestionar usuarios según su rol
+        // Dev Supremo / Dev / Admin: gestiona según jerarquía estricta
         for (const [id, acc] of Object.entries(incoming)) {
           if (!acc || typeof acc !== 'object') continue;
           if (id === 'admin') continue;
           const prevAcc = existing[id];
 
-          // Validaciones de roles estrictas:
           let assignedRol = prevAcc?.rol || 'jugador';
-          if (isSupreme) {
-            // El Dev puede asignar cualquier rol: dev, admin, mod o jugador
+          if (isSupremeOwner) {
+            // El Dev Supremo único ('admin') puede asignar o revocar CUALQUIER rol, incluyendo DEV
             assignedRol = acc.rol || prevAcc?.rol || 'jugador';
-          } else {
-            // Un Admin regular NO puede modificar a otros admins ni al Dev
+          } else if (isDev) {
+            // Un Dev delegado NO puede modificar a usuarios con rol dev ni puede otorgar rol dev
+            if (prevAcc && prevAcc.rol === 'dev') {
+              continue;
+            }
+            if (acc.rol === 'dev') {
+              assignedRol = prevAcc?.rol || 'jugador'; // Solo el Dev Supremo único puede dar poder de Dev
+            } else {
+              assignedRol = acc.rol || prevAcc?.rol || 'jugador';
+            }
+          } else if (isAdmin) {
+            // Un Admin regular no puede modificar a Devs ni a otros Admins
             if (prevAcc && (prevAcc.rol === 'admin' || prevAcc.rol === 'dev')) {
               continue;
             }
-            // Un Admin regular solo puede promover a 'mod' o revertir a 'jugador'
             if (acc.rol === 'mod' || acc.rol === 'jugador') {
               assignedRol = acc.rol;
             }
@@ -2153,7 +2267,7 @@ export async function handleApiRequest(request, env) {
 
     let existingCuentas = {};
     try {
-      existingCuentas = sanitizeCuentas(JSON.parse((await kv.get('cuentas')) || '{}'));
+      existingCuentas = await dbGetCuentas(env);
     } catch {}
 
     if (request.method === 'GET') {
@@ -2167,6 +2281,17 @@ export async function handleApiRequest(request, env) {
         const rawP = await kv.get(keyPasada);
         if (rawP) pasada = { ...emptyPasada, ...JSON.parse(rawP) };
       } catch {}
+
+      // Si actual no tiene premioSemanal explícito pero hay uno fijado globalmente, asignarlo
+      if (!actual.premioSemanal) {
+        try {
+          const rawGlob = await kv.get('premio_semanal_global');
+          if (rawGlob) {
+            const pGlob = JSON.parse(rawGlob);
+            if (pGlob && pGlob.id) actual.premioSemanal = pGlob;
+          }
+        } catch {}
+      }
 
       const modActual = hydrateWeeklyFromAccounts(actual, w.mondayUtc, w.nextMondayUtc, existingCuentas);
       const modPasada = hydrateWeeklyFromAccounts(pasada, w.lastMondayUtc, w.mondayUtc, existingCuentas);

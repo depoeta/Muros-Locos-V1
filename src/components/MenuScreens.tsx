@@ -86,7 +86,10 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
     { char: 'S', color: '#51cf66' },
   ];
 
-  const esAdmin = Boolean(usuarioActual && (usuarioActual.rol === 'admin' || usuarioActual.id === 'admin'));
+  const esDev = Boolean(usuarioActual && (usuarioActual.rol === 'dev' || usuarioActual.id === 'admin' || usuarioActual.esSupremo));
+  const esAdmin = Boolean(usuarioActual && (usuarioActual.rol === 'admin' || esDev));
+  const esMod = Boolean(usuarioActual && usuarioActual.rol === 'mod');
+  const esStaff = esDev || esAdmin || esMod;
 
   const esMinimalista = estiloVisual === 'minimalista';
 
@@ -199,7 +202,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
         <div className="flex items-center gap-1.5 sm:gap-2">
           <PWAInstallButton variant="compact" />
 
-          {esAdmin && onAbrirAdmin && (
+          {esStaff && onAbrirAdmin && (
             <button
               onClick={() => {
                 sounds.playClick();
@@ -210,10 +213,10 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
                   ? 'py-1 px-2.5 rounded-xl bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 font-bold text-xs cursor-pointer flex items-center gap-1 transition-all'
                   : 'py-1 px-2.5 rounded-2xl bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] font-black text-xs cursor-pointer flex items-center gap-1 active:translate-y-0.5'
               }
-              title="Abrir Panel de Administración"
+              title={esDev ? 'Panel Dev Supremo' : esAdmin ? 'Panel de Administración' : 'Panel de Moderación (Salas Oficiales)'}
             >
-              <span>👑</span>
-              <span className="hidden sm:inline">Admin</span>
+              <span>{esDev ? '👑' : esAdmin ? '🛡️' : '🔰'}</span>
+              <span className="hidden sm:inline">{esDev ? 'Dev' : esAdmin ? 'Admin' : 'Mod'}</span>
             </button>
           )}
 
@@ -242,9 +245,21 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
                     <span className={esMinimalista ? 'text-xs font-semibold text-slate-200 max-w-[95px] truncate' : 'text-xs font-black text-[#2b2140] max-w-[95px] truncate'}>
                       {usuarioActual.nombre}
                     </span>
-                    {esAdmin && (
-                      <span className={esMinimalista ? 'text-[8px] bg-amber-400/20 text-amber-300 font-bold px-1 rounded border border-amber-400/30' : 'text-[8px] bg-[#ffd43b] text-[#5c3c00] font-black px-1 rounded border border-[#2b2140]'}>
-                        {usuarioActual.id === 'admin' ? 'SUPREMO' : 'ADMIN'}
+                    {esStaff && (
+                      <span className={
+                        esMinimalista
+                          ? esDev
+                            ? 'text-[8px] bg-amber-400/20 text-amber-300 font-bold px-1 rounded border border-amber-400/30'
+                            : esAdmin
+                            ? 'text-[8px] bg-blue-400/20 text-blue-300 font-bold px-1 rounded border border-blue-400/30'
+                            : 'text-[8px] bg-emerald-400/20 text-emerald-300 font-bold px-1 rounded border border-emerald-400/30'
+                          : esDev
+                          ? 'text-[8px] bg-[#ffd43b] text-[#5c3c00] font-black px-1 rounded border border-[#2b2140]'
+                          : esAdmin
+                          ? 'text-[8px] bg-[#a5d8ff] text-[#1864ab] font-black px-1 rounded border border-[#2b2140]'
+                          : 'text-[8px] bg-[#b2f2bb] text-[#2b8a3e] font-black px-1 rounded border border-[#2b2140]'
+                      }>
+                        {usuarioActual.id === 'admin' ? 'DEV SUPREMO' : esDev ? 'DEV' : esAdmin ? 'ADMIN' : 'MOD'}
                       </span>
                     )}
                   </div>

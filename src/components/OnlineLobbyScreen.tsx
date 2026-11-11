@@ -14,9 +14,11 @@ import {
   OnlinePlayerInfo,
   PERSONAJES_REGISTRO,
   PublicRoomInfo,
+  SalaPersonalizada,
   UserAccount,
 } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
+import { obtenerSalasPersonalizadasAsync } from '../game/storage';
 
 // =========================================================================
 // 1. ONLINE DIAGNOSTICS OVERLAY
@@ -237,6 +239,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
   const [maxJugadores, setMaxJugadores] = useState<2 | 4>(2);
   const [publicarEnLista, setPublicarEnLista] = useState<boolean>(true);
   const [salasDinamicas, setSalasDinamicas] = useState<PublicRoomInfo[]>([]);
+  const [salasPersonalizadas, setSalasPersonalizadas] = useState<SalaPersonalizada[]>([]);
   const [cargandoSalas, setCargandoSalas] = useState<boolean>(false);
   const [conectando, setConectando] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -263,8 +266,12 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
   const recargarSalasPublicas = async () => {
     setCargandoSalas(true);
     try {
-      const salas = await onlineService.obtenerSalasPublicas();
+      const [salas, custom] = await Promise.all([
+        onlineService.obtenerSalasPublicas(),
+        obtenerSalasPersonalizadasAsync(),
+      ]);
       setSalasDinamicas(salas);
+      setSalasPersonalizadas(custom);
     } catch {
       // ignore
     } finally {
@@ -652,6 +659,56 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                   <span className="hidden sm:inline">Actualizar</span>
                 </button>
               </div>
+
+              {/* Salas Oficiales / Eventos Destacados por Moderación y Devs */}
+              {salasPersonalizadas.length > 0 && (
+                <div className="flex flex-col gap-1.5 p-2.5 rounded-xl bg-[#fff9db] border-2 border-[#ffd43b]">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase text-[#8f4b00] tracking-wider flex items-center gap-1">
+                      <span>🔰</span> Salas Oficiales Staff (Mod & Dev)
+                    </span>
+                    <span className="text-[9px] font-bold bg-white text-[#5c3c00] px-1.5 py-0.5 rounded border border-[#2b2140]">
+                      {salasPersonalizadas.length} destacada{salasPersonalizadas.length > 1 ? 's' : ''}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {salasPersonalizadas.map((sp) => (
+                      <button
+                        key={sp.codigo}
+                        disabled={conectando}
+                        onClick={() => {
+                          setCodigoInput(sp.codigo);
+                          handleEntrarSalaPublica(sp.codigo, sp.maxJugadores);
+                        }}
+                        className="p-2 rounded-xl border-2 border-[#2b2140] bg-white hover:bg-[#fff3bf] active:translate-y-0.5 shadow-[0_2px_0_#2b2140] flex items-center justify-between gap-2 text-left transition-all cursor-pointer"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-mono font-black text-xs text-[#d9480f] bg-[#ffe8cc] px-1.5 py-0.2 rounded border border-[#ffa94d]">
+                              {sp.codigo}
+                            </span>
+                            <span className="font-extrabold text-xs text-[#2b2140] truncate">
+                              {sp.nombre}
+                            </span>
+                          </div>
+                          {sp.mensajeEspecial && (
+                            <span className="text-[10px] text-[#2b8a3e] font-semibold block truncate">
+                              💬 {sp.mensajeEspecial}
+                            </span>
+                          )}
+                          <span className="text-[9px] text-[#86542d] font-bold block mt-0.5">
+                            {sp.maxJugadores} Jugadores · Mod: {sp.creador}
+                          </span>
+                        </div>
+                        <span className="text-[10px] bg-[#51cf66] text-[#134e20] font-black px-2 py-1 rounded-lg border border-[#2b2140] shrink-0 shadow-xs">
+                          Unirse ▶
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {salasDinamicas.length > 0 ? (
                 <div className="flex flex-col gap-1.5">

@@ -14,6 +14,7 @@ import {
   PERSONAJES_REGISTRO,
   PersonajeColeccionable,
   RankEntry,
+  SalaPersonalizada,
   ScoreBreakdown,
   SolicitudResetRanking,
   UserAccount,
@@ -2195,6 +2196,89 @@ export async function guardarDesbloqueosPersonajesAsync(
     return { ok: false, error: data?.error || 'No se pudieron guardar los requisitos de desbloqueo en Database.' };
   } catch (err: any) {
     return { ok: false, error: err?.message || 'Error de conexión.' };
+  }
+}
+
+// ==========================================
+// SALAS PERSONALIZADAS EN LÍNEA (STAFF: DEV, ADMIN, MOD)
+// ==========================================
+
+const STORAGE_KEY_SALAS_PERSONALIZADAS = 'muros_salas_personalizadas_cache';
+
+export async function obtenerSalasPersonalizadasAsync(): Promise<SalaPersonalizada[]> {
+  try {
+    const res = await fetch(getApiBaseUrl('/api/admin/salas-personalizadas'));
+    const data = await res.json().catch(() => null);
+    if (data?.ok && Array.isArray(data.salas)) {
+      safeSet(STORAGE_KEY_SALAS_PERSONALIZADAS, JSON.stringify(data.salas));
+      return data.salas;
+    }
+  } catch {}
+  try {
+    const local = localStorage.getItem(STORAGE_KEY_SALAS_PERSONALIZADAS);
+    if (local) return JSON.parse(local);
+  } catch {}
+  return [];
+}
+
+export async function crearSalaPersonalizadaAsync(
+  sala: Partial<SalaPersonalizada>
+): Promise<{ ok: boolean; error?: string; sala?: SalaPersonalizada }> {
+  try {
+    const cur = obtenerUsuarioActual();
+    const sup = obtenerTokenAdminSupremo();
+    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (sup) {
+      headers['X-Admin-User'] = sup.user;
+      headers['X-Admin-Token'] = sup.token;
+    } else if (cur && cur.id !== 'admin') {
+      headers['X-Admin-Id'] = cur.id;
+    }
+
+    const res = await fetch(getApiBaseUrl('/api/admin/salas-personalizadas'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(sala),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.ok) {
+      return { ok: true, sala: data.sala };
+    }
+    return { ok: false, error: data?.error || 'No se pudo crear la sala personalizada.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red.' };
+  }
+}
+
+export async function eliminarSalaPersonalizadaAsync(
+  codigo: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const cur = obtenerUsuarioActual();
+    const sup = obtenerTokenAdminSupremo();
+    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (sup) {
+      headers['X-Admin-User'] = sup.user;
+      headers['X-Admin-Token'] = sup.token;
+    } else if (cur && cur.id !== 'admin') {
+      headers['X-Admin-Id'] = cur.id;
+    }
+
+    const res = await fetch(getApiBaseUrl(`/api/admin/salas-personalizadas/${encodeURIComponent(codigo)}`), {
+      method: 'DELETE',
+      headers,
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok && data?.ok) {
+      return { ok: true };
+    }
+    return { ok: false, error: data?.error || 'No se pudo eliminar la sala.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red.' };
   }
 }
 

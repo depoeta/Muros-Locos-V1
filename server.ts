@@ -23,6 +23,7 @@ if (!fs.existsSync(DATA_DIR)) {
 const CUENTAS_FILE = path.join(DATA_DIR, 'cuentas.json');
 const RANKING_FILE = path.join(DATA_DIR, 'ranking.json');
 const SALAS_FILE = path.join(DATA_DIR, 'salas.json');
+const SALAS_PERSONALIZADAS_FILE = path.join(DATA_DIR, 'salas_personalizadas.json');
 
 function readJsonFile(filePath: string, fallback: any = {}) {
   try {
@@ -611,6 +612,7 @@ app.post('/api/admin/personajes/fijar-premio-semanal', async (req, res) => {
       color: rawPersonaje.color || '#ffd43b',
       hat: rawPersonaje.hat || 'corona',
       ropa: rawPersonaje.ropa || 'ninguna',
+      ropaColor: rawPersonaje.ropaColor || '#ffffff',
       aura: rawPersonaje.aura || 'dorada',
       descripcion: `Premio exclusivo del Torneo Semanal`,
       origen: {
@@ -629,9 +631,10 @@ app.post('/api/admin/personajes/fijar-premio-semanal', async (req, res) => {
 
 // Configuración de puntos semanales
 app.get('/api/admin/config-semanal', (_req, res) => {
-  const cfg = readJsonFile(CONFIG_SEMANAL_FILE, { primerLugar: 25, segundoLugar: 15, tercerLugar: 10 });
+  const cfg = readJsonFile(CONFIG_SEMANAL_FILE, { primerLugar: 25, segundoLugar: 15, tercerLugar: 10, participacion: 3 });
+  const premioSemanal = readJsonFile(PREMIO_SEMANAL_FILE, null);
   res.setHeader('X-KV-Bound', 'true');
-  res.json({ ok: true, config: cfg });
+  res.json({ ok: true, config: cfg, premioSemanal });
 });
 
 app.post('/api/admin/config-semanal', async (req, res) => {
@@ -647,11 +650,86 @@ app.post('/api/admin/config-semanal', async (req, res) => {
     primerLugar: Math.max(1, Number(req.body?.primerLugar) || 25),
     segundoLugar: Math.max(0, Number(req.body?.segundoLugar) || 15),
     tercerLugar: Math.max(0, Number(req.body?.tercerLugar) || 10),
+    participacion: Math.max(0, Number(req.body?.participacion) || 3),
   };
   writeJsonFile(CONFIG_SEMANAL_FILE, cfg);
   lastKvUpdate = Date.now();
   res.setHeader('X-KV-Bound', 'true');
   return res.json({ ok: true, config: cfg, mensaje: 'Puntos semanales guardados.' });
+});
+
+// Salas personalizadas en línea (Dev, Admin y Mod)
+app.get('/api/admin/salas-personalizadas', (_req, res) => {
+  const salas = readJsonFile(SALAS_PERSONALIZADAS_FILE, []);
+  res.setHeader('X-KV-Bound', 'true');
+  res.json({ ok: true, salas });
+});
+
+app.post('/api/admin/salas-personalizadas', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentasData = readJsonFile(CUENTAS_FILE, {});
+  const { isSupreme, isDelegated } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
+  const isMod = Boolean(sesion && (sesion.rol === 'mod' || (sesion.usuarioId && cuentasData[sesion.usuarioId]?.rol === 'mod')));
+
+  if (!isSupreme && !isDelegated && !isMod) {
+    return res.status(403).json({ ok: false, error: 'Solo miembros de Staff (Dev, Admin, Mod) pueden crear salas oficiales.' });
+  }
+
+  const { codigo, nombre, maxJugadores, modoMuros, tamanoTablero, destacada, mensajeEspecial } = req.body || {};
+  const cleanCode = String(codigo || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+  if (!cleanCode || cleanCode.length < 3) {
+    return res.status(400).json({ ok: false, error: 'El código de sala debe tener al menos 3 caracteres.' });
+  }
+
+  const creatorName = isSupreme ? 'Dev Supremo' : (sesion?.usuarioId && cuentasData[sesion.usuarioId]?.nombre) || 'Moderador';
+  const creatorRole = isSupreme ? 'dev' : isDelegated ? 'admin' : 'mod';
+
+  const nuevaSala = {
+    id: `sp_${Date.now()}_${cleanCode}`,
+    codigo: cleanCode,
+    nombre: String(nombre || `Sala Oficial ${cleanCode}`).trim().slice(0, 32),
+    creador: creatorName,
+    creadorId: sesion?.usuarioId || 'admin',
+    creadorRol: creatorRole,
+    creadoEn: Date.now(),
+    maxJugadores: maxJugadores === 4 ? 4 : 2,
+    modoMuros: modoMuros || 'estandar',
+    tamanoTablero: tamanoTablero === 7 ? 7 : 9,
+    destacada: Boolean(destacada !== false),
+    mensajeEspecial: String(mensajeEspecial || '').trim().slice(0, 80),
+  };
+
+  let lista = readJsonFile(SALAS_PERSONALIZADAS_FILE, []);
+  if (!Array.isArray(lista)) lista = [];
+  lista = lista.filter((s: any) => s.codigo !== cleanCode);
+  lista.unshift(nuevaSala);
+  if (lista.length > 20) lista = lista.slice(0, 20);
+
+  writeJsonFile(SALAS_PERSONALIZADAS_FILE, lista);
+  lastKvUpdate = Date.now();
+  res.setHeader('X-KV-Bound', 'true');
+  return res.json({ ok: true, mensaje: `Sala personalizada "${cleanCode}" creada con éxito.`, sala: nuevaSala });
+});
+
+app.delete('/api/admin/salas-personalizadas/:codigo', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentasData = readJsonFile(CUENTAS_FILE, {});
+  const { isSupreme, isDelegated } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
+  const isMod = Boolean(sesion && (sesion.rol === 'mod' || (sesion.usuarioId && cuentasData[sesion.usuarioId]?.rol === 'mod')));
+
+  if (!isSupreme && !isDelegated && !isMod) {
+    return res.status(403).json({ ok: false, error: 'Solo miembros de Staff pueden gestionar salas oficiales.' });
+  }
+
+  const cleanCode = String(req.params.codigo || '').toUpperCase().trim();
+  let lista = readJsonFile(SALAS_PERSONALIZADAS_FILE, []);
+  if (Array.isArray(lista)) {
+    lista = lista.filter((s: any) => s.codigo !== cleanCode);
+    writeJsonFile(SALAS_PERSONALIZADAS_FILE, lista);
+  }
+
+  res.setHeader('X-KV-Bound', 'true');
+  return res.json({ ok: true, mensaje: `Sala "${cleanCode}" eliminada.` });
 });
 
 // Configuración de puntos requeridos para desbloqueo de personajes
@@ -868,28 +946,38 @@ async function verifyExpressCallerAdmin(
     isSupreme = true;
   }
 
+  // Verificar rol en sesión o base de datos
+  const callerUser = sesion?.usuarioId ? existingCuentas[sesion.usuarioId] : (hAdminId ? existingCuentas[hAdminId] : null);
+  const callerRole = callerUser?.rol || sesion?.rol;
+
+  if (callerRole === 'dev') {
+    isSupreme = true;
+  }
+
   let isDelegated = false;
   if (!isSupreme) {
-    if (sesion && sesion.rol === 'admin' && sesion.usuarioId !== 'admin') {
-      const actor = existingCuentas[sesion.usuarioId];
-      if (actor && actor.rol === 'admin') {
-        isDelegated = true;
-      } else if (!actor) {
-        isDelegated = true;
-      }
+    if (callerRole === 'admin') {
+      isDelegated = true;
     } else if (hAdminId && hAdminId !== 'admin') {
       const actor = existingCuentas[hAdminId];
-      if (actor && actor.rol === 'admin') {
+      if (actor && (actor.rol === 'admin' || actor.rol === 'dev')) {
         if (hAdminKey && actor.clave === hAdminKey) {
           isDelegated = true;
-        } else if (sesion && sesion.usuarioId === hAdminId && sesion.rol === 'admin') {
+        } else if (sesion && sesion.usuarioId === hAdminId) {
           isDelegated = true;
         }
       }
     }
   }
 
-  return { hasAdminIntent, isSupreme, isDelegated, hAdminId, sesion };
+  const isMod = callerRole === 'mod';
+  const isSupremeOwner = Boolean(
+    (sesion && sesion.usuarioId === 'admin') ||
+    (hSupremeToken && hSupremeToken === ADMIN_PASS) ||
+    (hSupremeUser && hSupremeUser.toLowerCase() === ADMIN_USER.toLowerCase() && hSupremeToken === ADMIN_PASS)
+  );
+
+  return { hasAdminIntent, isSupreme, isDelegated, isMod, isSupremeOwner, hAdminId, sesion };
 }
 
 app.get('/api/cuentas', (_req, res) => {

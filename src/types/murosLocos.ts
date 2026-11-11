@@ -387,6 +387,21 @@ export interface PublicRoomInfo {
   creadoEn: number;
 }
 
+export interface SalaPersonalizada {
+  id: string;
+  codigo: string;
+  nombre: string;
+  creador: string;
+  creadorId: string;
+  creadorRol: 'dev' | 'admin' | 'mod';
+  creadoEn: number;
+  maxJugadores: 2 | 4;
+  modoMuros?: 'estandar' | 'caos' | 'tactico';
+  tamanoTablero?: 7 | 9;
+  destacada?: boolean;
+  mensajeEspecial?: string;
+}
+
 export interface UserAccount {
   id: string;
   nombre: string;
