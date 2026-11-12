@@ -52,12 +52,15 @@ export interface PersonajeColeccionable {
   ropaColor?: string;
   aura?: PersonajeAuraType;
   descripcion?: string;
-  origen: {
-    tipo: 'torneo_semanal' | 'regalo_dev' | 'regalo_admin';
-    otorgadoPor: string;
-    fecha: string;
-    semanaTorneo?: string;
-  };
+  fechaAdquisicion?: string;
+  origen:
+    | {
+        tipo: 'torneo_semanal' | 'regalo_dev' | 'regalo_admin' | string;
+        otorgadoPor: string;
+        fecha?: string;
+        semanaTorneo?: string;
+      }
+    | string;
 }
 
 export interface UserInventario {
@@ -138,6 +141,9 @@ export interface Player {
   tipo: PlayerType;
   color: string;
   hat: HatType;
+  ropa?: PersonajeRopaType;
+  ropaColor?: string;
+  aura?: PersonajeAuraType;
   r: number;
   c: number;
   muros: number;
@@ -153,6 +159,9 @@ export interface MatchConfig {
     tipo: PlayerType;
     color?: string;
     hat?: HatType;
+    ropa?: PersonajeRopaType;
+    ropaColor?: string;
+    aura?: PersonajeAuraType;
   }[];
   empiezaAlAzar: boolean;
   permitirDeshacer: boolean;

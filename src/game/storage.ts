@@ -417,20 +417,38 @@ function reconciliarYNotificarNube() {
   const ranking = cargarRanking();
 
   const current = obtenerUsuarioActual();
-  if (current && current.id !== 'admin') {
+  if (current) {
     const updated = cuentas[current.id];
     if (!updated) {
-      cerrarSesion();
-    } else if (
-      updated.rol !== current.rol ||
-      updated.puntos !== current.puntos ||
-      updated.victorias !== current.victorias ||
-      updated.nombre !== current.nombre ||
-      updated.avatarHat !== current.avatarHat ||
-      updated.avatarColor !== current.avatarColor ||
-      updated.temaTablero !== current.temaTablero
-    ) {
-      guardarUsuarioActual(updated);
+      if (current.id !== 'admin') {
+        cerrarSesion();
+      }
+    } else {
+      const inventarioCambiado =
+        JSON.stringify(updated.inventario || {}) !== JSON.stringify(current.inventario || {});
+      const ropaCambiada =
+        updated.avatarRopa !== current.avatarRopa || updated.avatarRopaColor !== current.avatarRopaColor;
+      const auraCambiada = updated.avatarAura !== current.avatarAura;
+      const aspectoCambiado =
+        updated.avatarHat !== current.avatarHat || updated.avatarColor !== current.avatarColor;
+      const statsCambiadas =
+        updated.rol !== current.rol ||
+        updated.puntos !== current.puntos ||
+        updated.victorias !== current.victorias ||
+        updated.nombre !== current.nombre ||
+        updated.temaTablero !== current.temaTablero;
+
+      if (inventarioCambiado || ropaCambiada || auraCambiada || aspectoCambiado || statsCambiadas) {
+        const merged: UserAccount = {
+          ...current,
+          ...updated,
+          id: current.id,
+          esSupremo: current.id === 'admin' ? true : updated.esSupremo,
+          rol: current.id === 'admin' ? 'dev' : updated.rol,
+          clave: current.id === 'admin' ? '***SUPREMO***' : (current.clave || updated.clave),
+        };
+        guardarUsuarioActual(merged);
+      }
     }
   }
 
@@ -1300,7 +1318,7 @@ export function cargarCuentas(): Record<string, UserAccount> {
 export function guardarCuentas(cuentas: Record<string, UserAccount>) {
   const copy = { ...cuentas };
   if (copy['admin']) {
-    copy['admin'] = { ...copy['admin'], rol: 'admin', esSupremo: true, clave: '***SUPREMO***' };
+    copy['admin'] = { ...copy['admin'], rol: 'dev', esSupremo: true, clave: '***SUPREMO***' };
   }
   safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(copy));
   enviarJsonADatabase('/api/cuentas', copy);
@@ -1315,7 +1333,7 @@ export function obtenerUsuarioActual(): UserAccount | null {
       // Si es Admin Supremo, necesita tener token de sesión activo
       if (!obtenerTokenAdminSupremo()) return null;
       const accounts = cargarCuentas();
-      return { ...(accounts['admin'] || parsed), id: 'admin', rol: 'admin', esSupremo: true };
+      return { ...(accounts['admin'] || parsed), id: 'admin', rol: 'dev', esSupremo: true };
     }
     const accounts = cargarCuentas();
     return accounts[parsed.id] || parsed;
@@ -1601,18 +1619,54 @@ export function actualizarCuentaUsuario(id: string, patch: Partial<UserAccount>)
 }
 
 export async function actualizarCuentaAsync(usuario: UserAccount): Promise<UserAccount> {
-  // Sincronizar primero con Database (D1) para no pisar revocaciones de rol ni puntos recientes
-  await sincronizarConNube(true);
-  const res = actualizarCuentaUsuario(usuario.id, {
+  const cuentas = cargarCuentas();
+  const current = cuentas[usuario.id] || usuario;
+  const isDevOrAdmin = usuario.id === 'admin' || current.rol === 'admin' || current.rol === 'dev';
+
+  const updated: UserAccount = {
+    ...current,
     avatarHat: usuario.avatarHat,
     avatarColor: usuario.avatarColor,
     avatarRopa: usuario.avatarRopa,
     avatarRopaColor: usuario.avatarRopaColor,
     avatarAura: usuario.avatarAura,
-    inventario: usuario.inventario,
-    temaTablero: usuario.temaTablero,
-  });
-  return res || usuario;
+    inventario: usuario.inventario || current.inventario,
+    temaTablero: usuario.temaTablero || current.temaTablero,
+    id: current.id,
+    rol: current.id === 'admin' ? 'dev' : current.rol,
+    clave: current.id === 'admin' ? '***SUPREMO***' : (current.clave || usuario.clave),
+  };
+
+  cuentas[usuario.id] = updated;
+  safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(cuentas));
+
+  const cur = obtenerUsuarioActual();
+  if (cur && cur.id === usuario.id) {
+    guardarUsuarioActual(updated);
+  }
+
+  const ranking = cargarRanking();
+  const rankKey = updated.nombre.trim().toLowerCase();
+  if (ranking[rankKey]) {
+    if (updated.avatarColor) ranking[rankKey].avatarColor = updated.avatarColor;
+    if (updated.avatarHat) ranking[rankKey].avatarHat = updated.avatarHat;
+    safeSet(STORAGE_KEY_RANKING, JSON.stringify(ranking));
+  }
+
+  // Persistir inmediatamente a la Base de Datos (D1 / Server)
+  try {
+    await Promise.all([
+      enviarJsonADatabase('/api/cuentas', cuentas, { asAdmin: isDevOrAdmin }),
+      ranking[rankKey]
+        ? enviarJsonADatabase('/api/ranking', ranking, { asAdmin: isDevOrAdmin })
+        : Promise.resolve(true),
+    ]);
+  } catch (err) {
+    console.warn('Error al guardar aspecto en Database:', err);
+  }
+
+  reconciliarYNotificarNube();
+  return updated;
 }
 
 export async function cambiarClaveUsuarioAsync(
@@ -1908,6 +1962,18 @@ export async function regalarPersonajeAsync(
     });
     const data = await res.json().catch(() => null);
     if (res.ok && data?.ok) {
+      const cuentas = cargarCuentas();
+      if (cuentas[targetId]) {
+        cuentas[targetId].inventario = data.inventario || {
+          personajes: [...(cuentas[targetId].inventario?.personajes || []), data.personaje].filter(Boolean),
+        };
+        safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(cuentas));
+      }
+      if (cur && cur.id === targetId) {
+        cur.inventario = data.inventario || cuentas[targetId]?.inventario;
+        guardarUsuarioActual(cur);
+      }
+      reconciliarYNotificarNube();
       await sincronizarConNube(true);
       return { ok: true, mensaje: data.mensaje, inventario: data.inventario };
     }
