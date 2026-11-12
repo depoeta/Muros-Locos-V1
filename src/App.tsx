@@ -876,6 +876,9 @@ export const App: React.FC = () => {
           tipo: 'humano',
           color: usuarioActual?.avatarColor || '#ff6b6b',
           hat: usuarioActual?.avatarHat || 'corona',
+          ropa: usuarioActual?.avatarRopa || 'ninguna',
+          ropaColor: usuarioActual?.avatarRopaColor,
+          aura: usuarioActual?.avatarAura || 'ninguna',
         },
         {
           nombre: botNombre,
@@ -918,11 +921,15 @@ export const App: React.FC = () => {
 
     const configJugadores = Array.from({ length: num }).map((_, idx) => {
       const p = lobby[idx];
+      const isMe = idx === myId;
       return {
         nombre: p ? p.nombre : idx === 0 ? 'Anfitrión' : `Jugador ${idx + 1}`,
         tipo: 'humano' as const,
         color: p ? p.color : defaultColors[idx] || '#ff6b6b',
         hat: p ? p.hat : defaultHats[idx] || 'corona',
+        ropa: isMe ? usuarioActual?.avatarRopa : undefined,
+        ropaColor: isMe ? usuarioActual?.avatarRopaColor : undefined,
+        aura: isMe ? usuarioActual?.avatarAura : undefined,
       };
     });
 
@@ -1551,6 +1558,17 @@ export const App: React.FC = () => {
               estado?.jugadores[miJugadorIdx]?.color ||
               usuarioActual?.avatarColor ||
               '#ff6b6b',
+            ropa:
+              estado?.jugadores[miJugadorIdx]?.ropa ||
+              usuarioActual?.avatarRopa ||
+              'ninguna',
+            ropaColor:
+              estado?.jugadores[miJugadorIdx]?.ropaColor ||
+              usuarioActual?.avatarRopaColor,
+            aura:
+              estado?.jugadores[miJugadorIdx]?.aura ||
+              usuarioActual?.avatarAura ||
+              'ninguna',
           }}
           temaActual={temaTableroActivo}
           usuarioActual={usuarioActual}
@@ -1570,6 +1588,9 @@ export const App: React.FC = () => {
                     ...nextPlayers[targetIdx],
                     hat: nuevoP.hat,
                     color: nuevoP.color,
+                    ropa: nuevoP.ropa,
+                    ropaColor: nuevoP.ropaColor,
+                    aura: nuevoP.aura,
                   };
                 }
                 return {

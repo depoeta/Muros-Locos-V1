@@ -18,7 +18,51 @@
     "victorias": 0,
     "elo": 0,
     "creadoEn": "2026-11-03T01:57:14.178Z",
-    "ultimaConexion": "2026-11-12T01:52:55.262Z",
+    "ultimaConexion": "2026-11-12T15:12:05.416Z",
     "historialPartidas": []
+  },
+  "user_54324": {
+    "id": "user_54324",
+    "nombre": "user_54324",
+    "claveHash": "2wPxR4fM8QxxCiZb3/b+zzwvGhJ4lqwAoU7v+oyP/ZA=",
+    "claveSalt": "97p2dHWjw+7Za+h+/15wGQ==",
+    "claveIter": 100000,
+    "rol": "jugador",
+    "puntos": 0,
+    "victorias": 0,
+    "derrotas": 0,
+    "empates": 0,
+    "partidas": 0,
+    "elo": 1000,
+    "avatarColor": "#ae3ec9",
+    "avatarHat": "vikingo",
+    "temaTablero": "madera",
+    "creadoEn": "2026-11-12T15:12:05.345Z",
+    "ultimaConexion": "2026-11-12T15:12:05.480Z",
+    "historialPartidas": [],
+    "inventario": {
+      "personajes": [
+        {
+          "id": "char_1794496325406_43cgw",
+          "nombre": "Guerrero Cósmico",
+          "color": "#ae3ec9",
+          "hat": "vikingo",
+          "ropa": "capa",
+          "ropaColor": "#ffd43b",
+          "aura": "dorada",
+          "descripcion": "Personaje exclusivo otorgado",
+          "origen": {
+            "tipo": "regalo_dev",
+            "otorgadoPor": "Dev Dev Supremo",
+            "fecha": "2026-11-12T15:12:05.406Z"
+          }
+        }
+      ],
+      "activoId": "char_1794496325406_43cgw"
+    },
+    "avatarRopa": "capa",
+    "avatarRopaColor": "#ffd43b",
+    "avatarAura": "dorada",
+    "clave": ""
   }
 }

@@ -624,6 +624,9 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                       <CartoonCharacter
                         color={player.color}
                         hat={player.hat}
+                        ropa={player.ropa}
+                        ropaColor={player.ropaColor}
+                        aura={player.aura}
                         size={46}
                         isActive={estado.turnoActual === player.id}
                         isDancing={estado.ganador === player.id}

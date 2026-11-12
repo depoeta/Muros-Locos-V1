@@ -14,6 +14,8 @@ import {
   HatType,
   MatchConfig,
   PERSONAJES_REGISTRO,
+  PersonajeAuraType,
+  PersonajeRopaType,
   PlayerType,
   UserAccount,
 } from '../types/murosLocos';
@@ -237,6 +239,9 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
                 <CartoonCharacter
                   color={usuarioActual.avatarColor}
                   hat={usuarioActual.avatarHat}
+                  ropa={usuarioActual.avatarRopa}
+                  ropaColor={usuarioActual.avatarRopaColor}
+                  aura={usuarioActual.avatarAura}
                   size={26}
                   showShadow={false}
                 />
@@ -572,17 +577,28 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
     () => usuarioActual?.temaTablero || ajustes?.temaTablero || 'madera'
   );
   const [jugadores, setJugadores] = useState<
-    { nombre: string; tipo: PlayerType; color: string; hat: HatType }[]
+    {
+      nombre: string;
+      tipo: PlayerType;
+      color: string;
+      hat: HatType;
+      ropa?: PersonajeRopaType;
+      ropaColor?: string;
+      aura?: PersonajeAuraType;
+    }[]
   >(() => [
     {
       nombre: usuarioActual?.nombre || 'Tú',
       tipo: 'humano',
       color: usuarioActual?.avatarColor || '#ff6b6b',
       hat: usuarioActual?.avatarHat || 'corona',
+      ropa: usuarioActual?.avatarRopa || 'ninguna',
+      ropaColor: usuarioActual?.avatarRopaColor,
+      aura: usuarioActual?.avatarAura || 'ninguna',
     },
-    { nombre: 'Bot Normal', tipo: 'bot_normal', color: '#4dabf7', hat: 'bot_cpu' },
-    { nombre: 'Bot Fácil', tipo: 'bot_facil', color: '#ffd43b', hat: 'bot_cpu' },
-    { nombre: 'Bot Difícil', tipo: 'bot_dificil', color: '#51cf66', hat: 'bot_cpu' },
+    { nombre: 'Bot Normal', tipo: 'bot_normal', color: '#4dabf7', hat: 'bot_cpu', ropa: 'ninguna', aura: 'ninguna' },
+    { nombre: 'Bot Fácil', tipo: 'bot_facil', color: '#ffd43b', hat: 'bot_cpu', ropa: 'ninguna', aura: 'ninguna' },
+    { nombre: 'Bot Difícil', tipo: 'bot_dificil', color: '#51cf66', hat: 'bot_cpu', ropa: 'ninguna', aura: 'ninguna' },
   ]);
 
   // Si el usuario inicia sesión o sincroniza su perfil predeterminado, reflejar su personaje y terreno
@@ -598,11 +614,22 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
           nombre: usuarioActual.nombre,
           color: usuarioActual.avatarColor || next[0].color,
           hat: usuarioActual.avatarHat || next[0].hat,
+          ropa: usuarioActual.avatarRopa || 'ninguna',
+          ropaColor: usuarioActual.avatarRopaColor,
+          aura: usuarioActual.avatarAura || 'ninguna',
         };
         return next;
       });
     }
-  }, [usuarioActual?.id, usuarioActual?.avatarHat, usuarioActual?.avatarColor, usuarioActual?.temaTablero]);
+  }, [
+    usuarioActual?.id,
+    usuarioActual?.avatarHat,
+    usuarioActual?.avatarColor,
+    usuarioActual?.avatarRopa,
+    usuarioActual?.avatarRopaColor,
+    usuarioActual?.avatarAura,
+    usuarioActual?.temaTablero,
+  ]);
 
   const [empiezaAlAzar, setEmpiezaAlAzar] = useState<boolean>(false);
   const [permitirDeshacer, setPermitirDeshacer] = useState<boolean>(ajustes?.permitirDeshacer ?? true);
@@ -659,6 +686,9 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
         tipo: j.tipo,
         color: j.color,
         hat: j.hat,
+        ropa: j.ropa,
+        ropaColor: j.ropaColor,
+        aura: j.aura,
       };
     });
 
@@ -863,7 +893,15 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
               >
                 {isUserPlayer && usuarioActual ? (
                   <div className="shrink-0" title="Tu personaje de cuenta">
-                    <CartoonCharacter color={j.color} hat={j.hat} size={44} showShadow={false} />
+                    <CartoonCharacter
+                      color={j.color}
+                      hat={j.hat}
+                      ropa={j.ropa}
+                      ropaColor={j.ropaColor}
+                      aura={j.aura}
+                      size={44}
+                      showShadow={false}
+                    />
                   </div>
                 ) : j.tipo !== 'humano' ? (
                   <div
@@ -887,7 +925,15 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
                     className="hover:scale-110 active:scale-95 transition-transform cursor-pointer shrink-0"
                     title="Clic para cambiar personaje de este jugador humano"
                   >
-                    <CartoonCharacter color={j.color} hat={j.hat} size={44} showShadow={false} />
+                    <CartoonCharacter
+                      color={j.color}
+                      hat={j.hat}
+                      ropa={j.ropa}
+                      ropaColor={j.ropaColor}
+                      aura={j.aura}
+                      size={44}
+                      showShadow={false}
+                    />
                   </button>
                 )}
 
@@ -1083,13 +1129,22 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
           personajeActual={{
             hat: jugadores[0].hat,
             color: jugadores[0].color,
+            ropa: jugadores[0].ropa,
+            ropaColor: jugadores[0].ropaColor,
+            aura: jugadores[0].aura,
           }}
           temaActual={temaTablero}
           usuarioActual={usuarioActual}
           onUsuarioActualizado={onUsuarioActualizado}
           onShowToast={onShowToast}
           onAplicar={(nuevoP, nuevoTema) => {
-            updateJugador(0, { hat: nuevoP.hat, color: nuevoP.color });
+            updateJugador(0, {
+              hat: nuevoP.hat,
+              color: nuevoP.color,
+              ropa: nuevoP.ropa,
+              ropaColor: nuevoP.ropaColor,
+              aura: nuevoP.aura,
+            });
             setTemaTablero(nuevoTema);
           }}
         />

@@ -169,7 +169,8 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
     return personajesBaseConPuntos.find((p) => !isPersonajeDesbloqueado(p.puntosRequeridos));
   }, [personajesBaseConPuntos, userPoints, esAdmin]);
 
-  const misExclusivos = usuarioActual?.inventario?.personajes || [];
+  const cuentaFresca = usuarioActual ? cargarCuentas()[usuarioActual.id] || usuarioActual : null;
+  const misExclusivos = cuentaFresca?.inventario?.personajes || usuarioActual?.inventario?.personajes || [];
 
   const handleSeleccionarPersonajeBase = (p: (typeof PERSONAJES_REGISTRO)[0]) => {
     if (!isPersonajeDesbloqueado(p.puntosRequeridos)) {
@@ -194,7 +195,13 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
     setSelectedRopaColor(item.ropaColor);
     setSelectedAura(item.aura || 'ninguna');
     setSelectedItemId(item.id);
-    onShowToast?.(`✨ Equipado: "${item.nombre}" (${item.origen.otorgadoPor})`);
+    const otorgadoPor =
+      typeof item.origen === 'object' && item.origen
+        ? item.origen.otorgadoPor
+        : typeof item.origen === 'string'
+        ? item.origen
+        : 'Exclusivo';
+    onShowToast?.(`✨ Equipado: "${item.nombre}" (${otorgadoPor})`);
   };
 
   const handleDesequiparExclusivo = () => {
@@ -212,9 +219,11 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
 
     try {
       if (usuarioActual && guardarEnPerfil) {
-        const invActual = usuarioActual.inventario || { personajes: [] };
+        const cuentas = cargarCuentas();
+        const baseUser = cuentas[usuarioActual.id] || usuarioActual;
+        const invActual = baseUser.inventario || { personajes: [] };
         const updated: UserAccount = {
-          ...usuarioActual,
+          ...baseUser,
           avatarHat: selectedHat,
           avatarColor: selectedColor,
           avatarRopa: selectedRopa,
@@ -473,14 +482,22 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
                           )}
                         </div>
                         <span className="text-[10px] font-bold text-[#86542d] block truncate">
-                          {item.origen.tipo === 'torneo_semanal'
+                          {typeof item.origen === 'object' && item.origen?.tipo === 'torneo_semanal'
                             ? '🏆 Torneo Semanal'
-                            : item.origen.tipo === 'regalo_dev'
+                            : typeof item.origen === 'object' && item.origen?.tipo === 'regalo_dev'
                             ? '👑 Regalo de Dev'
-                            : '🛡️ Regalo de Admin'}
+                            : typeof item.origen === 'string' && item.origen.toLowerCase().includes('torneo')
+                            ? '🏆 Torneo Semanal'
+                            : typeof item.origen === 'string' && item.origen.toLowerCase().includes('dev')
+                            ? '👑 Regalo de Dev'
+                            : '🛡️ Regalo Exclusivo'}
                         </span>
                         <span className="text-[9px] text-[#495057] block truncate">
-                          {item.origen.otorgadoPor}
+                          {typeof item.origen === 'object' && item.origen
+                            ? item.origen.otorgadoPor
+                            : typeof item.origen === 'string'
+                            ? item.origen
+                            : 'Exclusivo'}
                         </span>
                       </div>
                     </div>
@@ -4446,12 +4463,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             Atuendo: {char.ropa || 'ninguno'} · Aura: {char.aura || 'ninguna'}
                           </span>
                           <span className="text-[9px] text-[#2b8a3e] font-black block">
-                            {char.origen?.tipo === 'torneo_semanal'
+                            {typeof char.origen === 'object' && char.origen?.tipo === 'torneo_semanal'
                               ? '🏆 Premio Torneo Semanal'
-                              : char.origen?.tipo === 'regalo_dev'
+                              : typeof char.origen === 'object' && char.origen?.tipo === 'regalo_dev'
                               ? '👑 Regalo Dev Supremo'
-                              : `🎁 Regalo de ${char.origen?.otorgadoPor || 'Admin'}`}
-                            {char.origen?.fecha ? ` · ${char.origen.fecha}` : ''}
+                              : typeof char.origen === 'string'
+                              ? `🎁 ${char.origen}`
+                              : `🎁 Regalo de ${typeof char.origen === 'object' && char.origen?.otorgadoPor ? char.origen.otorgadoPor : 'Admin'}`}
+                            {typeof char.origen === 'object' && char.origen?.fecha ? ` · ${char.origen.fecha}` : ''}
                           </span>
                         </div>
                       </div>

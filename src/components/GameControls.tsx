@@ -56,6 +56,9 @@ export const PlayerCards: React.FC<PlayerCardsProps> = ({ estado, mostrarDistanc
                 <CartoonCharacter
                   color={jugador.color}
                   hat={jugador.hat}
+                  ropa={jugador.ropa}
+                  ropaColor={jugador.ropaColor}
+                  aura={jugador.aura}
                   size={32}
                   showShadow={false}
                 />
