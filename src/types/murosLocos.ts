@@ -29,6 +29,7 @@ export type PersonajeRopaType =
   | 'capa'
   | 'armadura'
   | 'tunica'
+  | 'tuxedo'
   | 'smoking'
   | 'cinturon'
   | 'alas';
@@ -458,7 +459,8 @@ export interface WeeklyBoardData {
 
 export interface WeeklyRankingResponse {
   ok: boolean;
-  kvBound?: boolean;
+  d1Bound?: boolean;
+  dbBound?: boolean;
   semanaActualId: string;
   semanaPasadaId: string;
   cierraEnMs: number;

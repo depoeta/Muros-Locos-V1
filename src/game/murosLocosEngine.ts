@@ -191,6 +191,10 @@ class SoundSystem {
     } catch {}
   }
 
+  public playWin() {
+    this.playVictory();
+  }
+
   public playAchievement() {
     if (!this.enabled) return;
     this.initCtx();

@@ -102,8 +102,8 @@ export const App: React.FC = () => {
 
   // Diagnóstico en tiempo real de conexión a la Database (D1) (aviso permanente en todo momento)
   const [diagRed, setDiagRed] = useState<NetworkDiagnostic>(() => obtenerDiagnosticoRed());
-  const [reconectandoKv, setReconectandoKv] = useState(false);
-  const prevKvRef = useRef<boolean>(true);
+  const [reconectandoDb, setReconectandoDb] = useState(false);
+  const prevDbRef = useRef<boolean>(true);
 
   // Estado de partida
   const [estado, setEstado] = useState<GameState | null>(null);
@@ -191,7 +191,7 @@ export const App: React.FC = () => {
     const onBrowserOnline = () => {
       pingServidor()
         .then((diag) => {
-          if (diag.kvConnected) {
+          if (diag.dbConectado) {
             return sincronizarConNube(true);
           }
         })
@@ -202,10 +202,10 @@ export const App: React.FC = () => {
     const unsubDiag = suscribirDiagnostico((d) => {
       setDiagRed(d);
       if (d.checkedOnce) {
-        if (!prevKvRef.current && d.kvConnected) {
+        if (!prevDbRef.current && d.dbConectado) {
           showToast('🟢 Conexión con la Database restablecida');
         }
-        prevKvRef.current = d.kvConnected;
+        prevDbRef.current = d.dbConectado;
       }
     });
 
@@ -215,19 +215,19 @@ export const App: React.FC = () => {
     };
   }, [showToast]);
 
-  const handleReintentarKv = async () => {
+  const handleReintentarDb = async () => {
     sounds.playClick();
-    setReconectandoKv(true);
+    setReconectandoDb(true);
     try {
       const diag = await pingServidor();
-      if (diag.kvConnected) {
+      if (diag.dbConectado) {
         await sincronizarConNube(true);
         showToast('🟢 Conectado a la Database — Datos sincronizados');
       } else {
         showToast('🔴 Sigue sin conexión a la Database');
       }
     } finally {
-      setReconectandoKv(false);
+      setReconectandoDb(false);
     }
   };
 
@@ -1106,12 +1106,12 @@ export const App: React.FC = () => {
   const hayMultiplesHumanos = estado
     ? estado.jugadores.filter((p) => p.tipo === 'humano').length >= 2
     : false;
-  const kvDesconectado = diagRed.checkedOnce && (!diagRed.isOnline || !diagRed.kvConnected);
+  const dbDesconectado = diagRed.checkedOnce && (!diagRed.isOnline || !diagRed.dbConectado);
   const [mostrarBannerDesconexion, setMostrarBannerDesconexion] = useState<boolean>(false);
   const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (kvDesconectado) {
+    if (dbDesconectado) {
       setMostrarBannerDesconexion(true);
       if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
       bannerTimerRef.current = setTimeout(() => {
@@ -1124,12 +1124,12 @@ export const App: React.FC = () => {
     return () => {
       if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
     };
-  }, [kvDesconectado]);
+  }, [dbDesconectado]);
 
   return (
     <div className="relative w-full h-full min-h-screen bg-[#74c0fc] text-[#2b2140] flex flex-col items-center justify-between overflow-x-hidden overflow-y-auto selection:bg-[#ffd43b] selection:text-[#2b2140]">
       {/* Aviso que desaparece en 10 segundos al detectar desconexión */}
-      {kvDesconectado && mostrarBannerDesconexion && (
+      {dbDesconectado && mostrarBannerDesconexion && (
         <div className="sticky top-0 left-0 right-0 z-[60] w-full bg-[#c92a2a] text-white border-b-3 border-[#2b2140] px-3 py-1.5 shadow-md flex items-center justify-between gap-2 text-xs animate-[slideDown_0.2s_ease-out]">
           <span className="font-black text-center flex-1 leading-tight text-[11px] sm:text-xs">
             ⚠️ Sin conexión a la Database (D1) — No se pueden enviar ni recibir cambios globales en este momento.
@@ -1137,11 +1137,11 @@ export const App: React.FC = () => {
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
-              disabled={reconectandoKv}
-              onClick={handleReintentarKv}
+              disabled={reconectandoDb}
+              onClick={handleReintentarDb}
               className="py-1 px-2.5 rounded-xl bg-[#ffd43b] text-[#2b2140] border-2 border-[#2b2140] font-black text-[11px] hover:bg-[#fcc419] cursor-pointer"
             >
-              {reconectandoKv ? '⏳ Conectando...' : '🔄 Conectar'}
+              {reconectandoDb ? '⏳ Conectando...' : '🔄 Conectar'}
             </button>
             <button
               type="button"

@@ -40,6 +40,7 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
   const colArmadura = ropaColor || '#adb5bd';
   const colTunica = ropaColor || '#5f3dc4';
   const colSmoking = ropaColor || '#212529';
+  const colTuxedo = ropaColor || '#212529';
   const colCinturon = ropaColor || '#fab005';
   const colAlas = ropaColor || '#e7f5ff';
 
@@ -258,76 +259,103 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
         )}
 
         {/* ============================================================== */}
-        {/* ROPA DELANTERA: ARMADURA, SMOKING, CINTURÓN, TÚNICA */}
+        {/* ROPA DELANTERA: ARMADURA, TUXEDO, CINTURÓN, TÚNICA */}
         {/* ============================================================== */}
         {ropa === 'armadura' && (
           <g>
-            {/* Hombrera izquierda */}
-            <ellipse cx="27" cy="64" rx="7" ry="5" fill={colArmadura} stroke="#2b2140" strokeWidth="2.5" />
-            <ellipse cx="27" cy="64" rx="4" ry="2.5" fill="#ffffff" opacity="0.4" />
-            {/* Hombrera derecha */}
-            <ellipse cx="73" cy="64" rx="7" ry="5" fill={colArmadura} stroke="#2b2140" strokeWidth="2.5" />
-            <ellipse cx="73" cy="64" rx="4" ry="2.5" fill="#ffffff" opacity="0.4" />
+            {/* Hombrera izquierda redondeada */}
+            <path d="M 20 62 Q 22 55 30 58 Q 32 68 22 70 Z" fill={colArmadura} stroke="#2b2140" strokeWidth="2.5" />
+            <circle cx="26" cy="62" r="1.5" fill="#ffffff" />
+            {/* Hombrera derecha redondeada */}
+            <path d="M 80 62 Q 78 55 70 58 Q 68 68 78 70 Z" fill={colArmadura} stroke="#2b2140" strokeWidth="2.5" />
+            <circle cx="74" cy="62" r="1.5" fill="#ffffff" />
 
-            {/* Peto curvo anatomico (bajo la boca, respeta la cara) */}
+            {/* Peto curvo anatómico que abraza el cuerpo esférico */}
             <path
-              d="M 32 68 Q 50 73 68 68 L 65 85 Q 50 88 35 85 Z"
+              d="M 30 68 Q 50 73 70 68 L 66 86 Q 50 90 34 86 Z"
               fill={colArmadura}
               stroke="#2b2140"
               strokeWidth="3"
             />
-            {/* Placas y relieve de coraza */}
-            <path d="M 40 70 L 46 80 L 54 80 L 60 70" stroke="#ffffff" strokeWidth="2" strokeOpacity="0.6" fill="none" />
-            <polygon points="50,71 54,76 46,76" fill="#ffd43b" stroke="#2b2140" strokeWidth="1.2" />
+            {/* Bisel / placa de brillo superior */}
+            <path d="M 34 71 Q 50 75 66 71" stroke="#ffffff" strokeWidth="2" strokeOpacity="0.5" fill="none" />
+            {/* Placas frontales */}
+            <path d="M 40 73 L 46 82 L 54 82 L 60 73" stroke="#ffffff" strokeWidth="1.8" strokeOpacity="0.6" fill="none" />
+            <polygon points="50,73 54,78 46,78" fill="#ffd43b" stroke="#2b2140" strokeWidth="1.2" />
 
-            {/* Escudo de torneo en el flanco izquierdo */}
-            <path
-              d="M 72 62 Q 81 64 79 74 Q 76 81 72 83 Q 68 81 65 74 Q 63 64 72 62 Z"
-              fill="#e03131"
-              stroke="#2b2140"
-              strokeWidth="2.5"
-            />
-            <line x1="72" y1="64" x2="72" y2="81" stroke="#ffd43b" strokeWidth="2" />
-            <line x1="66" y1="71" x2="78" y2="71" stroke="#ffd43b" strokeWidth="2" />
+            {/* Gran Escudo de Torneo Medieval en el flanco */}
+            <g transform="translate(64, 58)">
+              <path
+                d="M 0 0 L 16 0 C 17 12 14 20 8 25 C 2 20 -1 12 0 0 Z"
+                fill="#e03131"
+                stroke="#2b2140"
+                strokeWidth="2.5"
+                strokeLinejoin="round"
+              />
+              <line x1="8" y1="2" x2="8" y2="23" stroke="#ffd43b" strokeWidth="2.5" />
+              <line x1="2" y1="8" x2="14" y2="8" stroke="#ffd43b" strokeWidth="2.5" />
+              <circle cx="8" cy="8" r="2" fill="#fff9db" />
+            </g>
           </g>
         )}
 
-        {ropa === 'smoking' && (
+        {(ropa === 'tuxedo' || ropa === 'smoking') && (
           <g>
-            {/* Solapas del traje */}
-            <path d="M 36 68 L 44 85 L 56 85 L 64 68 Z" fill={colSmoking} stroke="#2b2140" strokeWidth="2.5" />
-            {/* Camisa blanca interna */}
-            <polygon points="43,68 57,68 50,79" fill="#ffffff" stroke="#2b2140" strokeWidth="1.5" />
-            {/* Pajarita roja */}
-            <polygon points="44,68 50,70.5 44,73" fill="#e03131" stroke="#2b2140" strokeWidth="1" />
-            <polygon points="56,68 50,70.5 56,73" fill="#e03131" stroke="#2b2140" strokeWidth="1" />
-            <circle cx="50" cy="70.5" r="1.5" fill="#ffd43b" />
-            {/* Botones dorados */}
-            <circle cx="50" cy="77" r="1.2" fill="#ffd43b" />
-            <circle cx="50" cy="81" r="1.2" fill="#ffd43b" />
+            {/* Chaqueta curva de gala que abraza el cuerpo */}
+            <path
+              d="M 31 68 Q 50 73 69 68 L 66 86 Q 50 90 34 86 Z"
+              fill={colTuxedo}
+              stroke="#2b2140"
+              strokeWidth="2.8"
+            />
+            {/* Camisa blanca interna de etiqueta */}
+            <polygon points="42,68 58,68 50,81" fill="#ffffff" stroke="#2b2140" strokeWidth="1.8" />
+            {/* Solapas elegantes del esmoquin */}
+            <path d="M 33 68 L 44 80 L 37 86 Z" fill={colTuxedo} stroke="#2b2140" strokeWidth="2" />
+            <path d="M 67 68 L 56 80 L 63 86 Z" fill={colTuxedo} stroke="#2b2140" strokeWidth="2" />
+            {/* Pajarita roja con nudo dorado */}
+            <polygon points="44,69 50,71.5 44,74" fill="#e03131" stroke="#2b2140" strokeWidth="1.2" />
+            <polygon points="56,69 50,71.5 56,74" fill="#e03131" stroke="#2b2140" strokeWidth="1.2" />
+            <circle cx="50" cy="71.5" r="1.6" fill="#ffd43b" stroke="#2b2140" strokeWidth="0.8" />
+            {/* Botones dorados pulidos */}
+            <circle cx="50" cy="78" r="1.4" fill="#ffd43b" stroke="#2b2140" strokeWidth="0.8" />
+            <circle cx="50" cy="82.5" r="1.4" fill="#ffd43b" stroke="#2b2140" strokeWidth="0.8" />
           </g>
         )}
 
         {ropa === 'cinturon' && (
           <g>
-            <rect x="29" y="74" width="42" height="9" rx="3" fill={colCinturon} stroke="#2b2140" strokeWidth="2.5" />
-            {/* Hebilla de oro con gema rubí */}
-            <rect x="44" y="72.5" width="12" height="12" rx="2.5" fill="#ffd43b" stroke="#2b2140" strokeWidth="2" />
-            <circle cx="50" cy="78.5" r="3" fill="#e03131" stroke="#2b2140" strokeWidth="1.2" />
+            {/* Cinturón anatómico curvado a la cintura baja */}
+            <path
+              d="M 28 75 Q 50 80 72 75 L 70 84 Q 50 89 30 84 Z"
+              fill={colCinturon}
+              stroke="#2b2140"
+              strokeWidth="2.5"
+            />
+            {/* Borde superior e inferior dorado */}
+            <path d="M 29 76 Q 50 81 71 76" stroke="#ffd43b" strokeWidth="1.5" fill="none" />
+            <path d="M 30 83 Q 50 88 70 83" stroke="#ffd43b" strokeWidth="1.5" fill="none" />
+            {/* Medallón central de Campeón de Oro */}
+            <polygon points="50,73 57,79.5 50,86 43,79.5" fill="#ffd43b" stroke="#2b2140" strokeWidth="2" />
+            <circle cx="50" cy="79.5" r="3.2" fill="#e03131" stroke="#2b2140" strokeWidth="1.2" />
+            <circle cx="51" cy="78.5" r="1" fill="#ffffff" opacity="0.8" />
           </g>
         )}
 
         {ropa === 'tunica' && (
           <g>
+            {/* Túnica mística fluida adaptada al cuerpo */}
             <path
-              d="M 33 68 Q 50 72 67 68 L 64 86 Q 50 89 36 86 Z"
+              d="M 30 67 Q 50 72 70 67 L 66 87 Q 50 91 34 87 Z"
               fill={colTunica}
               stroke="#2b2140"
               strokeWidth="2.5"
             />
-            {/* Cinto cruzado dorado */}
-            <path d="M 35 76 Q 50 79 65 76" stroke="#ffd43b" strokeWidth="2.5" fill="none" />
-            <circle cx="50" cy="77" r="2.2" fill="#ffd43b" stroke="#2b2140" strokeWidth="1" />
+            {/* Fajín cruzado ceremonial con cordón de oro */}
+            <path d="M 33 76 Q 50 80 67 76" stroke="#ffd43b" strokeWidth="2.5" fill="none" />
+            <circle cx="50" cy="77" r="2.4" fill="#ffd43b" stroke="#2b2140" strokeWidth="1" />
+            {/* Borlas del fajín que caen con naturalidad */}
+            <path d="M 50 79 L 48 85 M 50 79 L 52 85" stroke="#ffd43b" strokeWidth="1.8" strokeLinecap="round" />
           </g>
         )}
 
@@ -641,16 +669,45 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
           </g>
         )}
 
-        {/* CASCO ESPACIAL (Burbuja de astronauta) */}
+        {/* CASCO ESPACIAL (Burbuja completa de astronauta alrededor de la cabeza) */}
         {hat === 'espacial' && (
-          <g transform="translate(50, 26)">
-            {/* Cuello del traje */}
-            <rect x="-24" y="0" width="48" height="6" rx="2" fill="#ced4da" stroke="#2b2140" strokeWidth="3" />
-            {/* Escafandra transparente */}
-            <ellipse cx="0" cy="-3" rx="27" ry="22" fill="#3bc9db" fillOpacity="0.25" stroke="#2b2140" strokeWidth="3.5" />
-            {/* Reflejo curvo del cristal */}
-            <path d="M -18 -15 Q -6 -22 8 -20" stroke="#ffffff" strokeWidth="3" strokeLinecap="round" fill="none" opacity="0.8" />
-            <circle cx="-16" cy="-8" r="2" fill="#ffffff" opacity="0.8" />
+          <g>
+            {/* Cuello y anillo de sellado metálico en la base */}
+            <ellipse cx="50" cy="74" rx="27" ry="7" fill="#ced4da" stroke="#2b2140" strokeWidth="3" />
+            <ellipse cx="50" cy="74" rx="22" ry="4" fill="#868e96" />
+            <circle cx="34" cy="74" r="1.5" fill="#343a40" />
+            <circle cx="66" cy="74" r="1.5" fill="#343a40" />
+            {/* Burbuja esférica transparente que envuelve toda la cabeza */}
+            <circle
+              cx="50"
+              cy="50"
+              r="34"
+              fill="#3bc9db"
+              fillOpacity="0.22"
+              stroke="#2b2140"
+              strokeWidth="3.5"
+            />
+            {/* Reflejos curvos de vidrio espacial de alta fidelidad */}
+            <path
+              d="M 28 32 A 30 30 0 0 1 68 24"
+              fill="none"
+              stroke="#ffffff"
+              strokeWidth="3.5"
+              strokeLinecap="round"
+              opacity="0.85"
+            />
+            <path
+              d="M 25 42 A 28 28 0 0 1 34 30"
+              fill="none"
+              stroke="#ffffff"
+              strokeWidth="2"
+              strokeLinecap="round"
+              opacity="0.75"
+            />
+            <circle cx="30" cy="40" r="2" fill="#ffffff" opacity="0.8" />
+            {/* Antena de comunicación lateral con luz */}
+            <path d="M 78 40 L 88 34" stroke="#2b2140" strokeWidth="2.5" strokeLinecap="round" />
+            <circle cx="89" cy="33" r="3" fill="#ff6b6b" stroke="#2b2140" strokeWidth="1.5" className="animate-pulse" />
           </g>
         )}
       </svg>

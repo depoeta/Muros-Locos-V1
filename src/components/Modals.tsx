@@ -61,6 +61,7 @@ import {
   eliminarSalaPersonalizadaAsync,
   obtenerSalasPersonalizadasAsync,
   solicitarResetRankingAsync,
+  cambiarClaveUsuarioAsync,
   LOGROS_LISTA,
   NetworkDiagnostic,
   obtenerDiagnosticoRed,
@@ -71,7 +72,7 @@ import {
   sincronizarConNube,
   suscribirCambiosNube,
   suscribirDiagnostico,
-  verificarAccionAdminEnKV,
+  D1_VerificarAccionAdmin,
 } from '../game/storage';
 import { SalaPersonalizada } from '../types/murosLocos';
 
@@ -93,10 +94,13 @@ export const TEMAS_LISTA: {
 // =========================================================================
 interface AspectoModalProps {
   onCerrar: () => void;
-  personajeActual: { hat: HatType; color: string; ropa?: PersonajeRopaType; aura?: PersonajeAuraType };
+  personajeActual: { hat: HatType; color: string; ropa?: PersonajeRopaType; ropaColor?: string; aura?: PersonajeAuraType };
   temaActual: BoardTheme;
   usuarioActual?: UserAccount | null;
-  onAplicar: (nuevoPersonaje: { hat: HatType; color: string; ropa?: PersonajeRopaType; aura?: PersonajeAuraType }, nuevoTema: BoardTheme) => void;
+  onAplicar: (
+    nuevoPersonaje: { hat: HatType; color: string; ropa?: PersonajeRopaType; ropaColor?: string; aura?: PersonajeAuraType },
+    nuevoTema: BoardTheme
+  ) => void;
   onUsuarioActualizado?: (u: UserAccount) => void;
   onShowToast?: (msg: string) => void;
 }
@@ -115,6 +119,9 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
   const [selectedColor, setSelectedColor] = useState<string>(personajeActual.color || '#ff6b6b');
   const [selectedRopa, setSelectedRopa] = useState<PersonajeRopaType>(
     personajeActual.ropa || usuarioActual?.avatarRopa || 'ninguna'
+  );
+  const [selectedRopaColor, setSelectedRopaColor] = useState<string | undefined>(
+    personajeActual.ropaColor || usuarioActual?.avatarRopaColor
   );
   const [selectedAura, setSelectedAura] = useState<PersonajeAuraType>(
     personajeActual.aura || usuarioActual?.avatarAura || 'ninguna'
@@ -174,6 +181,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
     setSelectedHat(p.id);
     setSelectedColor(p.defaultColor);
     setSelectedRopa('ninguna');
+    setSelectedRopaColor(undefined);
     setSelectedAura('ninguna');
     setSelectedItemId(null);
   };
@@ -183,6 +191,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
     setSelectedHat(item.hat);
     setSelectedColor(item.color);
     setSelectedRopa(item.ropa || 'ninguna');
+    setSelectedRopaColor(item.ropaColor);
     setSelectedAura(item.aura || 'ninguna');
     setSelectedItemId(item.id);
     onShowToast?.(`✨ Equipado: "${item.nombre}" (${item.origen.otorgadoPor})`);
@@ -191,6 +200,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
   const handleDesequiparExclusivo = () => {
     sounds.playClick();
     setSelectedRopa('ninguna');
+    setSelectedRopaColor(undefined);
     setSelectedAura('ninguna');
     setSelectedItemId(null);
     onShowToast?.('Atuendo exclusivo desequipado');
@@ -208,6 +218,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
           avatarHat: selectedHat,
           avatarColor: selectedColor,
           avatarRopa: selectedRopa,
+          avatarRopaColor: selectedRopaColor,
           avatarAura: selectedAura,
           inventario: {
             ...invActual,
@@ -221,13 +232,13 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
       }
 
       onAplicar(
-        { hat: selectedHat, color: selectedColor, ropa: selectedRopa, aura: selectedAura },
+        { hat: selectedHat, color: selectedColor, ropa: selectedRopa, ropaColor: selectedRopaColor, aura: selectedAura },
         selectedTema
       );
       onCerrar();
     } catch {
       onAplicar(
-        { hat: selectedHat, color: selectedColor, ropa: selectedRopa, aura: selectedAura },
+        { hat: selectedHat, color: selectedColor, ropa: selectedRopa, ropaColor: selectedRopaColor, aura: selectedAura },
         selectedTema
       );
       onCerrar();
@@ -982,7 +993,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
       setLocalRankingData(cargarRankingLocal());
       setSemanalData(sem);
       if (forzar) {
-        showToast(res.kvConectado ? '🔄 Sincronizado con la Database' : '⚠️ Sin conexión a la Database');
+        showToast(res.dbConectado ? '🔄 Sincronizado con la Database' : '⚠️ Sin conexión a la Database');
       }
     } catch {
       showToast('⚠️ No se pudo sincronizar con la Database');
@@ -1035,7 +1046,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
         </div>
 
         {/* Database Disconnected Warning inside Ranking */}
-        {diag.checkedOnce && !diag.kvConnected && tab !== 'local' && (
+        {diag.checkedOnce && !diag.dbConectado && tab !== 'local' && (
           <div className="p-2.5 bg-[#ffe3e3] rounded-2xl border-2 border-[#c92a2a] mb-2 text-[11px] font-bold text-[#c92a2a] flex items-center justify-between gap-2">
             <span>⚠️ Sin conexión a la Database: mostrando últimos datos guardados localmente.</span>
             <button
@@ -1073,17 +1084,43 @@ export const RankingModal: React.FC<RankingModalProps> = ({
         </div>
 
         {tab === 'esta_semana' && (
-          <div className="p-2.5 bg-[#fff3bf] rounded-2xl border-2 border-[#2b2140] mb-2 flex flex-col gap-1 shadow-sm text-xs">
+          <div className="p-2.5 bg-[#fff3bf] rounded-2xl border-2 border-[#2b2140] mb-2 flex flex-col gap-1.5 shadow-sm text-xs">
             <div className="flex items-center justify-between gap-2">
-              <span className="font-black text-[#8f4b00]">
-                👑 ¡Quien termine encima gana puntos extra!
+              <span className="font-black text-[#8f4b00] flex items-center gap-1">
+                <span>🏆</span> Torneo Semanal Oficial
               </span>
               <span className="text-[10px] font-black bg-white px-2 py-0.5 rounded-full border border-[#2b2140] text-[#2b2140] shrink-0">
                 ⏳ {textoCuentaAtrasSemana}
               </span>
             </div>
+
+            {semanalData?.actual?.premioSemanal ? (
+              <div className="p-2 bg-white rounded-xl border border-[#ffd43b] flex items-center gap-2.5">
+                <CartoonCharacter
+                  color={semanalData.actual.premioSemanal.color}
+                  hat={semanalData.actual.premioSemanal.hat}
+                  ropa={semanalData.actual.premioSemanal.ropa}
+                  ropaColor={semanalData.actual.premioSemanal.ropaColor}
+                  aura={semanalData.actual.premioSemanal.aura}
+                  size={42}
+                  showShadow={false}
+                />
+                <div className="flex-1 min-w-0">
+                  <span className="text-[10px] font-black uppercase text-[#d9480f] tracking-wider block">
+                    🎁 Premio al 1º del Ranking:
+                  </span>
+                  <span className="text-xs font-black text-[#2b2140] truncate block">
+                    {semanalData.actual.premioSemanal.nombre}
+                  </span>
+                  <span className="text-[10px] text-[#86542d] font-semibold block">
+                    Personaje exclusivo para el ganador semanal
+                  </span>
+                </div>
+              </div>
+            ) : null}
+
             <span className="text-[11px] font-bold text-[#5c3c00]">
-              Recompensas al cierre semanal: 🥇 +25 pts · 🥈 +15 pts · 🥉 +10 pts
+              Bonos al cierre: 🥇 +{semanalData?.actual?.puntosConfig?.primerLugar || 50} pts · 🥈 +{semanalData?.actual?.puntosConfig?.segundoLugar || 30} pts · 🥉 +{semanalData?.actual?.puntosConfig?.tercerLugar || 15} pts
             </span>
           </div>
         )}
@@ -1779,6 +1816,13 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
 
+  const [mostrandoCambioClave, setMostrandoCambioClave] = useState(false);
+  const [claveActualInput, setClaveActualInput] = useState('');
+  const [nuevaClaveInput, setNuevaClaveInput] = useState('');
+  const [cambiandoClave, setCambiandoClave] = useState(false);
+  const [cambioClaveError, setCambioClaveError] = useState<string | null>(null);
+  const [cambioClaveOk, setCambioClaveOk] = useState(false);
+
   const [perfilHat, setPerfilHat] = useState<HatType>(() => usuarioActual?.avatarHat || 'corona');
   const [perfilColor, setPerfilColor] = useState<string>(
     () => usuarioActual?.avatarColor || '#ff6b6b'
@@ -1892,7 +1936,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
         </div>
 
         {/* Estado Database en Perfil */}
-        {diag.checkedOnce && !diag.kvConnected && (
+        {diag.checkedOnce && !diag.dbConectado && (
           <div className="p-2.5 mb-2 bg-[#ffe3e3] rounded-xl border-2 border-[#c92a2a] text-[11px] font-bold text-[#c92a2a] flex items-center justify-between gap-2">
             <span>⚠️ Sin conexión a la Database: no se pueden enviar o recibir cambios.</span>
             <button
@@ -2123,6 +2167,111 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                 >
                   Cerrar Sesión
                 </button>
+
+                {/* Formulario de Cambio de Contraseña Personal */}
+                <div className="pt-2 border-t border-[#2b2140]/15">
+                  {!mostrandoCambioClave ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sounds.playClick();
+                        setMostrandoCambioClave(true);
+                        setCambioClaveError(null);
+                        setCambioClaveOk(false);
+                      }}
+                      className="w-full py-1.5 px-3 rounded-xl font-bold text-[11px] bg-white text-[#2b2140] border border-[#2b2140]/30 hover:bg-[#fff9db] cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <span>🔑</span>
+                      <span>Cambiar mi contraseña</span>
+                    </button>
+                  ) : (
+                    <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] flex flex-col gap-2 text-left">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black text-[#2b2140] flex items-center gap-1">
+                          <span>🔑</span> Cambiar Contraseña
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setMostrandoCambioClave(false)}
+                          className="text-[10px] text-[#86542d] font-bold hover:underline cursor-pointer"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+
+                      {cambioClaveOk ? (
+                        <div className="p-2 bg-[#d3f9d8] text-[#134e20] text-xs font-bold rounded-xl border border-[#2b8a3e] text-center">
+                          ✅ Contraseña actualizada correctamente en la Database.
+                        </div>
+                      ) : (
+                        <form
+                          onSubmit={async (e) => {
+                            e.preventDefault();
+                            sounds.playClick();
+                            setCambioClaveError(null);
+                            setCambiandoClave(true);
+                            const res = await cambiarClaveUsuarioAsync(claveActualInput, nuevaClaveInput);
+                            setCambiandoClave(false);
+                            if (res.ok) {
+                              sounds.playWin();
+                              setCambioClaveOk(true);
+                              setClaveActualInput('');
+                              setNuevaClaveInput('');
+                              setTimeout(() => setMostrandoCambioClave(false), 2500);
+                            } else {
+                              sounds.playError();
+                              setCambioClaveError(res.error || 'No se pudo actualizar la contraseña');
+                            }
+                          }}
+                          className="flex flex-col gap-2"
+                        >
+                          <div>
+                            <label className="text-[10px] font-bold text-[#86542d] block mb-0.5">
+                              Contraseña actual:
+                            </label>
+                            <input
+                              type="password"
+                              required
+                              value={claveActualInput}
+                              onChange={(e) => setClaveActualInput(e.target.value)}
+                              placeholder="••••••••"
+                              className="w-full text-xs font-bold bg-[#f8f9fa] border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] font-bold text-[#86542d] block mb-0.5">
+                              Nueva contraseña:
+                            </label>
+                            <input
+                              type="password"
+                              required
+                              minLength={4}
+                              value={nuevaClaveInput}
+                              onChange={(e) => setNuevaClaveInput(e.target.value)}
+                              placeholder="Mínimo 4 caracteres"
+                              className="w-full text-xs font-bold bg-[#f8f9fa] border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none"
+                            />
+                          </div>
+
+                          {cambioClaveError && (
+                            <span className="text-[10px] font-bold text-[#c92a2a] block">
+                              ⚠️ {cambioClaveError}
+                            </span>
+                          )}
+
+                          <button
+                            type="submit"
+                            disabled={cambiandoClave || !claveActualInput || !nuevaClaveInput}
+                            className="w-full py-1.5 bg-[#ffd43b] text-[#5c3c00] font-black text-xs rounded-xl border-2 border-[#2b2140] hover:bg-[#fcc419] disabled:opacity-50 cursor-pointer shadow-sm"
+                          >
+                            {cambiandoClave ? 'Actualizando...' : 'Guardar Nueva Contraseña'}
+                          </button>
+                        </form>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 {usuarioActual.id !== 'admin' && (
                   <div className="pt-2 border-t border-[#2b2140]/15">
@@ -2593,9 +2742,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
         if (mostrarToastManual) {
           onShowToastRef.current(
-            res.kvConectado
-              ? '🟢 Sincronizado con la Database (Database)'
-              : '⚠️ Sin conexión con la Database (Database)'
+            res.dbConectado
+              ? '🟢 Sincronizado con la Database (D1)'
+              : '⚠️ Sin conexión con la Database (D1)'
           );
         }
       } catch {
@@ -2628,7 +2777,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   }, [sincronizar, verificarRevocacionYActualizarLista]);
 
   const verificarPermisoAccion = async (requiereSupremo: boolean = false): Promise<boolean> => {
-    const check = await verificarAccionAdminEnKV(usuarioActual || null, requiereSupremo);
+    const check = await D1_VerificarAccionAdmin(usuarioActual || null, requiereSupremo);
     if (!check.ok) {
       sounds.playError();
       onShowToast(check.error || '⛔ Acción no autorizada');
@@ -3052,7 +3201,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     { id: 'capa', label: 'Capa Real', icon: '🧣' },
     { id: 'armadura', label: 'Armadura', icon: '🛡️' },
     { id: 'tunica', label: 'Túnica', icon: '🥋' },
-    { id: 'smoking', label: 'Smoking', icon: '🤵' },
+    { id: 'tuxedo', label: 'Tuxedo', icon: '🤵' },
     { id: 'cinturon', label: 'Cinturón Oro', icon: '🥋' },
     { id: 'alas', label: 'Alas Cósmicas', icon: '🪽' },
   ];
@@ -3114,7 +3263,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         ) : (
           <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 my-1">
             {/* Status Bar */}
-            {!diag.kvConnected ? (
+            {!diag.dbConectado ? (
               <div className="p-2.5 rounded-2xl border-2 border-[#c92a2a] bg-[#ffe3e3] text-[#c92a2a] text-xs font-bold flex items-center justify-between gap-2 shadow-sm">
                 <div className="flex-1">
                   <div className="font-black text-[#a61e1e] flex items-center gap-1">

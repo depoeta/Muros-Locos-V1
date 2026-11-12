@@ -107,13 +107,13 @@ export const STORAGE_KEY_CURRENT_USER = 'muros_locos_current_user_v1';
 const STORAGE_KEY_SUPREME_TOKEN = 'muros_locos_supreme_token_v1';
 const STORAGE_KEY_SEMANAL = 'muros_locos_semanal_v1';
 
-let cloudKvConnected: boolean = false;
+let cloudDbConectado: boolean = false;
 let lastCloudSyncTime: number = 0;
 
 export type NetworkDiagnostic = {
   checkedOnce: boolean;
   isOnline: boolean;
-  kvConnected: boolean;
+  dbConectado: boolean;
   serverPingMs: number;
   lastPingTime: number;
   lastError: string | null;
@@ -124,7 +124,7 @@ export type NetworkDiagnostic = {
 let currentDiagnostic: NetworkDiagnostic = {
   checkedOnce: false,
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
-  kvConnected: true,
+  dbConectado: true,
   serverPingMs: 0,
   lastPingTime: Date.now(),
   lastError: null,
@@ -133,7 +133,7 @@ let currentDiagnostic: NetworkDiagnostic = {
 };
 
 const diagnosticListeners = new Set<(d: NetworkDiagnostic) => void>();
-let lastKnownKvUpdate: number = 0;
+let lastKnownDbUpdate: number = 0;
 let pingIntervalId: any = null;
 
 export function obtenerDiagnosticoRed(): NetworkDiagnostic {
@@ -178,11 +178,11 @@ let inFlightPingPromise: Promise<NetworkDiagnostic> | null = null;
 
 export async function pingServidor(): Promise<NetworkDiagnostic> {
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    cloudKvConnected = false;
+    cloudDbConectado = false;
     reportarDiagnostico({
       checkedOnce: true,
       isOnline: false,
-      kvConnected: false,
+      dbConectado: false,
       lastError: 'Sin conexión a internet (modo sin conexión)',
     });
     return obtenerDiagnosticoRed();
@@ -205,14 +205,13 @@ export async function pingServidor(): Promise<NetworkDiagnostic> {
         const isDb =
           res.headers.get('X-DB-Bound') === 'true' ||
           res.headers.get('X-Database-Bound') === 'true' ||
-          res.headers.get('X-KV-Bound') === 'true' ||
-          Boolean(data.dbBound || data.d1Bound || data.kvBound);
-        cloudKvConnected = isDb;
+          Boolean(data.dbBound || data.d1Bound);
+        cloudDbConectado = isDb;
 
         reportarDiagnostico({
           checkedOnce: true,
           isOnline: true,
-          kvConnected: isDb,
+          dbConectado: isDb,
           serverPingMs: pingMs,
           lastPingTime: Date.now(),
           lastError: isDb ? null : data.warning || 'Database (D1) no vinculada',
@@ -220,27 +219,27 @@ export async function pingServidor(): Promise<NetworkDiagnostic> {
           cuentasCount: data.cuentasCount || 0,
         });
 
-        if (isDb && data.lastUpdate && data.lastUpdate !== lastKnownKvUpdate) {
-          lastKnownKvUpdate = data.lastUpdate;
+        if (isDb && data.lastUpdate && data.lastUpdate !== lastKnownDbUpdate) {
+          lastKnownDbUpdate = data.lastUpdate;
           await sincronizarConNube(true);
         }
       } else {
-        cloudKvConnected = false;
+        cloudDbConectado = false;
         reportarDiagnostico({
           checkedOnce: true,
           isOnline: false,
-          kvConnected: false,
+          dbConectado: false,
           lastError: !contentType.includes('application/json')
             ? 'API / Worker de Database no detectado en esta ruta'
             : `Servidor HTTP ${res.status}`,
         });
       }
     } catch (err: any) {
-      cloudKvConnected = false;
+      cloudDbConectado = false;
       reportarDiagnostico({
         checkedOnce: true,
         isOnline: false,
-        kvConnected: false,
+        dbConectado: false,
         lastError: err?.message || 'Sin conexión con el servidor / Database (D1)',
       });
     } finally {
@@ -262,18 +261,18 @@ export function iniciarHeartbeatGlobal() {
     // Reconexión automática al detectar internet / wifi: sincroniza por sí solo sin pedir acción al usuario
     try {
       const diag = await pingServidor();
-      if (diag.kvConnected) {
+      if (diag.dbConectado) {
         await sincronizarConNube(true);
       }
     } catch {}
   });
 
   window.addEventListener('offline', () => {
-    cloudKvConnected = false;
+    cloudDbConectado = false;
     reportarDiagnostico({
       checkedOnce: true,
       isOnline: false,
-      kvConnected: false,
+      dbConectado: false,
       lastError: 'Sin conexión a internet (modo sin conexión)',
     });
   });
@@ -283,8 +282,8 @@ if (typeof window !== 'undefined') {
   iniciarHeartbeatGlobal();
 }
 
-export function estaKvConectado(): boolean {
-  return cloudKvConnected;
+export function estaDatabaseConectada(): boolean {
+  return cloudDbConectado;
 }
 
 export const STORAGE_KEY_AUTH_TOKEN = 'muros_locos_auth_token';
@@ -319,16 +318,16 @@ export function obtenerTokenAdminSupremo(): { user: string; token: string } | nu
   return null;
 }
 
-interface KvWriteOptions {
+interface DatabaseWriteOptions {
   asAdmin?: boolean;
   selfDelete?: { id: string; clave: string };
   registerId?: string;
 }
 
-async function enviarJsonAKv(
+async function enviarJsonADatabase(
   endpoint: string,
   payload: unknown,
-  options?: KvWriteOptions
+  options?: DatabaseWriteOptions
 ): Promise<boolean> {
   try {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -367,34 +366,33 @@ async function enviarJsonAKv(
     });
     const isBound =
       res.headers.get('X-DB-Bound') === 'true' ||
-      res.headers.get('X-Database-Bound') === 'true' ||
-      res.headers.get('X-KV-Bound') === 'true';
+      res.headers.get('X-Database-Bound') === 'true';
 
     if (res.status === 403 && isBound) {
-      cloudKvConnected = true;
-      reportarDiagnostico({ checkedOnce: true, isOnline: true, kvConnected: true, lastError: null });
+      cloudDbConectado = true;
+      reportarDiagnostico({ checkedOnce: true, isOnline: true, dbConectado: true, lastError: null });
       await sincronizarConNube(true);
       return false;
     }
 
     if (res.ok && isBound) {
-      cloudKvConnected = true;
-      reportarDiagnostico({ checkedOnce: true, isOnline: true, kvConnected: true, lastError: null });
+      cloudDbConectado = true;
+      reportarDiagnostico({ checkedOnce: true, isOnline: true, dbConectado: true, lastError: null });
       return true;
     }
-    cloudKvConnected = false;
+    cloudDbConectado = false;
     reportarDiagnostico({
       checkedOnce: true,
-      kvConnected: false,
+      dbConectado: false,
       lastError: 'No se pudo guardar en la Database (D1 desconectada)',
     });
     return false;
   } catch {
-    cloudKvConnected = false;
+    cloudDbConectado = false;
     reportarDiagnostico({
       checkedOnce: true,
       isOnline: false,
-      kvConnected: false,
+      dbConectado: false,
       lastError: 'Error de red al enviar cambios a la Database (D1)',
     });
     return false;
@@ -447,14 +445,14 @@ function reconciliarYNotificarNube() {
 
 let inFlightSyncPromise: Promise<{
   ok: boolean;
-  kvConectado: boolean;
+  dbConectado: boolean;
   rankingCount: number;
   cuentasCount: number;
 }> | null = null;
 
 export async function sincronizarConNube(forzar: boolean = false): Promise<{
   ok: boolean;
-  kvConectado: boolean;
+  dbConectado: boolean;
   rankingCount: number;
   cuentasCount: number;
 }> {
@@ -463,8 +461,8 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
   const now = Date.now();
   if (!forzar && now - lastCloudSyncTime < 10000) {
     return {
-      ok: cloudKvConnected,
-      kvConectado: cloudKvConnected,
+      ok: cloudDbConectado,
+      dbConectado: cloudDbConectado,
       rankingCount: Object.keys(cargarRanking()).length,
       cuentasCount: Object.keys(cargarCuentas()).length,
     };
@@ -473,8 +471,8 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
   inFlightSyncPromise = (async () => {
     try {
       lastCloudSyncTime = Date.now();
-      let kvRankingOk = false;
-      let kvCuentasOk = false;
+      let dbRankingOk = false;
+      let dbCuentasOk = false;
 
       await Promise.all([
         (async () => {
@@ -488,9 +486,8 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
             if (res.ok && ct.includes('application/json')) {
               const isBound =
                 res.headers.get('X-DB-Bound') === 'true' ||
-                res.headers.get('X-Database-Bound') === 'true' ||
-                res.headers.get('X-KV-Bound') === 'true';
-              if (isBound) kvRankingOk = true;
+                res.headers.get('X-Database-Bound') === 'true';
+              if (isBound) dbRankingOk = true;
               const cloudData = await res.json();
               if (cloudData && typeof cloudData === 'object' && !Array.isArray(cloudData) && isBound) {
                 safeSet(STORAGE_KEY_RANKING, JSON.stringify(cloudData));
@@ -511,9 +508,8 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
             if (res.ok && ct.includes('application/json')) {
               const isBound =
                 res.headers.get('X-DB-Bound') === 'true' ||
-                res.headers.get('X-Database-Bound') === 'true' ||
-                res.headers.get('X-KV-Bound') === 'true';
-              if (isBound) kvCuentasOk = true;
+                res.headers.get('X-Database-Bound') === 'true';
+              if (isBound) dbCuentasOk = true;
               const cloudAccounts = await res.json();
               if (
                 cloudAccounts &&
@@ -530,22 +526,22 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
         })(),
       ]);
 
-      const anyKvActive = kvRankingOk || kvCuentasOk;
-      cloudKvConnected = anyKvActive;
+      const anyDbActive = dbRankingOk || dbCuentasOk;
+      cloudDbConectado = anyDbActive;
       reportarDiagnostico({
         checkedOnce: true,
-        kvConnected: anyKvActive,
-        isOnline: anyKvActive ? true : currentDiagnostic.isOnline,
-        lastError: anyKvActive ? null : 'Sin conexión activa a la Database',
+        dbConectado: anyDbActive,
+        isOnline: anyDbActive ? true : currentDiagnostic.isOnline,
+        lastError: anyDbActive ? null : 'Sin conexión activa a la Database',
       });
 
-      if (anyKvActive) {
+      if (anyDbActive) {
         reconciliarYNotificarNube();
       }
 
       return {
-        ok: anyKvActive,
-        kvConectado: cloudKvConnected,
+        ok: anyDbActive,
+        dbConectado: cloudDbConectado,
         rankingCount: Object.keys(cargarRanking()).length,
         cuentasCount: Object.keys(cargarCuentas()).length,
       };
@@ -572,13 +568,13 @@ export function iniciarEscuchaNube(intervaloMs: number = 90000): () => void {
     if (isChecking) return;
     isChecking = true;
     try {
-      const prevTs = lastKnownKvUpdate;
+      const prevTs = lastKnownDbUpdate;
       const diag = await pingServidor();
-      if (!diag.kvConnected) return;
+      if (!diag.dbConectado) return;
 
-      // pingServidor() solo descarga cuentas/ranking cuando lastUpdate cambia en KV;
+      // pingServidor() solo descarga cuentas/ranking cuando lastUpdate cambia en Database (D1);
       // forzamos únicamente la primera sincronización inicial al abrir la página.
-      if (!initialSynced || (prevTs === 0 && lastKnownKvUpdate === 0)) {
+      if (!initialSynced || (prevTs === 0 && lastKnownDbUpdate === 0)) {
         initialSynced = true;
         await sincronizarConNube(true);
       }
@@ -685,7 +681,7 @@ export function cargarRanking(): Record<string, RankEntry> {
 
 export function guardarRanking(ranking: Record<string, RankEntry>) {
   safeSet(STORAGE_KEY_RANKING, JSON.stringify(ranking));
-  enviarJsonAKv('/api/ranking', ranking);
+  enviarJsonADatabase('/api/ranking', ranking);
 }
 
 export function cargarRankingLocal(): Record<string, RankEntry> {
@@ -815,7 +811,7 @@ function construirRankingSemanalFallback(): WeeklyRankingResponse {
 
   return {
     ok: false,
-    kvBound: false,
+    d1Bound: false,
     semanaActualId: w.semanaActualId,
     semanaPasadaId: w.semanaPasadaId,
     cierraEnMs: w.cierraEnMs,
@@ -1121,7 +1117,7 @@ export function actualizarDespuesDePartida(
   historial.push(matchRecord);
   guardarHistorial(historial);
 
-  // Solo contactar con Cloudflare KV si participó al menos una cuenta registrada (0 peticiones KV en modo Invitado)
+  // Solo contactar con Cloudflare D1 si participó al menos una cuenta registrada (0 peticiones a la Database en modo Invitado)
   if (Object.keys(cuentasPatch).length > 0) {
     safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(cuentas));
     safeSet(STORAGE_KEY_RANKING, JSON.stringify(ranking));
@@ -1200,7 +1196,7 @@ export function penalizarAbandono(nombre: string, puntosPerdidos: number = 5): {
     guardarUsuarioActual(matchingAcc);
   }
 
-  enviarJsonAKv('/api/partida', {
+  enviarJsonADatabase('/api/partida', {
     matchId: `abandono_${Date.now()}`,
     fecha: entry.fechaUltimaPartida,
     cuentasPatch: { [matchingAcc.id]: matchingAcc },
@@ -1227,7 +1223,7 @@ export async function importarDatosJSONAsync(jsonStr: string): Promise<boolean> 
     let importedAnything = false;
 
     if (data.cuentas && typeof data.cuentas === 'object') {
-      const ok = await enviarJsonAKv('/api/cuentas', data.cuentas, { asAdmin: true });
+      const ok = await enviarJsonADatabase('/api/cuentas', data.cuentas, { asAdmin: true });
       if (!ok) return false;
       safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(data.cuentas));
       importedAnything = true;
@@ -1240,7 +1236,7 @@ export async function importarDatosJSONAsync(jsonStr: string): Promise<boolean> 
           normalized[k] = normalizarRankEntry(v as Partial<RankEntry>, k);
         }
       }
-      const ok = await enviarJsonAKv('/api/ranking', normalized, { asAdmin: true });
+      const ok = await enviarJsonADatabase('/api/ranking', normalized, { asAdmin: true });
       if (!ok) return false;
       safeSet(STORAGE_KEY_RANKING, JSON.stringify(normalized));
       importedAnything = true;
@@ -1307,7 +1303,7 @@ export function guardarCuentas(cuentas: Record<string, UserAccount>) {
     copy['admin'] = { ...copy['admin'], rol: 'admin', esSupremo: true, clave: '***SUPREMO***' };
   }
   safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(copy));
-  enviarJsonAKv('/api/cuentas', copy);
+  enviarJsonADatabase('/api/cuentas', copy);
 }
 
 export function obtenerUsuarioActual(): UserAccount | null {
@@ -1479,22 +1475,23 @@ export function cerrarSesion() {
 }
 
 /**
- * Verifica en tiempo real contra el Worker / KV si el usuario actual sigue teniendo permisos
- * de administrador (Admin Supremo con su token de login, o Admin Delegado con rol === 'admin' en KV).
+ * Verifica en tiempo real contra el Worker y Database (D1) si el usuario actual sigue teniendo permisos
+ * de administrador (Dev Supremo con su token de login, o Staff con rol 'dev', 'admin' o 'mod').
  * Nunca pide clave al usuario otra vez.
  */
-export async function verificarAccionAdminEnKV(
+export async function D1_VerificarAccionAdmin(
   usuario: UserAccount | null,
   requiereSupremo: boolean = false
 ): Promise<{
   ok: boolean;
   esSupremo?: boolean;
-  kvDesconectado?: boolean;
+  dbDesconectado?: boolean;
+  /** @deprecated compatibilidad */
   revocado?: boolean;
   error?: string;
 }> {
   if (!usuario) {
-    return { ok: false, error: 'Debes iniciar sesión con tu cuenta de Administrador primero.' };
+    return { ok: false, error: 'Debes iniciar sesión con tu cuenta de Staff primero.' };
   }
 
   try {
@@ -1517,20 +1514,19 @@ export async function verificarAccionAdminEnKV(
 
     const isBound =
       res.headers.get('X-DB-Bound') === 'true' ||
-      res.headers.get('X-Database-Bound') === 'true' ||
-      res.headers.get('X-KV-Bound') === 'true';
+      res.headers.get('X-Database-Bound') === 'true';
     const ct = res.headers.get('content-type') || '';
 
     if (res.status === 503 || !isBound || !ct.includes('application/json')) {
-      cloudKvConnected = false;
+      cloudDbConectado = false;
       reportarDiagnostico({
         checkedOnce: true,
-        kvConnected: false,
+        dbConectado: false,
         lastError: 'Sin conexión a la Database (D1)',
       });
       return {
         ok: false,
-        kvDesconectado: true,
+        dbDesconectado: true,
         error: '⚠️ No hay conexión con la Database (D1). Conéctate para enviar o recibir cambios.',
       };
     }
@@ -1557,21 +1553,21 @@ export async function verificarAccionAdminEnKV(
       };
     }
 
-    cloudKvConnected = true;
-    reportarDiagnostico({ checkedOnce: true, isOnline: true, kvConnected: true, lastError: null });
+    cloudDbConectado = true;
+    reportarDiagnostico({ checkedOnce: true, isOnline: true, dbConectado: true, lastError: null });
     return { ok: true, esSupremo: Boolean(data.isSupremeAdmin) };
   } catch {
-    cloudKvConnected = false;
+    cloudDbConectado = false;
     reportarDiagnostico({
       checkedOnce: true,
       isOnline: false,
-      kvConnected: false,
+      dbConectado: false,
       lastError: 'Error de red con la Database',
     });
     return {
       ok: false,
-      kvDesconectado: true,
-      error: '⚠️ Sin conexión al servidor / Database. No se pueden enviar cambios.',
+      dbDesconectado: true,
+      error: '⚠️ Sin conexión al servidor / Database (D1). No se pueden enviar cambios.',
     };
   }
 }
@@ -1605,14 +1601,52 @@ export function actualizarCuentaUsuario(id: string, patch: Partial<UserAccount>)
 }
 
 export async function actualizarCuentaAsync(usuario: UserAccount): Promise<UserAccount> {
-  // Sincronizar primero con KV para no pisar revocaciones de rol ni puntos recientes
+  // Sincronizar primero con Database (D1) para no pisar revocaciones de rol ni puntos recientes
   await sincronizarConNube(true);
   const res = actualizarCuentaUsuario(usuario.id, {
     avatarHat: usuario.avatarHat,
     avatarColor: usuario.avatarColor,
+    avatarRopa: usuario.avatarRopa,
+    avatarRopaColor: usuario.avatarRopaColor,
+    avatarAura: usuario.avatarAura,
+    inventario: usuario.inventario,
     temaTablero: usuario.temaTablero,
   });
   return res || usuario;
+}
+
+export async function cambiarClaveUsuarioAsync(
+  claveActual: string,
+  nuevaClave: string
+): Promise<{ ok: boolean; error?: string }> {
+  const token = obtenerTokenSesion();
+  if (!token) {
+    return { ok: false, error: 'Debes tener una sesión activa para cambiar tu contraseña.' };
+  }
+  if (!nuevaClave || nuevaClave.length < 4) {
+    return { ok: false, error: 'La nueva contraseña debe tener al menos 4 caracteres.' };
+  }
+  try {
+    const res = await fetch(getApiBaseUrl('/api/perfil/cambiar-clave'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ claveActual, nuevaClave }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || 'No se pudo cambiar la contraseña.' };
+    }
+    if (data.token) {
+      guardarTokenSesion(data.token);
+    }
+    await sincronizarConNube(true);
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, error: 'Error de red al cambiar la contraseña: ' + (err?.message || 'Reintente.') };
+  }
 }
 
 export async function adminActualizarUsuarioAsync(
@@ -1681,8 +1715,8 @@ export async function adminActualizarUsuarioAsync(
   };
 
   const [okCuentas, okRanking] = await Promise.all([
-    enviarJsonAKv('/api/cuentas', cuentas, { asAdmin: true }),
-    enviarJsonAKv('/api/ranking', ranking, { asAdmin: true }),
+    enviarJsonADatabase('/api/cuentas', cuentas, { asAdmin: true }),
+    enviarJsonADatabase('/api/ranking', ranking, { asAdmin: true }),
   ]);
 
   if (!okCuentas) {
@@ -1794,8 +1828,8 @@ export async function darDeBajaUsuarioAsync(id: string): Promise<boolean> {
   }
 
   const [okCuentas, okRanking] = await Promise.all([
-    enviarJsonAKv('/api/cuentas', cuentas, clavePropia ? { selfDelete: { id, clave: clavePropia } } : undefined),
-    enviarJsonAKv('/api/ranking', ranking),
+    enviarJsonADatabase('/api/cuentas', cuentas, clavePropia ? { selfDelete: { id, clave: clavePropia } } : undefined),
+    enviarJsonADatabase('/api/ranking', ranking),
   ]);
 
   if (!okCuentas || !okRanking) {
@@ -1827,8 +1861,8 @@ export async function adminResetearRankingAsync(): Promise<{ ok: boolean; error?
   }
 
   const [okRanking, okCuentas] = await Promise.all([
-    enviarJsonAKv('/api/ranking', rankingVacio, { asAdmin: true }),
-    enviarJsonAKv('/api/cuentas', cuentas, { asAdmin: true }),
+    enviarJsonADatabase('/api/ranking', rankingVacio, { asAdmin: true }),
+    enviarJsonADatabase('/api/cuentas', cuentas, { asAdmin: true }),
   ]);
 
   if (!okRanking || !okCuentas) {

@@ -5,7 +5,7 @@
  * Motor Online Híbrido WebRTC P2P + Señalización Propia (/api/salas) + Respaldo CGNAT:
  * - Independiente de servidores externos caídos (elimina el cuello de botella de 0.peerjs.com).
  * - Negocia RTCDataChannel directo entre navegadores en <1s usando /api/salas/:codigo.
- * - Cuando el canal WebRTC está abierto, el tráfico va 100% P2P directo (0 peticiones HTTP/KV en partida).
+ * - Cuando el canal WebRTC está abierto, el tráfico va 100% P2P directo (0 peticiones al servidor en partida).
  * - Si un jugador está tras NAT simétrico / 4G-5G CGNAT o firewall estricto, conmuta sin cortes al canal /msg.
  */
 
@@ -19,7 +19,7 @@ import {
   OnlinePlayerInfo,
   WallOrientation,
 } from '../types/murosLocos';
-import { getApiBaseUrl } from './storage';
+import { getApiBaseUrl, obtenerTokenSesion } from './storage';
 
 export const SESSION_STORAGE_KEY = 'muros_locos_active_online_session';
 
@@ -493,12 +493,12 @@ class OnlineManager {
 
     const now = Date.now();
 
-    // Si la partida está activa o recién terminada y todos los pares responden por WebRTC directo, 0 peticiones HTTP/KV
+    // Si la partida está activa o recién terminada y todos los pares responden por WebRTC directo, 0 peticiones de red
     if (this.currentGameState && this.areAllPeersResponsive(now)) {
       return;
     }
 
-    // Mientras el anfitrión espera solo en el lobby sin rival, espaciar a 3s para ahorrar lecturas de KV
+    // Mientras el anfitrión espera solo en el lobby sin rival, espaciar a 3s para optimizar recursos
     if (
       this.role === 'host' &&
       !this.currentGameState &&
@@ -929,11 +929,15 @@ class OnlineManager {
     }
 
     const t0 = Date.now();
+    const token = obtenerTokenSesion();
     const res = await fetch(
       getApiBaseUrl(`/api/salas/${encodeURIComponent(this.roomCode)}/join`),
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         cache: 'no-store',
         body: JSON.stringify({
           peerId: this.myPeerId,
@@ -966,6 +970,10 @@ class OnlineManager {
       this.myPlayerId = me.id;
       this.myColor = me.color;
       this.myHat = me.hat;
+      if (me.esAnfitrion) {
+        this.role = 'host';
+        this.diagnosticData.role = 'host';
+      }
     }
 
     this.diagnosticData.status = 'conectado';

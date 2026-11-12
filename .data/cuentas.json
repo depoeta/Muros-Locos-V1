@@ -7,13 +7,18 @@
     "esSupremo": true,
     "avatarColor": "#ffd43b",
     "avatarHat": "corona",
+    "avatarRopa": "capa",
+    "avatarAura": "dorada",
+    "inventario": {
+      "personajes": []
+    },
     "temaTablero": "madera",
     "puntos": 0,
     "partidas": 0,
     "victorias": 0,
     "elo": 0,
     "creadoEn": "2026-11-03T01:57:14.178Z",
-    "ultimaConexion": "2026-11-09T01:12:57.481Z",
+    "ultimaConexion": "2026-11-12T01:52:55.262Z",
     "historialPartidas": []
   }
 }
