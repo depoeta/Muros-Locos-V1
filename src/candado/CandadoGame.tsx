@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Interfaz principal aislada del minijuego Candado (Beta Local — Mecánica A y Mecánica B).
+ * Geometría estable: el registro de intentos nunca empuja ni oculta el candado o el teclado.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -37,9 +38,9 @@ interface CandadoGameProps {
 }
 
 const OPCIONES_INTENTOS: { valor: LimiteIntentosCandado; etiqueta: string; desc: string }[] = [
-  { valor: 0, etiqueta: '∞ Ilimitado', desc: 'Por defecto' },
+  { valor: 0, etiqueta: '∞', desc: 'Ilimitado' },
   { valor: 10, etiqueta: '10', desc: 'Reto' },
-  { valor: 12, etiqueta: '12', desc: 'Equilibrado' },
+  { valor: 12, etiqueta: '12', desc: 'Normal' },
   { valor: 15, etiqueta: '15', desc: 'Cómodo' },
   { valor: 20, etiqueta: '20', desc: 'Amplio' },
 ];
@@ -101,6 +102,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
 
   const [menuJuegosAbierto, setMenuJuegosAbierto] = useState(false);
   const [mostrarReglas, setMostrarReglas] = useState(false);
+  const [registroAmpliado, setRegistroAmpliado] = useState(false);
 
   const [config, setConfig] = useState<CandadoConfig>({
     modo: 'logico',
@@ -117,7 +119,6 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [errorShake, setErrorShake] = useState<boolean>(false);
 
-  // Notas rápidas (0-9) para Mecánica A (descartar o marcar posibles)
   const [modoNotas, setModoNotas] = useState<boolean>(false);
   const [notasDigitos, setNotasDigitos] = useState<Record<string, NotaDigito>>({});
 
@@ -155,6 +156,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
     setErrorMsg(null);
     setModoNotas(false);
     setNotasDigitos({});
+    setRegistroAmpliado(false);
     setPantalla('juego');
   }, []);
 
@@ -200,7 +202,6 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
         return next;
       });
 
-      // Avanzar cursor al siguiente slot vacío (o siguiente posición)
       const len = estado.config.digitos;
       let nextIdx = cursorIdx;
       for (let step = 1; step <= len; step++) {
@@ -280,15 +281,15 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
           ? (res.intento as IntentoLogico)?.exactos || 0
           : (res.intento as IntentoMayorMenor)?.exactosEnPosicion || 0;
       candadoAudio.playAttemptCheck(exactos);
-      // Limpiar entrada lista para el siguiente intento
       setEntradaActual(new Array(estado.config.digitos).fill(''));
       setCursorIdx(0);
     }
   }, [estado, entradaActual, dispararError]);
 
-  // Atajos de teclado físicos (0-9, Backspace, Delete, Enter, flechas)
   useEffect(() => {
-    if (pantalla !== 'juego' || !estado || estado.fase !== 'jugando' || mostrarReglas) return;
+    if (pantalla !== 'juego' || !estado || estado.fase !== 'jugando' || mostrarReglas || registroAmpliado) {
+      return;
+    }
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (/^[0-9]$/.test(e.key)) {
@@ -313,23 +314,157 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [pantalla, estado, mostrarReglas, ingresarDigito, borrarDigito, limpiarEntrada, enviarIntento]);
+  }, [
+    pantalla,
+    estado,
+    mostrarReglas,
+    registroAmpliado,
+    ingresarDigito,
+    borrarDigito,
+    limpiarEntrada,
+    enviarIntento,
+  ]);
 
   const toggleEstilo = () => {
     if (onToggleEstiloVisual) onToggleEstiloVisual();
     else setEstiloLocal((s) => (s === 'clasico' ? 'minimalista' : 'clasico'));
   };
 
+  const renderListaHistorial = (compacta: boolean) => {
+    if (!estado || estado.intentos.length === 0) {
+      return (
+        <div
+          className={
+            esMinimalista
+              ? 'h-full flex items-center justify-center text-center px-3 text-xs text-slate-400'
+              : 'h-full flex items-center justify-center text-center px-3 text-xs font-bold text-[#86542d]'
+          }
+        >
+          Prueba una clave para ver tus pistas aquí.
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-1.5">
+        {estado.intentos.map((it) => {
+          if (estado.config.modo === 'logico') {
+            const itemA = it as IntentoLogico;
+            return (
+              <div
+                key={itemA.numero}
+                className={
+                  esMinimalista
+                    ? 'px-2 py-1.5 rounded-xl bg-slate-800/75 border border-white/10 flex items-center justify-between gap-1.5'
+                    : 'px-2 py-1.5 rounded-xl bg-white border-2 border-[#2b2140] flex items-center justify-between gap-1.5 shadow-2xs'
+                }
+              >
+                <span className="text-[10px] font-black opacity-65 tabular-nums w-5 shrink-0">
+                  #{itemA.numero}
+                </span>
+                <div className="flex items-center gap-1 flex-1 justify-center">
+                  {itemA.digitos.map((ev, dIdx) => (
+                    <div
+                      key={dIdx}
+                      title={
+                        ev.estado === 'exacto'
+                          ? 'Exacto (mismo lugar)'
+                          : ev.estado === 'desubicado'
+                          ? 'Existe en otro lugar'
+                          : 'No está en la clave'
+                      }
+                      className={`${
+                        compacta ? 'w-7 h-7 text-xs' : 'w-8 h-8 text-sm'
+                      } rounded-lg flex flex-col items-center justify-center font-mono font-black tabular-nums border ${
+                        ev.estado === 'exacto'
+                          ? 'bg-[#51cf66] text-[#134e20] border-[#2b8a3e]'
+                          : ev.estado === 'desubicado'
+                          ? 'bg-[#ffd43b] text-[#5c3c00] border-[#e67700]'
+                          : esMinimalista
+                          ? 'bg-slate-900 text-slate-400 border-white/10'
+                          : 'bg-[#f1f3f5] text-[#495057] border-[#adb5bd]'
+                      }`}
+                    >
+                      <span className="leading-none">{ev.digito}</span>
+                      <span className="text-[7px] leading-none mt-0.5">
+                        {ev.estado === 'exacto' ? '✓' : ev.estado === 'desubicado' ? '↔' : '✕'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div className="text-[10px] font-black tabular-nums text-right leading-none shrink-0 flex items-center gap-1">
+                  <span className="text-[#2b8a3e]">{itemA.exactos}✓</span>
+                  <span className="text-[#d9480f]">{itemA.desubicados}↔</span>
+                </div>
+              </div>
+            );
+          }
+
+          const itemB = it as IntentoMayorMenor;
+          const prox = INFO_PROXIMIDAD[itemB.proximidad];
+          return (
+            <div
+              key={itemB.numero}
+              className={
+                esMinimalista
+                  ? 'px-2.5 py-1.5 rounded-xl bg-slate-800/75 border border-white/10 flex items-center justify-between gap-2'
+                  : 'px-2.5 py-1.5 rounded-xl bg-white border-2 border-[#2b2140] flex items-center justify-between gap-2 shadow-2xs'
+              }
+            >
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="text-[10px] font-black opacity-65 tabular-nums">
+                  #{itemB.numero}
+                </span>
+                <span className="font-mono font-black text-sm tracking-wider tabular-nums">
+                  {itemB.entrada}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1 shrink-0">
+                <span
+                  className={`px-1.5 py-0.5 rounded-lg border text-[10px] font-black ${
+                    itemB.direccion === 'exacto'
+                      ? 'bg-[#d3f9d8] text-[#134e20] border-[#2b8a3e]'
+                      : itemB.direccion === 'alto'
+                      ? esMinimalista
+                        ? 'bg-indigo-500/25 text-indigo-200 border-indigo-400/40'
+                        : 'bg-[#e7f5ff] text-[#1864ab] border-[#339af0]'
+                      : esMinimalista
+                      ? 'bg-orange-500/25 text-orange-200 border-orange-400/40'
+                      : 'bg-[#fff4e6] text-[#d9480f] border-[#fd7e14]'
+                  }`}
+                >
+                  {itemB.direccion === 'exacto'
+                    ? '🔓 Exacto'
+                    : itemB.direccion === 'alto'
+                    ? '↑ Más alto'
+                    : '↓ Más bajo'}
+                </span>
+                <span
+                  className={`px-1.5 py-0.5 rounded-lg border text-[10px] font-black ${
+                    esMinimalista ? prox.claseMin : prox.claseClasica
+                  }`}
+                >
+                  {prox.icono} {prox.texto}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
     <div
-      className={`relative w-full min-h-screen flex flex-col items-center justify-between p-3 sm:p-5 z-10 transition-colors duration-300 ${
+      className={`relative w-full min-h-screen flex flex-col items-center justify-start px-3 py-2.5 sm:px-5 sm:py-3.5 z-10 transition-colors duration-300 ${
         esMinimalista
           ? 'bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 text-slate-100'
           : 'text-[#2b2140]'
       }`}
     >
-      {/* Barra superior unificada con Selector 🕹️ Juegos para volver a Muros Locos */}
-      <header className="w-full max-w-4xl flex items-center justify-between gap-2 z-30">
+      {/* Barra superior compacta con 🕹️ Juegos */}
+      <header className="w-full max-w-4xl flex items-center justify-between gap-2 z-30 mb-2">
         <div className="relative">
           <button
             type="button"
@@ -339,8 +474,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
             }}
             className={
               esMinimalista
-                ? 'flex items-center gap-1.5 bg-slate-900/85 hover:bg-slate-800 text-slate-100 px-3 py-1.5 rounded-xl border border-white/15 shadow-sm cursor-pointer transition-all'
-                : 'flex items-center gap-1.5 bg-white hover:bg-[#fff9db] px-3 py-1.5 rounded-2xl border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] active:translate-y-0.5 cursor-pointer transition-all'
+                ? 'flex items-center gap-1.5 bg-slate-900/85 hover:bg-slate-800 text-slate-100 px-2.5 py-1 rounded-xl border border-white/15 shadow-sm cursor-pointer transition-all'
+                : 'flex items-center gap-1.5 bg-white hover:bg-[#fff9db] px-2.5 py-1 rounded-2xl border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] active:translate-y-0.5 cursor-pointer transition-all'
             }
           >
             <span className="text-sm">🕹️</span>
@@ -356,8 +491,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
             <div
               className={
                 esMinimalista
-                  ? 'absolute top-11 left-0 w-60 bg-slate-900/95 border border-white/15 rounded-xl p-2.5 shadow-2xl backdrop-blur-md flex flex-col gap-2 z-40'
-                  : 'absolute top-11 left-0 w-60 bg-[#fff8e7] border-3 border-[#2b2140] rounded-2xl p-2 shadow-[0_8px_0_#2b2140,0_16px_25px_rgba(0,0,0,0.3)] flex flex-col gap-1.5 z-40'
+                  ? 'absolute top-10 left-0 w-56 bg-slate-900/95 border border-white/15 rounded-xl p-2 shadow-2xl backdrop-blur-md flex flex-col gap-1.5 z-40'
+                  : 'absolute top-10 left-0 w-56 bg-[#fff8e7] border-3 border-[#2b2140] rounded-2xl p-2 shadow-[0_6px_0_#2b2140,0_12px_20px_rgba(0,0,0,0.3)] flex flex-col gap-1.5 z-40'
               }
             >
               <button
@@ -369,8 +504,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                 }}
                 className={
                   esMinimalista
-                    ? 'px-3 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700/90 border border-white/10 flex items-center justify-between text-xs font-semibold text-slate-200 cursor-pointer text-left'
-                    : 'px-2.5 py-2 rounded-xl bg-white hover:bg-[#fff9db] border-2 border-[#2b2140] flex items-center justify-between text-xs font-black text-[#2b2140] cursor-pointer text-left'
+                    ? 'px-2.5 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/90 border border-white/10 flex items-center justify-between text-xs font-semibold text-slate-200 cursor-pointer text-left'
+                    : 'px-2.5 py-1.5 rounded-xl bg-white hover:bg-[#fff9db] border-2 border-[#2b2140] flex items-center justify-between text-xs font-black text-[#2b2140] cursor-pointer text-left'
                 }
               >
                 <span>🧱 Muros Locos</span>
@@ -382,8 +517,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               <div
                 className={
                   esMinimalista
-                    ? 'px-3 py-2 rounded-lg bg-emerald-950/60 border border-emerald-500/30 flex items-center justify-between text-xs font-semibold text-emerald-300'
-                    : 'px-2.5 py-2 rounded-xl bg-[#d3f9d8] border-2 border-[#2b2140] flex items-center justify-between text-xs font-black text-[#134e20]'
+                    ? 'px-2.5 py-1.5 rounded-lg bg-emerald-950/60 border border-emerald-500/30 flex items-center justify-between text-xs font-semibold text-emerald-300'
+                    : 'px-2.5 py-1.5 rounded-xl bg-[#d3f9d8] border-2 border-[#2b2140] flex items-center justify-between text-xs font-black text-[#134e20]'
                 }
               >
                 <span>🔐 Candado</span>
@@ -401,8 +536,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
           )}
         </div>
 
-        {/* Controles rápidos derecha */}
-        <div className="flex items-center gap-1.5 sm:gap-2">
+        <div className="flex items-center gap-1.5">
           <button
             type="button"
             onClick={() => {
@@ -411,8 +545,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
             }}
             className={
               esMinimalista
-                ? 'flex items-center gap-1.5 bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-400/30 px-2.5 py-1.5 rounded-xl text-[11px] font-semibold cursor-pointer'
-                : 'flex items-center gap-1 bg-white hover:bg-[#fff9db] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] px-2.5 py-1.5 rounded-2xl text-[11px] font-black cursor-pointer'
+                ? 'flex items-center gap-1 bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-400/30 px-2.5 py-1 rounded-xl text-[11px] font-semibold cursor-pointer'
+                : 'flex items-center gap-1 bg-white hover:bg-[#fff9db] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] px-2.5 py-1 rounded-2xl text-[11px] font-black cursor-pointer'
             }
           >
             <span>{esMinimalista ? '🧸' : '✨'}</span>
@@ -425,8 +559,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               onClick={onToggleSonido}
               className={
                 esMinimalista
-                  ? 'w-9 h-9 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/15 flex items-center justify-center text-sm cursor-pointer'
-                  : 'w-9 h-9 rounded-2xl bg-white hover:bg-[#fff9db] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] flex items-center justify-center text-sm cursor-pointer'
+                  ? 'w-8 h-8 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/15 flex items-center justify-center text-xs cursor-pointer'
+                  : 'w-8 h-8 rounded-2xl bg-white hover:bg-[#fff9db] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] flex items-center justify-center text-xs cursor-pointer'
               }
               title={sonidoActivo ? 'Silenciar efectos' : 'Activar efectos'}
               aria-label="Alternar sonido"
@@ -443,8 +577,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
             }}
             className={
               esMinimalista
-                ? 'px-2.5 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/15 text-xs font-semibold cursor-pointer'
-                : 'px-2.5 py-1.5 rounded-2xl bg-white hover:bg-[#fff9db] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-xs font-black cursor-pointer'
+                ? 'px-2.5 py-1 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/15 text-[11px] font-semibold cursor-pointer'
+                : 'px-2.5 py-1 rounded-2xl bg-white hover:bg-[#fff9db] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-[11px] font-black cursor-pointer'
             }
           >
             ❓ Reglas
@@ -459,8 +593,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               }}
               className={
                 esMinimalista
-                  ? 'px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 text-xs font-semibold cursor-pointer'
-                  : 'px-2.5 py-1.5 rounded-2xl bg-[#ffd43b] hover:bg-[#fcc419] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-xs font-black cursor-pointer'
+                  ? 'px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 text-[11px] font-semibold cursor-pointer'
+                  : 'px-2.5 py-1 rounded-2xl bg-[#ffd43b] hover:bg-[#fcc419] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-[11px] font-black cursor-pointer'
               }
             >
               ⚙️ Modo
@@ -470,24 +604,24 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
       </header>
 
       {/* ===================================================================== */}
-      {/* PANTALLA DE CONFIGURACIÓN LOCAL (BETA)                               */}
+      {/* PANTALLA DE CONFIGURACIÓN LOCAL (BETA COMPACTA)                      */}
       {/* ===================================================================== */}
       {pantalla === 'config' && (
-        <main className="w-full max-w-xl my-auto py-3 flex flex-col gap-3">
+        <main className="w-full max-w-lg my-auto py-2 flex flex-col">
           <div
             className={
               esMinimalista
-                ? 'rounded-3xl bg-slate-900/90 border border-white/15 p-5 sm:p-6 shadow-2xl backdrop-blur-md'
-                : 'rounded-3xl bg-[#fff8e7] border-4 border-[#2b2140] p-5 sm:p-6 shadow-[0_10px_0_#2b2140,0_20px_35px_rgba(0,0,0,0.28)]'
+                ? 'rounded-3xl bg-slate-900/90 border border-white/15 p-4 sm:p-5 shadow-2xl backdrop-blur-md'
+                : 'rounded-3xl bg-[#fff8e7] border-3 border-[#2b2140] p-4 sm:p-5 shadow-[0_8px_0_#2b2140,0_16px_28px_rgba(0,0,0,0.25)]'
             }
           >
-            <div className="flex items-start justify-between gap-3 mb-4">
+            <div className="flex items-start justify-between gap-2 mb-3.5">
               <div>
                 <h1
                   className={
                     esMinimalista
-                      ? 'text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-2'
-                      : 'text-2xl sm:text-3xl font-black text-[#2b2140] flex items-center gap-2'
+                      ? 'text-xl sm:text-2xl font-extrabold tracking-tight text-white flex items-center gap-2'
+                      : 'text-xl sm:text-2xl font-black text-[#2b2140] flex items-center gap-2'
                   }
                 >
                   <span>🔐</span>
@@ -496,11 +630,11 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                 <p
                   className={
                     esMinimalista
-                      ? 'text-xs text-slate-400 mt-0.5'
-                      : 'text-xs font-bold text-[#6c4f3d] mt-0.5'
+                      ? 'text-[11px] text-slate-400 mt-0.5'
+                      : 'text-[11px] font-bold text-[#6c4f3d] mt-0.5'
                   }
                 >
-                  {userActual ? `Jugador: ${userActual.nombre} · ` : ''}Modo Local Beta (sin puntos globales aún)
+                  {userActual ? `${userActual.nombre} · ` : ''}Beta Local (sin registro de puntos aún)
                 </p>
               </div>
               <button
@@ -508,39 +642,39 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                 onClick={onVolverAMurosLocos}
                 className={
                   esMinimalista
-                    ? 'px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold text-slate-200 cursor-pointer shrink-0'
-                    : 'px-3 py-1.5 rounded-xl bg-white hover:bg-[#f1f3f5] border-2 border-[#2b2140] text-xs font-black text-[#2b2140] cursor-pointer shrink-0'
+                    ? 'px-2.5 py-1 rounded-xl bg-white/10 hover:bg-white/15 text-[11px] font-semibold text-slate-200 cursor-pointer shrink-0'
+                    : 'px-2.5 py-1 rounded-xl bg-white hover:bg-[#f1f3f5] border-2 border-[#2b2140] text-[11px] font-black text-[#2b2140] cursor-pointer shrink-0'
                 }
               >
                 ◀ Volver
               </button>
             </div>
 
-            {/* Selector de Mecánica (A o B) */}
-            <div className="mb-4">
+            {/* 1. Mecánica A o B */}
+            <div className="mb-3">
               <label
                 className={
                   esMinimalista
-                    ? 'block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2'
-                    : 'block text-xs font-black uppercase tracking-wider text-[#593922] mb-2'
+                    ? 'block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5'
+                    : 'block text-[11px] font-black uppercase tracking-wider text-[#593922] mb-1.5'
                 }
               >
-                1. Elige la mecánica de juego
+                1. Mecánica de juego
               </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {(
                   [
                     {
                       id: 'logico' as ModoCandado,
                       icono: '🧠',
                       titulo: 'Candado Lógico',
-                      sub: 'Pistas 🟩 Exacto · 🟨 Desubicado · ⬛ Ausente',
+                      sub: '🟩 Exacto · 🟨 Desubicado · ⬛ Ausente',
                     },
                     {
                       id: 'mayor_menor' as ModoCandado,
                       icono: '🌡️',
                       titulo: 'Mayor / Menor',
-                      sub: 'Pistas ↑ Más alto / ↓ Más bajo + Frío o Caliente',
+                      sub: '↑ Alto / ↓ Bajo + Frío o Caliente',
                     },
                   ]
                 ).map((m) => {
@@ -553,18 +687,18 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                         candadoAudio.playDialTick();
                         setConfig((prev) => ({ ...prev, modo: m.id }));
                       }}
-                      className={`p-3 rounded-2xl text-left transition-all cursor-pointer ${
+                      className={`p-2.5 rounded-2xl text-left transition-all cursor-pointer ${
                         activo
                           ? esMinimalista
-                            ? 'bg-emerald-500/20 border-2 border-emerald-400 text-white shadow-lg'
-                            : 'bg-[#d3f9d8] border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140] text-[#134e20]'
+                            ? 'bg-emerald-500/20 border-2 border-emerald-400 text-white'
+                            : 'bg-[#d3f9d8] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] text-[#134e20]'
                           : esMinimalista
                           ? 'bg-slate-800/70 border border-white/10 text-slate-300 hover:bg-slate-800'
-                          : 'bg-white border-2 border-[#2b2140]/60 text-[#2b2140] hover:bg-[#fff9db]'
+                          : 'bg-white border-2 border-[#2b2140]/55 text-[#2b2140] hover:bg-[#fff9db]'
                       }`}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="font-black text-sm flex items-center gap-1.5">
+                        <span className="font-black text-xs sm:text-sm flex items-center gap-1.5">
                           <span>{m.icono}</span>
                           <span>{m.titulo}</span>
                         </span>
@@ -573,8 +707,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                       <span
                         className={
                           esMinimalista
-                            ? 'block text-[11px] text-slate-400 mt-1 leading-snug'
-                            : 'block text-[11px] font-bold opacity-80 mt-1 leading-snug'
+                            ? 'block text-[10px] text-slate-400 mt-0.5 leading-snug'
+                            : 'block text-[10px] font-bold opacity-80 mt-0.5 leading-snug'
                         }
                       >
                         {m.sub}
@@ -585,16 +719,16 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               </div>
             </div>
 
-            {/* Cantidad de dígitos (4 a 6 en local) */}
-            <div className="mb-4">
+            {/* 2. Dígitos (4 a 6) */}
+            <div className="mb-3">
               <label
                 className={
                   esMinimalista
-                    ? 'block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2'
-                    : 'block text-xs font-black uppercase tracking-wider text-[#593922] mb-2'
+                    ? 'block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5'
+                    : 'block text-[11px] font-black uppercase tracking-wider text-[#593922] mb-1.5'
                 }
               >
-                2. Dígitos de la combinación (4 a 6)
+                2. Dígitos (4 a 6)
               </label>
               <div className="grid grid-cols-3 gap-2">
                 {([4, 5, 6] as DigitosCandado[]).map((num) => {
@@ -608,17 +742,17 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                         candadoAudio.playDialTick();
                         setConfig((prev) => ({ ...prev, digitos: num }));
                       }}
-                      className={`min-h-[48px] px-2 py-2 rounded-2xl flex flex-col items-center justify-center transition-all cursor-pointer ${
+                      className={`min-h-[44px] px-2 py-1.5 rounded-xl flex flex-col items-center justify-center transition-all cursor-pointer ${
                         activo
                           ? esMinimalista
                             ? 'bg-indigo-500/25 border-2 border-indigo-400 text-white'
-                            : 'bg-[#ffd43b] border-3 border-[#2b2140] shadow-[0_3px_0_#2b2140] text-[#2b2140]'
+                            : 'bg-[#ffd43b] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] text-[#2b2140]'
                           : esMinimalista
                           ? 'bg-slate-800/70 border border-white/10 text-slate-300 hover:bg-slate-800'
-                          : 'bg-white border-2 border-[#2b2140]/60 text-[#2b2140] hover:bg-[#fff9db]'
+                          : 'bg-white border-2 border-[#2b2140]/55 text-[#2b2140] hover:bg-[#fff9db]'
                       }`}
                     >
-                      <span className="font-black text-base tabular-nums">{num} Dígitos</span>
+                      <span className="font-black text-sm tabular-nums">{num} Dígitos</span>
                       <span className="text-[10px] font-bold opacity-80">{metal}</span>
                     </button>
                   );
@@ -626,18 +760,18 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               </div>
             </div>
 
-            {/* Límite de intentos (Ilimitado por defecto, o 10+) */}
-            <div className="mb-4">
+            {/* 3. Límite de intentos */}
+            <div className="mb-3">
               <label
                 className={
                   esMinimalista
-                    ? 'block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2'
-                    : 'block text-xs font-black uppercase tracking-wider text-[#593922] mb-2'
+                    ? 'block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5'
+                    : 'block text-[11px] font-black uppercase tracking-wider text-[#593922] mb-1.5'
                 }
               >
-                3. Límite de intentos (Ilimitado por defecto)
+                3. Intentos (Ilimitado por defecto)
               </label>
-              <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
+              <div className="grid grid-cols-5 gap-1.5">
                 {OPCIONES_INTENTOS.map((op) => {
                   const activo = config.maxIntentos === op.valor;
                   return (
@@ -648,27 +782,30 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                         candadoAudio.playDialTick();
                         setConfig((prev) => ({ ...prev, maxIntentos: op.valor }));
                       }}
-                      className={`min-h-[46px] px-1.5 py-1.5 rounded-2xl flex flex-col items-center justify-center transition-all cursor-pointer ${
+                      className={`min-h-[42px] px-1 py-1 rounded-xl flex flex-col items-center justify-center transition-all cursor-pointer ${
                         activo
                           ? esMinimalista
                             ? 'bg-cyan-500/25 border-2 border-cyan-400 text-white'
-                            : 'bg-[#a5d8ff] border-3 border-[#2b2140] shadow-[0_3px_0_#2b2140] text-[#1864ab]'
+                            : 'bg-[#a5d8ff] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-[#1864ab]'
                           : esMinimalista
                           ? 'bg-slate-800/70 border border-white/10 text-slate-300 hover:bg-slate-800'
-                          : 'bg-white border-2 border-[#2b2140]/60 text-[#2b2140] hover:bg-[#fff9db]'
+                          : 'bg-white border-2 border-[#2b2140]/55 text-[#2b2140] hover:bg-[#fff9db]'
                       }`}
                     >
-                      <span className="font-black text-xs sm:text-sm tabular-nums">{op.etiqueta}</span>
-                      <span className="text-[9px] font-bold opacity-75 leading-tight">{op.desc}</span>
+                      <span className="font-black text-xs sm:text-sm tabular-nums leading-none">
+                        {op.etiqueta}
+                      </span>
+                      <span className="text-[9px] font-bold opacity-75 mt-0.5 leading-none">
+                        {op.desc}
+                      </span>
                     </button>
                   );
                 })}
               </div>
             </div>
 
-            {/* Opción de dígitos repetidos solo en Mecánica A */}
             {config.modo === 'logico' && (
-              <div className="mb-5">
+              <div className="mb-3.5">
                 <button
                   type="button"
                   onClick={() => {
@@ -677,14 +814,14 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                   }}
                   className={
                     esMinimalista
-                      ? 'w-full px-3.5 py-2.5 rounded-2xl bg-slate-800/80 border border-white/10 flex items-center justify-between text-xs font-semibold cursor-pointer'
-                      : 'w-full px-3.5 py-2.5 rounded-2xl bg-white border-2 border-[#2b2140] flex items-center justify-between text-xs font-black cursor-pointer'
+                      ? 'w-full px-3 py-2 rounded-xl bg-slate-800/80 border border-white/10 flex items-center justify-between text-xs font-semibold cursor-pointer'
+                      : 'w-full px-3 py-2 rounded-xl bg-white border-2 border-[#2b2140] flex items-center justify-between text-xs font-black cursor-pointer'
                   }
                 >
                   <span>
                     {config.permitirRepetidos
-                      ? '🔁 Dígitos repetidos permitidos (más difícil)'
-                      : '✨ Dígitos únicos sin repetir (recomendado)'}
+                      ? '🔁 Dígitos repetidos permitidos'
+                      : '✨ Dígitos únicos sin repetir'}
                   </span>
                   <span
                     className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${
@@ -707,8 +844,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               }}
               className={
                 esMinimalista
-                  ? 'w-full min-h-[50px] py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-base shadow-lg cursor-pointer transition-all active:scale-[0.99]'
-                  : 'w-full min-h-[50px] py-3 rounded-2xl bg-[#51cf66] hover:bg-[#40c057] text-[#134e20] border-3 border-[#2b2140] shadow-[0_5px_0_#2b2140] active:translate-y-1 active:shadow-none font-black text-base cursor-pointer transition-all'
+                  ? 'w-full min-h-[44px] py-2.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm shadow-lg cursor-pointer transition-all'
+                  : 'w-full min-h-[44px] py-2.5 rounded-2xl bg-[#51cf66] hover:bg-[#40c057] text-[#134e20] border-2 border-[#2b2140] shadow-[0_4px_0_#2b2140] active:translate-y-0.5 active:shadow-none font-black text-sm cursor-pointer transition-all'
               }
             >
               🔓 Abrir Candado en Local
@@ -718,18 +855,16 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
       )}
 
       {/* ===================================================================== */}
-      {/* PANTALLA DE JUEGO ACTIVO                                              */}
+      {/* PANTALLA DE JUEGO ACTIVO (GEOMETRÍA FIJA — ZERO LAYOUT SHIFT)         */}
       {/* ===================================================================== */}
       {pantalla === 'juego' && estado && (
-        <main className="w-full max-w-4xl flex-1 flex flex-col lg:flex-row items-stretch justify-center gap-3 sm:gap-4 my-2 min-h-0">
-          {/* Columna izquierda: Bóveda + Teclado Numérico */}
-          <section className="flex-1 flex flex-col items-center justify-start gap-3">
+        <main className="w-full max-w-4xl flex flex-col md:grid md:grid-cols-[minmax(0,390px)_minmax(0,1fr)] items-center md:items-start justify-center gap-2.5 sm:gap-4 mt-1">
+          {/* Columna izquierda: Bóveda + Franja fija de estado + Teclado */}
+          <section className="w-full max-w-[390px] flex flex-col items-center gap-2">
             <CandadoVault
               digitos={estado.config.digitos}
               entradaActual={
-                estado.fase !== 'jugando'
-                  ? estado.secreto.split('')
-                  : entradaActual
+                estado.fase !== 'jugando' ? estado.secreto.split('') : entradaActual
               }
               cursorIdx={cursorIdx}
               onSelectSlot={(idx) => {
@@ -746,68 +881,82 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               animacionesReducidas={animacionesReducidas}
             />
 
-            {/* Aviso de rango en Mayor/Menor o error de entrada */}
-            {errorMsg ? (
-              <div
-                className={
-                  esMinimalista
-                    ? 'w-full max-w-[460px] px-3 py-2 rounded-xl bg-rose-500/20 border border-rose-400/40 text-rose-200 text-xs font-bold text-center'
-                    : 'w-full max-w-[460px] px-3 py-2 rounded-2xl bg-[#ffe3e3] border-2 border-[#c92a2a] text-[#c92a2a] text-xs font-black text-center'
-                }
-              >
-                ⚠️ {errorMsg}
-              </div>
-            ) : estado.config.modo === 'mayor_menor' && estado.fase === 'jugando' ? (
-              <div
-                className={
-                  esMinimalista
-                    ? 'w-full max-w-[460px] px-3 py-2 rounded-xl bg-slate-900/80 border border-white/15 text-xs font-semibold text-slate-300 flex items-center justify-between tabular-nums'
-                    : 'w-full max-w-[460px] px-3 py-2 rounded-2xl bg-white/90 border-2 border-[#2b2140] text-xs font-black text-[#2b2140] flex items-center justify-between tabular-nums'
-                }
-              >
-                <span>🎯 Rango posible actual:</span>
-                <span className="font-mono">
-                  {formatearNumeroConCeros(estado.rangoMinActual, estado.config.digitos)} —{' '}
-                  {formatearNumeroConCeros(estado.rangoMaxActual, estado.config.digitos)}
-                </span>
-              </div>
-            ) : null}
+            {/* Franja de altura fija (h-7) para avisos / rango sin mover el teclado */}
+            <div className="w-full h-7 flex items-center justify-center">
+              {errorMsg ? (
+                <div
+                  className={
+                    esMinimalista
+                      ? 'w-full h-7 px-2.5 rounded-xl bg-rose-500/20 border border-rose-400/40 text-rose-200 text-[11px] font-bold flex items-center justify-center truncate'
+                      : 'w-full h-7 px-2.5 rounded-xl bg-[#ffe3e3] border-2 border-[#c92a2a] text-[#c92a2a] text-[11px] font-black flex items-center justify-center truncate'
+                  }
+                >
+                  ⚠️ {errorMsg}
+                </div>
+              ) : estado.config.modo === 'mayor_menor' && estado.fase === 'jugando' ? (
+                <div
+                  className={
+                    esMinimalista
+                      ? 'w-full h-7 px-2.5 rounded-xl bg-slate-900/80 border border-white/15 text-[11px] font-semibold text-slate-300 flex items-center justify-between tabular-nums'
+                      : 'w-full h-7 px-2.5 rounded-xl bg-white/90 border-2 border-[#2b2140] text-[11px] font-black text-[#2b2140] flex items-center justify-between tabular-nums'
+                  }
+                >
+                  <span>🎯 Rango posible:</span>
+                  <span className="font-mono">
+                    {formatearNumeroConCeros(estado.rangoMinActual, estado.config.digitos)} —{' '}
+                    {formatearNumeroConCeros(estado.rangoMaxActual, estado.config.digitos)}
+                  </span>
+                </div>
+              ) : (
+                <div
+                  className={
+                    esMinimalista
+                      ? 'w-full h-7 px-2.5 rounded-xl bg-slate-900/50 border border-white/10 text-[11px] font-medium text-slate-400 flex items-center justify-center'
+                      : 'w-full h-7 px-2.5 rounded-xl bg-white/70 border border-[#2b2140]/30 text-[11px] font-bold text-[#593922] flex items-center justify-center'
+                  }
+                >
+                  {estado.config.modo === 'logico'
+                    ? estado.config.permitirRepetidos
+                      ? 'Pistas: 🟩 Exacto · 🟨 Lugar · ⬛ Ausente'
+                      : 'Dígitos únicos · 🟩 Exacto · 🟨 Lugar · ⬛ Ausente'
+                    : 'Adivina el número secreto'}
+                </div>
+              )}
+            </div>
 
-            {/* Resultado final o Teclado táctil */}
+            {/* Teclado compacto o Tarjeta de resultado */}
             {estado.fase !== 'jugando' ? (
               <div
-                className={`w-full max-w-[460px] rounded-3xl p-4 sm:p-5 text-center ${
+                className={`w-full rounded-2xl p-3.5 text-center ${
                   estado.fase === 'ganada'
                     ? esMinimalista
                       ? 'bg-emerald-950/75 border border-emerald-400/50 text-emerald-100'
-                      : 'bg-[#d3f9d8] border-3 border-[#2b2140] shadow-[0_6px_0_#2b2140] text-[#134e20]'
+                      : 'bg-[#d3f9d8] border-3 border-[#2b2140] shadow-[0_5px_0_#2b2140] text-[#134e20]'
                     : esMinimalista
                     ? 'bg-rose-950/75 border border-rose-400/50 text-rose-100'
-                    : 'bg-[#ffe3e3] border-3 border-[#2b2140] shadow-[0_6px_0_#2b2140] text-[#c92a2a]'
+                    : 'bg-[#ffe3e3] border-3 border-[#2b2140] shadow-[0_5px_0_#2b2140] text-[#c92a2a]'
                 }`}
               >
-                <div className="text-3xl mb-1">{estado.fase === 'ganada' ? '🔓🎉' : '🔒💥'}</div>
-                <h2 className="text-lg sm:text-xl font-black">
-                  {estado.fase === 'ganada'
-                    ? '¡Combinación Descifrada!'
-                    : '¡Candado Bloqueado!'}
+                <div className="text-2xl mb-0.5">{estado.fase === 'ganada' ? '🔓🎉' : '🔒💥'}</div>
+                <h2 className="text-base sm:text-lg font-black">
+                  {estado.fase === 'ganada' ? '¡Combinación Descifrada!' : '¡Candado Bloqueado!'}
                 </h2>
                 <p className="text-xs font-bold mt-1 opacity-90 tabular-nums">
-                  Clave secreta:{' '}
-                  <span className="font-mono text-sm px-2 py-0.5 rounded bg-black/10">
+                  Clave:{' '}
+                  <span className="font-mono text-sm px-1.5 py-0.5 rounded bg-black/10">
                     {estado.secreto}
                   </span>{' '}
                   · {estado.intentos.length} intentos · {tiempoSegundos}s
                 </p>
 
-                <div className="grid grid-cols-2 gap-2 mt-4">
+                <div className="grid grid-cols-2 gap-2 mt-3">
                   <button
                     type="button"
                     onClick={() => iniciarNuevaPartida(estado.config)}
                     className={
                       esMinimalista
-                        ? 'min-h-[44px] py-2.5 px-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs sm:text-sm cursor-pointer'
-                        : 'min-h-[44px] py-2.5 px-3 rounded-2xl bg-[#51cf66] hover:bg-[#40c057] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] font-black text-xs sm:text-sm cursor-pointer'
+                        ? 'min-h-[40px] py-2 px-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs cursor-pointer'
+                        : 'min-h-[40px] py-2 px-2.5 rounded-xl bg-[#51cf66] hover:bg-[#40c057] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] font-black text-xs cursor-pointer'
                     }
                   >
                     🔄 Jugar otra vez
@@ -817,8 +966,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                     onClick={() => setPantalla('config')}
                     className={
                       esMinimalista
-                        ? 'min-h-[44px] py-2.5 px-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white border border-white/15 font-bold text-xs sm:text-sm cursor-pointer'
-                        : 'min-h-[44px] py-2.5 px-3 rounded-2xl bg-white hover:bg-[#fff9db] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] font-black text-xs sm:text-sm cursor-pointer'
+                        ? 'min-h-[40px] py-2 px-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white border border-white/15 font-bold text-xs cursor-pointer'
+                        : 'min-h-[40px] py-2 px-2.5 rounded-xl bg-white hover:bg-[#fff9db] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] font-black text-xs cursor-pointer'
                     }
                   >
                     ⚙️ Cambiar modo
@@ -829,22 +978,22 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               <div
                 className={
                   esMinimalista
-                    ? 'w-full max-w-[460px] rounded-3xl bg-slate-900/90 border border-white/15 p-3 shadow-xl'
-                    : 'w-full max-w-[460px] rounded-3xl bg-[#fff8e7] border-3 border-[#2b2140] p-3 shadow-[0_6px_0_#2b2140]'
+                    ? 'w-full rounded-2xl bg-slate-900/90 border border-white/15 p-2.5 shadow-xl'
+                    : 'w-full rounded-2xl bg-[#fff8e7] border-3 border-[#2b2140] p-2.5 shadow-[0_5px_0_#2b2140]'
                 }
               >
                 {estado.config.modo === 'logico' && (
-                  <div className="flex items-center justify-between gap-2 mb-2.5 px-1">
+                  <div className="flex items-center justify-between gap-2 mb-2 px-0.5">
                     <span
                       className={
                         esMinimalista
-                          ? 'text-[11px] font-semibold text-slate-400'
-                          : 'text-[11px] font-extrabold text-[#6c4f3d]'
+                          ? 'text-[10px] font-semibold text-slate-400'
+                          : 'text-[10px] font-extrabold text-[#6c4f3d]'
                       }
                     >
                       {modoNotas
-                        ? 'Toca números para tachar o marcar'
-                        : 'Ingresa combinación o usa tu teclado'}
+                        ? 'Toca números para tachar/marcar'
+                        : 'Usa botones o tu teclado (0–9)'}
                     </span>
                     <button
                       type="button"
@@ -852,14 +1001,14 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                         candadoAudio.playDialTick();
                         setModoNotas((v) => !v);
                       }}
-                      className={`px-2.5 py-1 rounded-xl text-[11px] font-black cursor-pointer transition-all ${
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-black cursor-pointer transition-all ${
                         modoNotas
                           ? esMinimalista
                             ? 'bg-amber-500 text-slate-950'
-                            : 'bg-[#ffd43b] text-[#2b2140] border-2 border-[#2b2140]'
+                            : 'bg-[#ffd43b] text-[#2b2140] border border-[#2b2140]'
                           : esMinimalista
                           ? 'bg-slate-800 text-slate-300 border border-white/10'
-                          : 'bg-white text-[#2b2140] border-2 border-[#2b2140]/60'
+                          : 'bg-white text-[#2b2140] border border-[#2b2140]/60'
                       }`}
                     >
                       {modoNotas ? '📝 Notas: ON' : '📝 Notas'}
@@ -867,8 +1016,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                   </div>
                 )}
 
-                {/* Teclado numérico 0-9 con targets >= 46px */}
-                <div className="grid grid-cols-5 gap-2">
+                <div className="grid grid-cols-5 gap-1.5">
                   {['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].map((d) => {
                     const nota = notasDigitos[d] || 'neutro';
                     const yaEnSlot =
@@ -881,7 +1029,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                         key={d}
                         type="button"
                         onClick={() => ingresarDigito(d)}
-                        className={`relative min-h-[46px] rounded-2xl font-mono font-black text-lg tabular-nums transition-all cursor-pointer active:translate-y-0.5 ${
+                        className={`relative h-10 sm:h-11 rounded-xl font-mono font-black text-base tabular-nums transition-all cursor-pointer active:translate-y-0.5 ${
                           nota === 'descartado'
                             ? esMinimalista
                               ? 'bg-slate-950/80 text-slate-600 border border-white/5 line-through'
@@ -889,14 +1037,14 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                             : nota === 'posible'
                             ? esMinimalista
                               ? 'bg-emerald-500/25 text-emerald-200 border-2 border-emerald-400'
-                              : 'bg-[#d3f9d8] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140]'
+                              : 'bg-[#d3f9d8] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
                             : yaEnSlot
                             ? esMinimalista
                               ? 'bg-indigo-500/25 text-indigo-200 border border-indigo-400/50'
                               : 'bg-[#e7f5ff] text-[#1864ab] border-2 border-[#339af0]'
                             : esMinimalista
                             ? 'bg-slate-800 hover:bg-slate-700 text-white border border-white/15'
-                            : 'bg-white hover:bg-[#fff9db] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140]'
+                            : 'bg-white hover:bg-[#fff9db] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
                         }`}
                       >
                         {d}
@@ -905,15 +1053,14 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                   })}
                 </div>
 
-                {/* Controles Borrar / Limpiar / Probar */}
-                <div className="grid grid-cols-4 gap-2 mt-2.5">
+                <div className="grid grid-cols-4 gap-1.5 mt-2">
                   <button
                     type="button"
                     onClick={borrarDigito}
                     className={
                       esMinimalista
-                        ? 'min-h-[46px] rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-bold text-xs cursor-pointer'
-                        : 'min-h-[46px] rounded-2xl bg-white hover:bg-[#ffe3e3] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] font-black text-xs cursor-pointer'
+                        ? 'h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-bold text-xs cursor-pointer'
+                        : 'h-10 rounded-xl bg-white hover:bg-[#ffe3e3] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] font-black text-xs cursor-pointer'
                     }
                   >
                     ⌫ Borrar
@@ -923,8 +1070,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                     onClick={limpiarEntrada}
                     className={
                       esMinimalista
-                        ? 'min-h-[46px] rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-bold text-xs cursor-pointer'
-                        : 'min-h-[46px] rounded-2xl bg-white hover:bg-[#fff9db] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] font-black text-xs cursor-pointer'
+                        ? 'h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-bold text-xs cursor-pointer'
+                        : 'h-10 rounded-xl bg-white hover:bg-[#fff9db] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] font-black text-xs cursor-pointer'
                     }
                   >
                     🧹 Limpiar
@@ -934,8 +1081,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                     onClick={enviarIntento}
                     className={
                       esMinimalista
-                        ? 'col-span-2 min-h-[46px] rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm shadow-lg cursor-pointer'
-                        : 'col-span-2 min-h-[46px] rounded-2xl bg-[#51cf66] hover:bg-[#40c057] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] active:translate-y-0.5 font-black text-sm cursor-pointer'
+                        ? 'col-span-2 h-10 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs sm:text-sm shadow-lg cursor-pointer'
+                        : 'col-span-2 h-10 rounded-xl bg-[#51cf66] hover:bg-[#40c057] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] active:translate-y-0.5 font-black text-xs sm:text-sm cursor-pointer'
                     }
                   >
                     🔓 Probar clave
@@ -945,167 +1092,74 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
             )}
           </section>
 
-          {/* Columna derecha: Historial de pistas e intentos */}
+          {/* Columna derecha: Registro con ALTURA FIJA (h-[168px] móvil / h-[386px] desktop) para no empujar nada */}
           <aside
             className={
               esMinimalista
-                ? 'w-full lg:w-96 rounded-3xl bg-slate-900/90 border border-white/15 p-3.5 sm:p-4 shadow-xl flex flex-col max-h-[360px] lg:max-h-[540px]'
-                : 'w-full lg:w-96 rounded-3xl bg-[#fff8e7] border-3 border-[#2b2140] p-3.5 sm:p-4 shadow-[0_6px_0_#2b2140] flex flex-col max-h-[360px] lg:max-h-[540px]'
+                ? 'w-full max-w-[390px] md:max-w-none h-[168px] md:h-[386px] rounded-2xl bg-slate-900/90 border border-white/15 p-3 shadow-xl flex flex-col overflow-hidden'
+                : 'w-full max-w-[390px] md:max-w-none h-[168px] md:h-[386px] rounded-2xl bg-[#fff8e7] border-3 border-[#2b2140] p-3 shadow-[0_5px_0_#2b2140] flex flex-col overflow-hidden'
             }
           >
-            <div className="flex items-center justify-between gap-2 pb-2 mb-2 border-b border-current/15">
-              <h2 className="text-sm font-black flex items-center gap-1.5">
+            <div className="flex items-center justify-between gap-2 pb-1.5 mb-1.5 border-b border-current/15 shrink-0">
+              <h2 className="text-xs sm:text-sm font-black flex items-center gap-1.5">
                 <span>📋</span>
-                <span>Historial de pistas</span>
+                <span>Registro ({estado.intentos.length})</span>
               </h2>
-              <span
+              <button
+                type="button"
+                onClick={() => {
+                  candadoAudio.playDialTick();
+                  setRegistroAmpliado(true);
+                }}
                 className={
                   esMinimalista
-                    ? 'text-[11px] font-semibold text-slate-400 tabular-nums'
-                    : 'text-[11px] font-black text-[#6c4f3d] tabular-nums'
+                    ? 'px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] font-semibold text-slate-300 border border-white/10 cursor-pointer'
+                    : 'px-2 py-0.5 rounded-lg bg-white hover:bg-[#fff9db] text-[10px] font-black text-[#2b2140] border border-[#2b2140] cursor-pointer'
                 }
+                title="Ver registro completo en pantalla"
               >
-                {estado.intentos.length}{' '}
-                {estado.intentos.length === 1 ? 'intento' : 'intentos'}
-              </span>
+                ⤢ Ampliar
+              </button>
             </div>
 
-            {estado.config.modo === 'logico' && (
-              <div
-                className={
-                  esMinimalista
-                    ? 'flex items-center justify-between text-[10px] text-slate-300 bg-slate-950/70 rounded-xl px-2.5 py-1.5 mb-2 border border-white/10'
-                    : 'flex items-center justify-between text-[10px] font-black text-[#2b2140] bg-white rounded-xl px-2.5 py-1.5 mb-2 border-2 border-[#2b2140]/30'
-                }
-              >
-                <span>🟩✓ Exacto</span>
-                <span>🟨↔ Lugar equivocado</span>
-                <span>⬛✕ No está</span>
-              </div>
-            )}
-
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-              {estado.intentos.length === 0 ? (
-                <div
-                  className={
-                    esMinimalista
-                      ? 'text-center py-8 text-xs text-slate-400'
-                      : 'text-center py-8 text-xs font-bold text-[#86542d]'
-                  }
-                >
-                  Prueba tu primera combinación para ver las pistas aquí.
-                </div>
-              ) : (
-                estado.intentos.map((it) => {
-                  if (estado.config.modo === 'logico') {
-                    const itemA = it as IntentoLogico;
-                    return (
-                      <div
-                        key={itemA.numero}
-                        className={
-                          esMinimalista
-                            ? 'p-2 rounded-2xl bg-slate-800/75 border border-white/10 flex items-center justify-between gap-2'
-                            : 'p-2 rounded-2xl bg-white border-2 border-[#2b2140] flex items-center justify-between gap-2 shadow-xs'
-                        }
-                      >
-                        <span className="text-[11px] font-black opacity-65 tabular-nums w-6">
-                          #{itemA.numero}
-                        </span>
-                        <div className="flex items-center gap-1 flex-1 justify-center">
-                          {itemA.digitos.map((ev, dIdx) => (
-                            <div
-                              key={dIdx}
-                              title={
-                                ev.estado === 'exacto'
-                                  ? 'Exacto (mismo lugar)'
-                                  : ev.estado === 'desubicado'
-                                  ? 'Existe en otro lugar'
-                                  : 'No está en la clave'
-                              }
-                              className={`w-8 h-9 rounded-xl flex flex-col items-center justify-center font-mono font-black text-sm tabular-nums border ${
-                                ev.estado === 'exacto'
-                                  ? 'bg-[#51cf66] text-[#134e20] border-[#2b8a3e]'
-                                  : ev.estado === 'desubicado'
-                                  ? 'bg-[#ffd43b] text-[#5c3c00] border-[#e67700]'
-                                  : esMinimalista
-                                  ? 'bg-slate-900 text-slate-400 border-white/10'
-                                  : 'bg-[#f1f3f5] text-[#495057] border-[#adb5bd]'
-                              }`}
-                            >
-                              <span className="leading-none">{ev.digito}</span>
-                              <span className="text-[8px] leading-none mt-0.5">
-                                {ev.estado === 'exacto'
-                                  ? '✓'
-                                  : ev.estado === 'desubicado'
-                                  ? '↔'
-                                  : '✕'}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                        <div className="text-[10px] font-black tabular-nums text-right leading-tight shrink-0">
-                          <span className="text-[#2b8a3e] block">{itemA.exactos}✓</span>
-                          <span className="text-[#d9480f] block">{itemA.desubicados}↔</span>
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  const itemB = it as IntentoMayorMenor;
-                  const prox = INFO_PROXIMIDAD[itemB.proximidad];
-                  return (
-                    <div
-                      key={itemB.numero}
-                      className={
-                        esMinimalista
-                          ? 'p-2.5 rounded-2xl bg-slate-800/75 border border-white/10 flex items-center justify-between gap-2'
-                          : 'p-2.5 rounded-2xl bg-white border-2 border-[#2b2140] flex items-center justify-between gap-2 shadow-xs'
-                      }
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-[11px] font-black opacity-65 tabular-nums">
-                          #{itemB.numero}
-                        </span>
-                        <span className="font-mono font-black text-base tracking-wider tabular-nums">
-                          {itemB.entrada}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <span
-                          className={`px-2 py-0.5 rounded-xl border text-[10px] font-black ${
-                            itemB.direccion === 'exacto'
-                              ? 'bg-[#d3f9d8] text-[#134e20] border-[#2b8a3e]'
-                              : itemB.direccion === 'alto'
-                              ? esMinimalista
-                                ? 'bg-indigo-500/25 text-indigo-200 border-indigo-400/40'
-                                : 'bg-[#e7f5ff] text-[#1864ab] border-[#339af0]'
-                              : esMinimalista
-                              ? 'bg-orange-500/25 text-orange-200 border-orange-400/40'
-                              : 'bg-[#fff4e6] text-[#d9480f] border-[#fd7e14]'
-                          }`}
-                        >
-                          {itemB.direccion === 'exacto'
-                            ? '🔓 Exacto'
-                            : itemB.direccion === 'alto'
-                            ? '↑ Más alto'
-                            : '↓ Más bajo'}
-                        </span>
-                        <span
-                          className={`px-2 py-0.5 rounded-xl border text-[10px] font-black ${
-                            esMinimalista ? prox.claseMin : prox.claseClasica
-                          }`}
-                        >
-                          {prox.icono} {prox.texto}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
+            <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+              {renderListaHistorial(true)}
             </div>
           </aside>
         </main>
+      )}
+
+      {/* Modal Registro Ampliado */}
+      {registroAmpliado && estado && (
+        <div
+          className="fixed inset-0 z-50 bg-black/55 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setRegistroAmpliado(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className={
+              esMinimalista
+                ? 'w-full max-w-md max-h-[80vh] rounded-3xl bg-slate-900 border border-white/15 p-4 shadow-2xl text-slate-100 flex flex-col'
+                : 'w-full max-w-md max-h-[80vh] rounded-3xl bg-[#fff8e7] border-4 border-[#2b2140] p-4 shadow-[0_10px_0_#2b2140] text-[#2b2140] flex flex-col'
+            }
+          >
+            <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-current/15">
+              <h3 className="text-base font-black">
+                📋 Registro completo ({estado.intentos.length})
+              </h3>
+              <button
+                type="button"
+                onClick={() => setRegistroAmpliado(false)}
+                className="w-8 h-8 rounded-xl bg-black/10 hover:bg-black/20 font-black text-sm cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto pr-1">
+              {renderListaHistorial(false)}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Modal rápido de Reglas */}
