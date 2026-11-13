@@ -10,7 +10,6 @@ import {
   EstadoDeJuego,
   InfoNivel,
   UserInventario,
-  NotificacionStaff,
   RegDeAvatar,
   AvatarColeccionable,
   RespuestaRankingSemanal,
@@ -62,8 +61,6 @@ const nubeListeners = new Set<
   (data: { cuentas: Record<string, UserCuenta>; ranking: Record<string, EntradaRanking> }) => void
 >();
 const sesionRevocadaListeners = new Set<(motivo: string) => void>();
-const staffNotifListeners = new Set<(notifs: NotificacionStaff[]) => void>();
-const notifsVistasIds = new Set<string>();
 
 function emitDiag() {
   const snapshot = { ...redDiag };
@@ -99,19 +96,6 @@ function emitSesionRevocada(motivo: string) {
   });
 }
 
-function emitNotificacionesStaff(notifs: NotificacionStaff[]) {
-  const nuevas = notifs.filter((n) => n && n.id && !notifsVistasIds.has(n.id));
-  if (nuevas.length === 0) return;
-  nuevas.forEach((n) => notifsVistasIds.add(n.id));
-  staffNotifListeners.forEach((cb) => {
-    try {
-      cb(nuevas);
-    } catch {
-      // ignorar
-    }
-  });
-}
-
 export function obtenerDiagnosticoRed(): DiagnosticoDeRed {
   return { ...redDiag };
 }
@@ -137,13 +121,6 @@ export function suscribirSesionRevocada(cb: (motivo: string) => void): () => voi
   sesionRevocadaListeners.add(cb);
   return () => {
     sesionRevocadaListeners.delete(cb);
-  };
-}
-
-export function suscribirNotificacionesStaff(cb: (notifs: NotificacionStaff[]) => void): () => void {
-  staffNotifListeners.add(cb);
-  return () => {
-    staffNotifListeners.delete(cb);
   };
 }
 
@@ -312,16 +289,6 @@ export async function pingServidor(): Promise<{ ok: boolean; dbConectado: boolea
     if (data?.sesionRevocada === true) {
       cerrarSesion();
       emitSesionRevocada('Se inició sesión en otro dispositivo (máximo 2 sesiones por cuenta).');
-    }
-
-    const cur = obteneruserActual();
-    if (
-      cur &&
-      (cur.rol === 'dev' || cur.rol === 'admin' || cur.rol === 'mod' || cur.id === 'admin') &&
-      Array.isArray(data?.notificacionesStaff) &&
-      data.notificacionesStaff.length > 0
-    ) {
-      emitNotificacionesStaff(data.notificacionesStaff);
     }
 
     redDiag = {

@@ -111,21 +111,6 @@ function tocarUltimaActualizacion(): number {
   return ahora;
 }
 
-function registrarNotificacionStaff(actor: any, accion: string, detalle: string) {
-  const lista = leerConfig('notificaciones_staff', []);
-  const arr = Array.isArray(lista) ? lista : [];
-  arr.unshift({
-    id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-    actorId: actor?.id || 'admin',
-    actorNombre: actor?.nombre || 'Staff',
-    actorRol: actor?.rol || 'dev',
-    accion,
-    detalle,
-    ts: Date.now(),
-  });
-  guardarConfig('notificaciones_staff', arr.slice(0, 30));
-}
-
 // ==========================================
 // CRYPTO & SESIONES (MAX 2 SESIONES POR ID)
 // ==========================================
@@ -739,15 +724,6 @@ app.get('/api/ping', async (req, res) => {
   const sesion = await resolverSesionLocal(req);
   const tieneAuthHeader = Boolean(req.header('Authorization'));
 
-  let notificacionesStaff: any[] = [];
-  if (sesion && sesion.userId) {
-    const perm = verificarPermisosLlamante(req, cuentas, sesion);
-    if (perm.esDev || perm.esAdmin || perm.esMod) {
-      const todas = leerConfig('notificaciones_staff', []);
-      if (Array.isArray(todas)) notificacionesStaff = todas.slice(0, 10);
-    }
-  }
-
   res.json({
     ok: true,
     dbBound: true,
@@ -762,7 +738,6 @@ app.get('/api/ping', async (req, res) => {
     cuentasCount: Object.keys(cuentas).length,
     sesionValida: tieneAuthHeader ? Boolean(sesion && sesion.userId && !(sesion as any).revocada) : true,
     sesionRevocada: tieneAuthHeader && Boolean((sesion as any)?.revocada),
-    notificacionesStaff,
   });
 });
 
@@ -1108,7 +1083,6 @@ app.post('/api/admin/actualizar-user', async (req, res) => {
   }
 
   dbGuardarCuentaCompleta(target, true);
-  registrarNotificacionStaff(perm.actor, 'actualizar_user', `${perm.actor?.nombre || 'Staff'} actualizó a ${target.nombre} (rol: ${target.rol})`);
 
   return res.json({ ok: true, mensaje: `User "${target.nombre}" actualizado.`, user: sanitizarCuentaPublica(target) });
 });
@@ -1133,7 +1107,6 @@ app.post('/api/admin/cambiar-id', async (req, res) => {
   if (cuentas[newId]) return res.status(409).json({ ok: false, error: `El ID "${newId}" ya está en uso.` });
 
   dbRenombrarIdEnCascada(oldId, newId);
-  registrarNotificacionStaff(perm.actor, 'cambiar_id', `ID cambiado de "${oldId}" a "${newId}"`);
   return res.json({ ok: true, oldId, newId, mensaje: `ID cambiado de "${oldId}" a "${newId}".` });
 });
 
@@ -1150,7 +1123,6 @@ app.post('/api/admin/eliminar-user', async (req, res) => {
   }
 
   dbEliminarCuentaCompleta(targetId);
-  registrarNotificacionStaff(perm.actor, 'eliminar_user', `Eliminó la cuenta "${targetId}"`);
   return res.json({ ok: true, mensaje: `User ${targetId} eliminado definitivamente.` });
 });
 
@@ -1255,7 +1227,6 @@ app.post('/api/admin/personajes/regalar', async (req, res) => {
 
   targetAcc.inventario.personajes.push(nuevoPj);
   dbGuardarCuentaCompleta(targetAcc, true);
-  registrarNotificacionStaff(perm.actor, 'regalar_personaje', `Regaló "${nuevoPj.nombre}" a ${targetAcc.nombre}`);
 
   return res.json({
     ok: true,
@@ -1288,7 +1259,6 @@ app.post('/api/admin/personajes/quitar', async (req, res) => {
       targetAcc.avatarAura = 'ninguna';
     }
     dbGuardarCuentaCompleta(targetAcc, true);
-    registrarNotificacionStaff(perm.actor, 'quitar_personaje', `Retiró un personaje exclusivo de ${targetAcc.nombre}`);
   }
   return res.json({ ok: true, mensaje: 'Personaje retirado del inventario.', inventario: targetAcc.inventario });
 });
@@ -1328,7 +1298,6 @@ app.post('/api/admin/personajes/mover', async (req, res) => {
 
   dbGuardarCuentaCompleta(origenAcc, false);
   dbGuardarCuentaCompleta(destinoAcc, true);
-  registrarNotificacionStaff(perm.actor, 'mover_personaje', `Transfirió "${charMovido.nombre}" de ${origenAcc.nombre} a ${destinoAcc.nombre}`);
 
   return res.json({
     ok: true,
@@ -1364,7 +1333,6 @@ const manejarFijarPremioSemanal = async (req: express.Request, res: express.Resp
   };
   guardarConfig('premio_semanal_global', premio);
   tocarUltimaActualizacion();
-  registrarNotificacionStaff(perm.actor, 'premio_semanal', `Fijó premio semanal: "${premio.nombre}"`);
   return res.json({ ok: true, mensaje: `Premio semanal "${premio.nombre}" actualizado.`, premio, premioSemanal: premio });
 };
 
@@ -1488,7 +1456,7 @@ app.post('/api/admin/salas-personalizadas', async (req, res) => {
     esOficialStaff: true,
   });
 
-  registrarNotificacionStaff(perm.actor, 'sala_creada', `Publicó sala oficial "${codigoLimpio}" (${nuevaSala.nombre})`);
+  tocarUltimaActualizacion();
   return res.json({ ok: true, sala: nuevaSala, salas: lista.slice(0, 25), mensaje: `Sala personalizada "${codigoLimpio}" creada.` });
 });
 
@@ -1507,7 +1475,7 @@ app.delete('/api/admin/salas-personalizadas/:codigo', async (req, res) => {
     escribirJson(ARCHIVO_SALAS_PERSONALIZADAS, lista);
   }
   eliminarSalaOnline(codigoLimpio);
-  registrarNotificacionStaff(perm.actor, 'sala_eliminada', `Eliminó sala oficial "${codigoLimpio}"`);
+  tocarUltimaActualizacion();
   return res.json({ ok: true, salas: lista, mensaje: `Sala "${codigoLimpio}" eliminada.` });
 });
 
@@ -1554,7 +1522,7 @@ app.post('/api/admin/ranking/solicitar-reset', async (req, res) => {
     motivo: String(req.body?.motivo || 'Reinicio periódico solicitado').trim().slice(0, 140),
   };
   guardarConfig('solicitud_reset_ranking', solicitud);
-  registrarNotificacionStaff(perm.actor, 'solicitud_reset', 'Solicitó reinicio del Ranking Global');
+  tocarUltimaActualizacion();
   return res.json({ ok: true, mensaje: 'Solicitud enviada al Dev.', solicitud });
 });
 
@@ -1565,7 +1533,6 @@ app.post('/api/admin/ranking/aprobar-reset', async (req, res) => {
   if (!perm.esDev) return res.status(403).json({ ok: false, error: 'Solo el Dev puede aprobar el reseteo.' });
 
   ejecutarReinicioRankingLocal();
-  registrarNotificacionStaff(perm.actor, 'reset_ranking', 'Aprobó el reinicio del Ranking Global a cero');
   return res.json({ ok: true, mensaje: 'Ranking reseteado a 0.' });
 });
 
@@ -1576,6 +1543,7 @@ app.post('/api/admin/ranking/rechazar-reset', async (req, res) => {
   if (!perm.esDev) return res.status(403).json({ ok: false, error: 'Solo el Dev puede rechazar solicitudes.' });
 
   eliminarConfig('solicitud_reset_ranking');
+  tocarUltimaActualizacion();
   return res.json({ ok: true, mensaje: 'Solicitud de reseteo desestimada.' });
 });
 
@@ -1587,10 +1555,10 @@ app.post('/api/admin/ranking/resolver-solicitud', async (req, res) => {
 
   if (req.body?.accion === 'aprobar') {
     ejecutarReinicioRankingLocal();
-    registrarNotificacionStaff(perm.actor, 'reset_ranking', 'Aprobó el reinicio del Ranking Global');
     return res.json({ ok: true, mensaje: 'Ranking reiniciado a 0.' });
   }
   eliminarConfig('solicitud_reset_ranking');
+  tocarUltimaActualizacion();
   return res.json({ ok: true, mensaje: 'Solicitud rechazada.' });
 });
 

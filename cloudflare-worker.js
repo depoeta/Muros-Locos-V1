@@ -221,26 +221,6 @@ async function d1EliminarConfig(d1, clave) {
   }
 }
 
-async function registrarNotificacionStaff(d1, actor, accion, detalle) {
-  if (!d1) return;
-  try {
-    const lista = (await d1LeerConfig(d1, 'notificaciones_staff', [])) || [];
-    const arr = Array.isArray(lista) ? lista : [];
-    const evento = {
-      id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      actorId: actor?.id || 'admin',
-      actorNombre: actor?.nombre || 'Staff',
-      actorRol: actor?.rol || 'dev',
-      accion,
-      detalle,
-      ts: Date.now(),
-    };
-    arr.unshift(evento);
-    const recortada = arr.slice(0, 30);
-    await d1GuardarConfig(d1, 'notificaciones_staff', recortada);
-  } catch {}
-}
-
 async function tocarUltimaActualizacion(d1) {
   if (!d1) return Date.now();
   const ahora = Date.now();
@@ -1133,15 +1113,6 @@ async function manejarPeticionApi(request, env) {
     const sesion = await resolverSesion(request, env, d1);
     const tieneAuthHeader = Boolean(request.headers.get('Authorization'));
 
-    let notificacionesStaff = [];
-    if (sesion && sesion.userId) {
-      const perm = await verificarPermisosLlamante(cuentas, sesion);
-      if (perm.esDev || perm.esAdmin || perm.esMod) {
-        const todas = (await d1LeerConfig(d1, 'notificaciones_staff', [])) || [];
-        if (Array.isArray(todas)) notificacionesStaff = todas.slice(0, 10);
-      }
-    }
-
     let salasCount = 0;
     if (d1) {
       try {
@@ -1166,7 +1137,6 @@ async function manejarPeticionApi(request, env) {
         cuentasCount: Object.keys(cuentas).length,
         sesionValida: tieneAuthHeader ? Boolean(sesion && sesion.userId && !sesion.revocada) : true,
         sesionRevocada: tieneAuthHeader && Boolean(sesion?.revocada),
-        notificacionesStaff,
       }),
       { headers: cabecerasJson }
     );
@@ -1722,12 +1692,6 @@ async function manejarPeticionApi(request, env) {
     }
 
     await d1GuardarCuentaCompleta(d1, target, true);
-    await registrarNotificacionStaff(
-      d1,
-      perm.actor,
-      'actualizar_user',
-      `${perm.actor?.nombre || 'Staff'} actualizó a ${target.nombre} (rol: ${target.rol}, ${target.puntos} pts)`
-    );
 
     return new Response(
       JSON.stringify({
@@ -1794,7 +1758,6 @@ async function manejarPeticionApi(request, env) {
       });
     }
 
-    await registrarNotificacionStaff(d1, perm.actor, 'cambiar_id', `ID cambiado de "${oldId}" a "${newId}"`);
     return new Response(JSON.stringify({ ok: true, oldId, newId, mensaje: `ID cambiado de "${oldId}" a "${newId}".` }), {
       headers: cabecerasJson,
     });
@@ -1832,7 +1795,6 @@ async function manejarPeticionApi(request, env) {
     }
 
     await d1EliminarCuentaCompleta(d1, targetId);
-    await registrarNotificacionStaff(d1, perm.actor, 'eliminar_user', `Eliminó la cuenta "${targetId}"`);
     return new Response(JSON.stringify({ ok: true, mensaje: `User ${targetId} eliminado definitivamente.` }), {
       headers: cabecerasJson,
     });
@@ -2016,12 +1978,6 @@ async function manejarPeticionApi(request, env) {
     // IMPORTANTE: SOLO se agrega al inventario de targetId. Nunca modifica el aspecto equipado ni al actor.
     targetAcc.inventario.personajes.push(nuevoPersonaje);
     await d1GuardarCuentaCompleta(d1, targetAcc, true);
-    await registrarNotificacionStaff(
-      d1,
-      perm.actor,
-      'regalar_personaje',
-      `Regaló "${nuevoPersonaje.nombre}" a ${targetAcc.nombre}`
-    );
 
     return new Response(
       JSON.stringify({
@@ -2068,7 +2024,6 @@ async function manejarPeticionApi(request, env) {
         targetAcc.avatarAura = 'ninguna';
       }
       await d1GuardarCuentaCompleta(d1, targetAcc, true);
-      await registrarNotificacionStaff(d1, perm.actor, 'quitar_personaje', `Retiró un personaje exclusivo de ${targetAcc.nombre}`);
     }
 
     return new Response(
@@ -2141,12 +2096,6 @@ async function manejarPeticionApi(request, env) {
 
     await d1GuardarCuentaCompleta(d1, origenAcc, false);
     await d1GuardarCuentaCompleta(d1, destinoAcc, true);
-    await registrarNotificacionStaff(
-      d1,
-      perm.actor,
-      'mover_personaje',
-      `Transfirió "${charMovido.nombre}" de ${origenAcc.nombre} a ${destinoAcc.nombre}`
-    );
 
     return new Response(
       JSON.stringify({
@@ -2222,7 +2171,6 @@ async function manejarPeticionApi(request, env) {
 
       await d1GuardarConfig(d1, 'premio_semanal_global', premio);
       await tocarUltimaActualizacion(d1);
-      await registrarNotificacionStaff(d1, perm.actor, 'premio_semanal', `Fijó premio semanal: "${premio.nombre}"`);
 
       return new Response(
         JSON.stringify({ ok: true, mensaje: `Premio semanal "${premio.nombre}" guardado.`, premio, premioSemanal: premio }),
@@ -2383,7 +2331,7 @@ async function manejarPeticionApi(request, env) {
       });
 
       const lista = await d1LeerSalasPersonalizadas(d1);
-      await registrarNotificacionStaff(d1, perm.actor, 'sala_creada', `Publicó sala oficial "${nuevaSala.codigo}" (${nuevaSala.nombre})`);
+      await tocarUltimaActualizacion(d1);
 
       return new Response(
         JSON.stringify({ ok: true, sala: nuevaSala, salas: lista, mensaje: `Sala oficial "${nuevaSala.nombre}" creada.` }),
@@ -2414,7 +2362,7 @@ async function manejarPeticionApi(request, env) {
 
       if (codigo) {
         await d1EliminarSalaPersonalizada(d1, codigo);
-        await registrarNotificacionStaff(d1, perm.actor, 'sala_eliminada', `Eliminó sala oficial "${codigo}"`);
+        await tocarUltimaActualizacion(d1);
       }
 
       const lista = await d1LeerSalasPersonalizadas(d1);
@@ -2458,7 +2406,7 @@ async function manejarPeticionApi(request, env) {
         fecha: new Date().toISOString(),
       };
       await d1GuardarConfig(d1, 'solicitud_reset_ranking', solicitud);
-      await registrarNotificacionStaff(d1, perm.actor, 'solicitud_reset', 'Solicitó reinicio del Ranking Global');
+      await tocarUltimaActualizacion(d1);
 
       return new Response(JSON.stringify({ ok: true, mensaje: 'Solicitud enviada al Dev.', solicitud }), {
         headers: cabecerasJson,
@@ -2492,7 +2440,6 @@ async function manejarPeticionApi(request, env) {
       });
     }
     await ejecutarReinicioRankingD1();
-    await registrarNotificacionStaff(d1, perm.actor, 'reset_ranking', 'Aprobó el reinicio del Ranking Global a cero');
     return new Response(JSON.stringify({ ok: true, mensaje: 'Ranking reiniciado a 0 en D1.' }), { headers: cabecerasJson });
   }
 
@@ -2507,6 +2454,7 @@ async function manejarPeticionApi(request, env) {
       });
     }
     await d1EliminarConfig(d1, 'solicitud_reset_ranking');
+    await tocarUltimaActualizacion(d1);
     return new Response(JSON.stringify({ ok: true, mensaje: 'Solicitud de reinicio desestimada.' }), {
       headers: cabecerasJson,
     });
@@ -2525,10 +2473,10 @@ async function manejarPeticionApi(request, env) {
     const body = await request.json().catch(() => ({}));
     if (body?.accion === 'aprobar') {
       await ejecutarReinicioRankingD1();
-      await registrarNotificacionStaff(d1, perm.actor, 'reset_ranking', 'Aprobó el reinicio del Ranking Global');
       return new Response(JSON.stringify({ ok: true, mensaje: 'Ranking reiniciado a 0 en D1.' }), { headers: cabecerasJson });
     }
     await d1EliminarConfig(d1, 'solicitud_reset_ranking');
+    await tocarUltimaActualizacion(d1);
     return new Response(JSON.stringify({ ok: true, mensaje: 'Solicitud rechazada.' }), { headers: cabecerasJson });
   }
 

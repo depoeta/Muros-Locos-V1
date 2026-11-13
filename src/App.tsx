@@ -44,7 +44,6 @@ import {
   sincronizarConNube,
   suscribirCambiosNube,
   suscribirDiagnostico,
-  suscribirNotificacionesStaff,
   suscribirSesionRevocada,
 } from './game/storage';
 import { onlineService } from './game/onlineService';
@@ -241,7 +240,7 @@ export const App: React.FC = () => {
   const modalActivoRef = useRef<ModalType>(modalActivo);
   modalActivoRef.current = modalActivo;
 
-  // Sincronización inicial, sesiones revocadas, notificaciones staff y escucha ligera cada 90s contra la Database
+  // Sincronización inicial, sesiones revocadas y escucha ligera cada 90s contra la Database
   useEffect(() => {
     sincronizarConNube(false).catch(() => {});
     const stopListener = iniciarEscuchaNube(90000);
@@ -305,19 +304,10 @@ export const App: React.FC = () => {
       showToast(`🔒 ${motivo}`);
     });
 
-    const unsubStaffNotif = suscribirNotificacionesStaff((notifs) => {
-      const ultima = notifs[notifs.length - 1];
-      if (ultima) {
-        const msgTexto = ultima.detalle || ultima.mensaje || ultima.accion || 'Actividad Staff';
-        showToast(`🔔 ${ultima.actorNombre}: ${msgTexto}`);
-      }
-    });
-
     return () => {
       stopListener();
       unsubs();
       unsubRevocada();
-      unsubStaffNotif();
     };
   }, [showToast]);
 

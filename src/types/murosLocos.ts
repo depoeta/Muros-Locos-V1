@@ -559,19 +559,6 @@ export interface RespuestaRankingSemanal {
   pasada: DatosTableroSemanal;
 }
 
-export interface NotificacionStaff {
-  id: string;
-  actorId?: string;
-  actorNombre: string;
-  actorRol: UserRol;
-  accion?: string;
-  detalle?: string;
-  ts?: number;
-  tipo?: string;
-  mensaje?: string;
-  fecha?: string;
-}
-
 export interface DatosDiagnosticoOnline {
   status: 'desconectado' | 'negociando' | 'conectado' | 'reconectando';
   pingMs: number | null;
