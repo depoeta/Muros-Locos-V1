@@ -392,29 +392,35 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
   };
 
   return (
-    <div className="flex flex-col items-center justify-center w-full max-w-[500px] mx-auto px-1 sm:px-2">
-      {/* Indicador de turno únicamente en modo Online (los bots juegan directo sin saltos de pantalla) */}
-      {estado.modoOnline && !estado.terminada && (
-        <div className="w-full flex items-center justify-between gap-2 mb-1 shrink-0">
-          <div
-            className={`flex-1 py-1 px-3 rounded-2xl border-2 border-[#2b2140] font-black text-xs text-center shadow-[0_2px_0_#2b2140] flex items-center justify-center gap-2 transition-all ${
-              esMiTurnoOnline
-                ? 'bg-[#51cf66] text-[#134e20] animate-pulse'
-                : 'bg-[#fff3bf] text-[#8f4b00]'
-            }`}
-          >
-            <span>
-              {esMiTurnoOnline
-                ? '👉 ¡ES TU TURNO! Mueve o pon un muro'
-                : `⏳ Turno de ${jugadorActivo.nombre}...`}
-            </span>
-          </div>
+    <div className="flex flex-col items-center justify-center w-full mx-auto px-1">
+      {/* Indicador de turno únicamente en modo Online (altura fija para evitar saltos) */}
+      {estado.modoOnline && (
+        <div className="w-full max-w-[580px] h-7 flex items-center justify-center mb-1.5 shrink-0">
+          {!estado.terminada && (
+            <div
+              className={`w-full h-7 px-3 rounded-xl border-2 border-[#2b2140] font-black text-xs text-center shadow-[0_2px_0_#2b2140] flex items-center justify-center gap-2 transition-colors ${
+                esMiTurnoOnline
+                  ? 'bg-[#51cf66] text-[#134e20]'
+                  : 'bg-[#fff3bf] text-[#8f4b00]'
+              }`}
+            >
+              <span className="truncate">
+                {esMiTurnoOnline
+                  ? '👉 ¡ES TU TURNO! Mueve o pon un muro'
+                  : `⏳ Turno de ${jugadorActivo.nombre}...`}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Outer Themed Board Frame (Sin animación de giro, tamaño ajustado a viewport) */}
+      {/* Outer Themed Board Frame (Sin animación de giro, tamaño ajustado al viewport dvh/desktop) */}
       <div
-        className={`relative w-full max-w-[min(450px,calc(100vh-270px))] max-h-[min(450px,calc(100vh-270px))] aspect-square rounded-3xl p-2 sm:p-2.5 ${currentTheme.frameBg} border-4 border-[#2b2140] shadow-[0_6px_0_#2b2140,0_14px_20px_rgba(0,0,0,0.25)] select-none shrink-0`}
+        className={`relative aspect-square min-w-[230px] min-h-[230px] rounded-3xl p-2 sm:p-2.5 ${
+          estado.modoOnline
+            ? 'w-[min(94vw,calc(100dvh-365px))] lg:w-[min(560px,calc(100vw-400px),calc(100dvh-172px))]'
+            : 'w-[min(94vw,calc(100dvh-335px))] lg:w-[min(580px,calc(100vw-400px),calc(100dvh-140px))]'
+        } ${currentTheme.frameBg} border-4 border-[#2b2140] shadow-[0_6px_0_#2b2140,0_14px_20px_rgba(0,0,0,0.25)] select-none shrink-0`}
         style={{
           ...currentTheme.frameStyle,
           transform: `rotate(${anguloRotacion}deg)`,
@@ -631,7 +637,11 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                       className="w-full h-full flex items-center justify-center relative"
                     >
                       {estado.reaccionActiva && estado.reaccionActiva.jugadorId === player.id && (
-                        <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-white border-2 border-[#2b2140] rounded-full px-2 py-0.5 shadow-md text-base animate-bounce z-40 pointer-events-none whitespace-nowrap">
+                        <div
+                          className={`absolute ${
+                            vis.r === 0 ? 'top-0.5' : '-top-6'
+                          } left-1/2 -translate-x-1/2 bg-white border-2 border-[#2b2140] rounded-full px-1.5 py-0.5 shadow-md text-sm animate-bounce z-40 pointer-events-none whitespace-nowrap`}
+                        >
                           {estado.reaccionActiva.emoji}
                         </div>
                       )}
@@ -738,60 +748,78 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
         </div>
       </div>
 
-      {/* Touch / Quick Confirmation Bar when an intersection is selected */}
-      {estado.modoAccion === 'muro' && esTurnoHumano && hoveredIntersection && (
-        <div className="mt-2 text-xs font-semibold text-[#593922] bg-[#fff8e7] px-3 py-1.5 rounded-2xl border-2 border-[#2b2140] shadow-md flex items-center gap-2 animate-[fadeIn_0.15s_ease-out]">
-          <span className="font-extrabold text-[#2b2140]">
-            Muro {etiquetaOrientacionVisual}
-          </span>
+      {/* Barra inferior de estado/confirmación de altura fija (cero saltos al cambiar Mover ↔ Muro) */}
+      <div className="h-10 mt-1.5 w-full max-w-[580px] flex items-center justify-center shrink-0">
+        {estado.terminada ? (
+          <div className="h-9 px-3.5 rounded-xl bg-[#fff8e7] border-2 border-[#2b2140] text-xs font-extrabold text-[#593922] shadow-sm flex items-center gap-1.5">
+            <span>🏁 Partida finalizada</span>
+          </div>
+        ) : !esTurnoHumano ? (
+          <div className="h-9 px-3.5 rounded-xl bg-[#fff8e7]/90 border-2 border-[#2b2140] text-xs font-bold text-[#593922] shadow-sm flex items-center gap-1.5 max-w-full">
+            <span className="truncate">⏳ Turno de {jugadorActivo.nombre}...</span>
+          </div>
+        ) : estado.modoAccion === 'muro' && hoveredIntersection ? (
+          <div className="h-9 px-2.5 rounded-xl bg-[#fff8e7] border-2 border-[#2b2140] text-xs font-semibold text-[#593922] shadow-md flex items-center gap-1.5 max-w-full">
+            <span className="font-extrabold text-[#2b2140] whitespace-nowrap">
+              {etiquetaOrientacionVisual}
+            </span>
 
-          <button
-            onClick={() => {
-              sounds.playClick();
-              onRotarMuro();
-              const nuevaOrientacion = estado.orientacionMuro === 'H' ? 'V' : 'H';
-              updatePreview(hoveredIntersection.r, hoveredIntersection.c, nuevaOrientacion);
-            }}
-            className="text-[11px] bg-[#ffd43b] hover:bg-[#fcc419] px-2.5 py-1 rounded-xl border-2 border-[#2b2140] font-black text-[#5c3c00] shadow-[0_2px_0_#2b2140] active:translate-y-0.5 cursor-pointer flex items-center gap-1"
-          >
-            🔄 Rotar
-          </button>
+            <button
+              type="button"
+              onClick={() => {
+                sounds.playClick();
+                onRotarMuro();
+                const nuevaOrientacion = estado.orientacionMuro === 'H' ? 'V' : 'H';
+                updatePreview(hoveredIntersection.r, hoveredIntersection.c, nuevaOrientacion);
+              }}
+              className="h-7 text-[11px] bg-[#ffd43b] hover:bg-[#fcc419] px-2 rounded-lg border-2 border-[#2b2140] font-black text-[#5c3c00] shadow-[0_1px_0_#2b2140] active:translate-y-0.5 cursor-pointer flex items-center gap-1 whitespace-nowrap"
+            >
+              🔄 Rotar
+            </button>
 
-          <button
-            onClick={() => confirmWallPlacement(hoveredIntersection.r, hoveredIntersection.c)}
-            disabled={ghostValidity !== 'ok'}
-            className={`text-[11px] px-3 py-1 rounded-xl border-2 border-[#2b2140] font-black shadow-[0_2px_0_#2b2140] active:translate-y-0.5 cursor-pointer flex items-center gap-1 transition-all ${
-              ghostValidity === 'ok'
-                ? 'bg-[#51cf66] text-[#134e20] hover:bg-[#40c057]'
-                : 'bg-[#ced4da] text-[#868e96] border-[#adb5bd] cursor-not-allowed shadow-none'
-            }`}
-          >
-            ✓ Colocar
-          </button>
+            <button
+              type="button"
+              onClick={() => confirmWallPlacement(hoveredIntersection.r, hoveredIntersection.c)}
+              disabled={ghostValidity !== 'ok'}
+              className={`h-7 text-[11px] px-2.5 rounded-lg border-2 border-[#2b2140] font-black shadow-[0_1px_0_#2b2140] active:translate-y-0.5 cursor-pointer flex items-center gap-1 whitespace-nowrap transition-colors ${
+                ghostValidity === 'ok'
+                  ? 'bg-[#51cf66] text-[#134e20] hover:bg-[#40c057]'
+                  : 'bg-[#ced4da] text-[#868e96] border-[#adb5bd] cursor-not-allowed shadow-none'
+              }`}
+            >
+              ✓ Colocar
+            </button>
 
-          <button
-            onClick={() => setHoveredIntersection(null)}
-            className="w-6 h-6 rounded-lg bg-white border border-[#2b2140] font-bold text-[#c92a2a] hover:bg-[#ffe3e3] flex items-center justify-center cursor-pointer"
-            title="Cancelar selección"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      {estado.modoAccion === 'muro' && esTurnoHumano && !hoveredIntersection && (
-        <div className="mt-2 text-xs font-semibold text-[#593922] bg-[#fff8e7] px-3 py-1 rounded-full border-2 border-[#2b2140] shadow-sm flex items-center gap-2">
-          <span>
-            Toca una intersección para previsualizar ({etiquetaOrientacionVisual})
-          </span>
-          <button
-            onClick={onRotarMuro}
-            className="text-[11px] bg-[#ffd43b] hover:bg-[#fcc419] px-2 py-0.5 rounded-md border border-[#2b2140] font-bold cursor-pointer"
-          >
-            🔄 Rotar (R)
-          </button>
-        </div>
-      )}
+            <button
+              type="button"
+              onClick={() => setHoveredIntersection(null)}
+              className="w-7 h-7 rounded-lg bg-white border-2 border-[#2b2140] font-bold text-[#c92a2a] hover:bg-[#ffe3e3] flex items-center justify-center cursor-pointer shrink-0"
+              title="Cancelar selección"
+            >
+              ✕
+            </button>
+          </div>
+        ) : estado.modoAccion === 'muro' ? (
+          <div className="h-9 px-3 rounded-xl bg-[#fff8e7] border-2 border-[#2b2140] text-xs font-semibold text-[#593922] shadow-sm flex items-center gap-2 max-w-full">
+            <span className="truncate">
+              🧱 Toca una intersección ({etiquetaOrientacionVisual})
+            </span>
+            <button
+              type="button"
+              onClick={onRotarMuro}
+              className="h-6 text-[11px] bg-[#ffd43b] hover:bg-[#fcc419] px-2 rounded-md border border-[#2b2140] font-bold cursor-pointer whitespace-nowrap shrink-0"
+            >
+              🔄 Rotar (R)
+            </button>
+          </div>
+        ) : (
+          <div className="h-9 px-3.5 rounded-xl bg-[#fff8e7]/90 border-2 border-[#2b2140] text-xs font-semibold text-[#593922] shadow-sm flex items-center gap-1.5 max-w-full">
+            <span className="truncate">
+              👟 Toca una casilla marcada para moverte
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

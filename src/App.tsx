@@ -1160,7 +1160,7 @@ export const App: React.FC = () => {
   }, [dbDesconectado]);
 
   return (
-    <div className="relative w-full h-full min-h-screen bg-[#74c0fc] text-[#2b2140] flex flex-col items-center justify-between overflow-x-hidden overflow-y-auto selection:bg-[#ffd43b] selection:text-[#2b2140]">
+    <div className="relative w-full h-full min-h-dvh bg-[#74c0fc] text-[#2b2140] flex flex-col items-center justify-between overflow-x-hidden overflow-y-auto selection:bg-[#ffd43b] selection:text-[#2b2140]">
       {/* Aviso que desaparece en 10 segundos al detectar desconexión */}
       {dbDesconectado && mostrarBannerDesconexion && (
         <div className="sticky top-0 left-0 right-0 z-[60] w-full bg-[#c92a2a] text-white border-b-3 border-[#2b2140] px-3 py-1.5 shadow-md flex items-center justify-between gap-2 text-xs animate-[slideDown_0.2s_ease-out]">
@@ -1312,9 +1312,9 @@ export const App: React.FC = () => {
       )}
 
       {juegoActivo === 'muros' && screen === 'juego' && estado && (
-        <div className="relative w-full max-w-4xl mx-auto flex-1 flex flex-col justify-between p-1.5 sm:p-2.5 z-10 min-h-0">
-          {/* Barra superior de la partida con el ÚNICO botón de Aspecto (el que le aparece a todos) */}
-          <div className="w-full max-w-[620px] mx-auto flex items-center justify-between px-2 py-1 mb-1 bg-white/75 backdrop-blur-xs rounded-2xl border-2 border-[#2b2140] shadow-sm shrink-0">
+        <div className="relative w-full max-w-6xl mx-auto flex-1 flex flex-col justify-start gap-1.5 sm:gap-2 p-1.5 sm:p-2.5 lg:p-3 z-10 min-h-0">
+          {/* Barra superior de la partida con el ÚNICO botón de Aspecto */}
+          <div className="w-full flex items-center justify-between px-2.5 py-1.5 bg-white/80 backdrop-blur-xs rounded-2xl border-2 border-[#2b2140] shadow-sm shrink-0">
             <button
               onClick={handleVolverAlMenu}
               className="py-1 px-2.5 rounded-xl bg-white border border-[#2b2140] text-xs font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] cursor-pointer transition-colors"
@@ -1324,14 +1324,14 @@ export const App: React.FC = () => {
 
             <div className="flex items-center gap-2 text-xs font-black text-[#593922]">
               {estado.torneo && (
-                <span>
+                <span className="tabular-nums">
                   Ronda {estado.torneo.rondaActual}/{estado.torneo.totalRondas}
                 </span>
               )}
               {estado.modoOnline && <span>Sala {estado.codigoSala}</span>}
               {estado.config.modoConTiempo && (
                 <span
-                  className={`font-mono-num font-black ${
+                  className={`font-mono-num font-black tabular-nums ${
                     estado.tiempoRestante <= 5 ? 'text-[#c92a2a] animate-pulse' : 'text-[#2b2140]'
                   }`}
                 >
@@ -1366,47 +1366,59 @@ export const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Tarjetas de jugadores (sin duplicar botón de Aspecto) */}
-          <PlayerCards estado={estado} mostrarDistancia={ajustes.mostrarDistancia} />
+          {/* Mesa de juego: vertical en móvil (Jugadores -> Tablero -> Acciones) y 2 columnas en escritorio (Tablero | Jugadores + Acciones) */}
+          <div className="w-full flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_340px] items-center lg:items-start justify-start gap-1.5 sm:gap-2 lg:gap-4">
+            {/* Tablero Central */}
+            <div className="order-2 lg:order-1 lg:col-start-1 lg:row-start-1 w-full lg:h-full flex-1 lg:flex-none min-h-0 flex items-center justify-center">
+              <MurosBoard
+                estado={estado}
+                onMover={handleMoverJugador}
+                onPonerMuro={(_orientacion, r, c) => handleColocarMuro({ r, c })}
+                onRotarMuro={handleRotarMuro}
+                onCambiarModo={handleCambiarModo}
+                onInvalidWallAttempt={(motivo) => {
+                  sounds.playError();
+                  showToast(`⚠️ ${motivo}`);
+                }}
+                bloqueadoPorAnimacion={false}
+                modoDaltonico={ajustes.modoDaltonico}
+                animacionesReducidas={ajustes.animacionesReducidas}
+                perspectivaInvertida={false}
+                rotationMode={false}
+                vistaPropiaOnline={true}
+                temaTablero={temaTableroActivo}
+              />
+            </div>
 
-          {/* Tablero Central */}
-          <div className="flex-1 min-h-0 flex items-center justify-center py-0.5 sm:py-1 shrink-0">
-            <MurosBoard
-              estado={estado}
-              onMover={handleMoverJugador}
-              onPonerMuro={(_orientacion, r, c) => handleColocarMuro({ r, c })}
-              onRotarMuro={handleRotarMuro}
-              onCambiarModo={handleCambiarModo}
-              onInvalidWallAttempt={(motivo) => {
-                sounds.playError();
-                showToast(`⚠️ ${motivo}`);
-              }}
-              bloqueadoPorAnimacion={false}
-              modoDaltonico={ajustes.modoDaltonico}
-              animacionesReducidas={ajustes.animacionesReducidas}
-              perspectivaInvertida={false}
-              rotationMode={false}
-              vistaPropiaOnline={true}
-              temaTablero={temaTableroActivo}
-            />
+            {/* Panel lateral (en móvil se aplana con `contents` para respetar el orden Jugadores arriba y Acciones abajo) */}
+            <div className="contents lg:flex lg:flex-col lg:gap-2.5 lg:w-[320px] xl:w-[340px] lg:col-start-2 lg:row-start-1 lg:self-start">
+              <div className="order-1 lg:order-1 w-full max-w-[620px] lg:max-w-none shrink-0">
+                <PlayerCards
+                  estado={estado}
+                  mostrarDistancia={ajustes.mostrarDistancia}
+                  layout="auto"
+                />
+              </div>
+
+              <div className="order-3 lg:order-2 w-full max-w-[560px] lg:max-w-none shrink-0">
+                <ActionBar
+                  estado={estado}
+                  onCambiarModo={handleCambiarModo}
+                  onRotarMuro={handleRotarMuro}
+                  onPedirPista={handlePedirPista}
+                  onDeshacer={handleDeshacer}
+                  onAbrirHistorial={() => setMostrarHistorial(true)}
+                  onEnviarReaccion={handleEnviarReaccion}
+                  deshabilitado={Boolean(
+                    estado.terminada ||
+                      estado.jugadores[estado.turnoActual].tipo !== 'humano' ||
+                      (estado.modoOnline &&
+                        estado.jugadores[estado.turnoActual].id !== estado.miJugadorId)
+                  )}
+                />
+              </div>
+            </div>
           </div>
-
-          {/* Barra de Acciones */}
-          <ActionBar
-            estado={estado}
-            onCambiarModo={handleCambiarModo}
-            onRotarMuro={handleRotarMuro}
-            onPedirPista={handlePedirPista}
-            onDeshacer={handleDeshacer}
-            onAbrirHistorial={() => setMostrarHistorial(true)}
-            onEnviarReaccion={handleEnviarReaccion}
-            deshabilitado={Boolean(
-              estado.terminada ||
-                estado.jugadores[estado.turnoActual].tipo !== 'humano' ||
-                (estado.modoOnline &&
-                  estado.jugadores[estado.turnoActual].id !== estado.miJugadorId)
-            )}
-          />
 
           {mostrarBarraPostPartida && estado.terminada && (
             <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-[#fff8e7] border-4 border-[#2b2140] rounded-2xl p-2 sm:p-2.5 shadow-[0_8px_0_#2b2140,0_20px_30px_rgba(0,0,0,0.35)] flex items-center gap-2 animate-[slideUp_0.2s_ease-out]">

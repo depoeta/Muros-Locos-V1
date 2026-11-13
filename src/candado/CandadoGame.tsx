@@ -165,6 +165,19 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
     [entradaActual]
   );
 
+  const confirmadosPorPosicion = useMemo<(string | null)[]>(() => {
+    if (!estado || estado.config.modo !== 'logico') return [];
+    const arr: (string | null)[] = new Array(estado.config.digitos).fill(null);
+    for (const it of estado.intentos as IntentoLogico[]) {
+      it.digitos.forEach((ev, idx) => {
+        if (ev.estado === 'exacto') {
+          arr[idx] = ev.digito;
+        }
+      });
+    }
+    return arr;
+  }, [estado]);
+
   const ciclarNota = useCallback((d: string) => {
     candadoAudio.playDialTick();
     setNotasDigitos((prev) => {
@@ -879,6 +892,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               errorShake={errorShake}
               esMinimalista={esMinimalista}
               animacionesReducidas={animacionesReducidas}
+              confirmadosPorPosicion={confirmadosPorPosicion}
             />
 
             {/* Franja de altura fija (h-7) para avisos / rango sin mover el teclado */}
@@ -1019,6 +1033,9 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                 <div className="grid grid-cols-5 gap-1.5">
                   {['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].map((d) => {
                     const nota = notasDigitos[d] || 'neutro';
+                    const esConfirmadoEnCursor =
+                      estado.config.modo === 'logico' &&
+                      confirmadosPorPosicion[cursorIdx] === d;
                     const yaEnSlot =
                       estado.config.modo === 'logico' &&
                       !estado.config.permitirRepetidos &&
@@ -1034,10 +1051,10 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                             ? esMinimalista
                               ? 'bg-slate-950/80 text-slate-600 border border-white/5 line-through'
                               : 'bg-[#dee2e6] text-[#868e96] border-2 border-[#adb5bd] line-through'
-                            : nota === 'posible'
+                            : esConfirmadoEnCursor || nota === 'posible'
                             ? esMinimalista
-                              ? 'bg-emerald-500/25 text-emerald-200 border-2 border-emerald-400'
-                              : 'bg-[#d3f9d8] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                              ? 'bg-emerald-500/30 text-emerald-200 border-2 border-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.3)]'
+                              : 'bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
                             : yaEnSlot
                             ? esMinimalista
                               ? 'bg-indigo-500/25 text-indigo-200 border border-indigo-400/50'
@@ -1047,7 +1064,12 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                             : 'bg-white hover:bg-[#fff9db] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
                         }`}
                       >
-                        {d}
+                        <span>{d}</span>
+                        {esConfirmadoEnCursor && nota !== 'descartado' && (
+                          <span className="absolute top-0.5 right-1 text-[8px] font-black leading-none">
+                            ✓
+                          </span>
+                        )}
                       </button>
                     );
                   })}

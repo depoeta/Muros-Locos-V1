@@ -21,6 +21,7 @@ interface CandadoVaultProps {
   errorShake: boolean;
   esMinimalista: boolean;
   animacionesReducidas: boolean;
+  confirmadosPorPosicion?: (string | null)[];
 }
 
 function formatMMSS(sec: number): string {
@@ -42,6 +43,7 @@ export const CandadoVault: React.FC<CandadoVaultProps> = ({
   errorShake,
   esMinimalista,
   animacionesReducidas,
+  confirmadosPorPosicion = [],
 }) => {
   const temaMaterial =
     digitos === 4
@@ -173,26 +175,43 @@ export const CandadoVault: React.FC<CandadoVaultProps> = ({
             {Array.from({ length: digitos }).map((_, idx) => {
               const val = entradaActual[idx] ?? '';
               const seleccionado = idx === cursorIdx && fase === 'jugando';
+              const confirmadoAqui = modo === 'logico' ? confirmadosPorPosicion[idx] ?? null : null;
+              const esVerdeExacto = val !== '' && confirmadoAqui !== null && val === confirmadoAqui;
+              const esGuiaVerde = val === '' && confirmadoAqui !== null && fase === 'jugando';
+
               return (
                 <button
                   key={idx}
                   type="button"
                   onClick={() => onSelectSlot(idx)}
                   disabled={fase !== 'jugando'}
-                  aria-label={`Dígito ${idx + 1}: ${val || 'vacío'}`}
+                  aria-label={`Dígito ${idx + 1}: ${val || (esGuiaVerde ? `confirmado ${confirmadoAqui}` : 'vacío')}`}
                   className={`relative h-11 sm:h-12 rounded-xl flex items-center justify-center font-mono font-black text-xl sm:text-2xl tabular-nums transition-all cursor-pointer select-none ${
                     abierta
                       ? 'bg-[#d3f9d8] text-[#134e20] border-2 border-[#40c057] shadow-[0_0_10px_rgba(81,207,102,0.45)]'
                       : bloqueada
                       ? 'bg-[#ffe3e3] text-[#c92a2a] border-2 border-[#fa5252]'
+                      : esVerdeExacto
+                      ? `bg-[#d3f9d8] text-[#134e20] border-2 ${
+                          seleccionado
+                            ? 'border-[#ffd43b] ring-2 ring-[#ffd43b]/70'
+                            : 'border-[#40c057]'
+                        } shadow-[0_0_8px_rgba(81,207,102,0.35)]`
                       : seleccionado
                       ? 'bg-[#fff9db] text-[#2b2140] border-2 border-[#ffd43b] shadow-[0_0_0_2px_rgba(255,212,59,0.45)]'
                       : val !== ''
                       ? 'bg-white text-[#2b2140] border-2 border-[#495057]'
+                      : esGuiaVerde
+                      ? 'bg-[#193327] text-[#69db7c]/85 border border-[#40c057]/65 hover:border-[#69db7c]'
                       : 'bg-[#2c2240] text-white/35 border border-white/15 hover:border-white/35'
                   }`}
                 >
-                  <span>{val !== '' ? val : '•'}</span>
+                  <span>{val !== '' ? val : esGuiaVerde ? confirmadoAqui : '•'}</span>
+                  {esVerdeExacto && fase === 'jugando' && (
+                    <span className="absolute top-0.5 right-1 text-[9px] font-black text-[#2b8a3e] leading-none">
+                      ✓
+                    </span>
+                  )}
                   {seleccionado && (
                     <span className="absolute bottom-0.5 w-3.5 h-0.5 rounded-full bg-[#f08c00]" />
                   )}

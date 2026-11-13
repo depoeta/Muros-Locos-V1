@@ -14,73 +14,85 @@ import { CartoonCharacter } from './CartoonCharacter';
 interface PlayerCardsProps {
   estado: EstadoDeJuego;
   mostrarDistancia: boolean;
+  layout?: 'auto' | 'sidebar';
 }
 
-export const PlayerCards: React.FC<PlayerCardsProps> = ({ estado, mostrarDistancia }) => {
+export const PlayerCards: React.FC<PlayerCardsProps> = ({
+  estado,
+  mostrarDistancia,
+  layout = 'auto',
+}) => {
+  const gridClass =
+    layout === 'sidebar'
+      ? 'grid-cols-2 lg:grid-cols-1 gap-1.5'
+      : estado.n === 2
+      ? 'grid-cols-2 gap-1.5 sm:gap-2'
+      : 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-1 gap-1.5';
+
   return (
-    <div className="w-full max-w-[620px] mx-auto px-1.5 mb-1 sm:mb-1.5 shrink-0">
-      <div className={`grid gap-1.5 sm:gap-2 ${estado.n === 2 ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-4'}`}>
+    <div className="w-full shrink-0">
+      <div className={`grid ${gridClass}`}>
         {estado.jugadores.map((jugador, idx) => {
           const isActive = estado.turnoActual === idx && !estado.terminada;
           const { distancia } = bfsCamino(jugador, estado.murosH, estado.murosV, undefined, estado.n);
           const isWinner = estado.ganador === idx;
+          const tieneReaccion =
+            Boolean(estado.reaccionActiva) && estado.reaccionActiva?.jugadorId === jugador.id;
 
           return (
             <div
               key={jugador.id}
-              className={`relative rounded-xl sm:rounded-2xl p-1.5 sm:p-2 flex items-center gap-2 transition-all duration-200 backdrop-blur-md ${
+              className={`relative rounded-xl sm:rounded-2xl px-2 py-1.5 flex items-center gap-2 transition-colors duration-200 backdrop-blur-md ${
                 isActive
-                  ? 'bg-slate-800/95 border border-emerald-400/40 shadow-md shadow-emerald-500/10 scale-[1.01] z-10'
-                  : 'bg-slate-900/80 border border-white/10 hover:border-white/20'
+                  ? 'bg-slate-800/95 border-2 border-emerald-400/75 shadow-md shadow-emerald-500/15'
+                  : 'bg-slate-900/82 border border-white/15 hover:border-white/25'
               }`}
             >
-              {isActive && (
-                <div
-                  className="absolute -top-2 right-2 px-1.5 py-0.2 rounded-full text-[9px] font-semibold uppercase tracking-wider text-emerald-200 bg-emerald-500/20 border border-emerald-400/30 shadow-xs"
-                >
-                  {jugador.tipo === 'humano' ? 'Tu Turno' : 'Bot'}
-                </div>
-              )}
-
-              {estado.reaccionActiva && estado.reaccionActiva.jugadorId === jugador.id && (
-                <div className="absolute -top-7 left-4 z-30 text-2xl animate-bounce bg-slate-800 rounded-full px-2 py-0.5 border border-white/20 shadow-xl">
-                  {estado.reaccionActiva.emoji}
-                </div>
-              )}
-
-              {isWinner && (
-                <div className="absolute -top-2.5 left-2 text-lg filter drop-shadow">👑</div>
-              )}
-
-              <div className="flex-shrink-0">
+              <div className="relative flex-shrink-0">
                 <CartoonCharacter
                   color={jugador.color}
                   hat={jugador.hat}
                   ropa={jugador.ropa}
                   ropaColor={jugador.ropaColor}
                   aura={jugador.aura}
-                  size={32}
+                  size={30}
                   showShadow={false}
                 />
+                {isWinner && (
+                  <span
+                    className="absolute -top-1.5 -left-1.5 text-sm leading-none drop-shadow pointer-events-none"
+                    title="Ganador"
+                  >
+                    👑
+                  </span>
+                )}
               </div>
 
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1">
-                  <span className="font-semibold text-xs sm:text-sm text-slate-100 truncate block">
+                <div className="flex items-center justify-between gap-1">
+                  <span className="font-semibold text-xs sm:text-sm text-slate-100 truncate">
                     {jugador.nombre}
                   </span>
+
+                  {tieneReaccion ? (
+                    <span className="shrink-0 text-sm leading-none bg-slate-700/90 border border-white/20 rounded-md px-1 py-0.5 animate-bounce">
+                      {estado.reaccionActiva?.emoji}
+                    </span>
+                  ) : isActive ? (
+                    <span className="shrink-0 px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider text-emerald-200 bg-emerald-500/20 border border-emerald-400/35 leading-none">
+                      {jugador.tipo === 'humano' ? 'Turno' : 'Bot'}
+                    </span>
+                  ) : null}
                 </div>
 
-                <div className="flex items-center gap-2 mt-1">
-                  <div className="flex items-center gap-1 text-xs font-medium text-slate-300">
-                    <span className="text-amber-300/80">🧱</span>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-300 tabular-nums">
+                    <span className="text-amber-300/85">🧱</span>
                     <span>{jugador.muros}</span>
                   </div>
 
                   {mostrarDistancia && !estado.terminada && (
-                    <div
-                      className="text-[10px] font-medium px-2 py-0.5 rounded-full border border-sky-400/25 bg-sky-500/10 text-sky-200"
-                    >
+                    <div className="text-[10px] font-semibold px-1.5 py-0.2 rounded-md border border-sky-400/25 bg-sky-500/15 text-sky-200 tabular-nums">
                       {distancia} {distancia === 1 ? 'paso' : 'pasos'}
                     </div>
                   )}
@@ -123,105 +135,128 @@ export const ActionBar: React.FC<ActionBarProps> = ({
   const hayHistorial =
     estado.historial.length > 0 && estado.config.permitirDeshacer && !estado.modoOnline;
   const permitirPistas = estado.config.permitirPistas && !estado.modoOnline;
+  const enModoMuro = estado.modoAccion === 'muro';
 
   return (
-    <div className="w-full max-w-[540px] mx-auto px-2 mt-1">
+    <div className="w-full shrink-0 space-y-1.5">
       {onEnviarReaccion && (
-        <div className="flex items-center justify-center gap-1 sm:gap-1.5 mb-1.5 px-2.5 py-1 bg-slate-900/85 backdrop-blur-md rounded-2xl border border-white/10 shadow-sm">
-          <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mr-1">Reaccionar:</span>
-          {['👋', '🧱', '😱', '😂', '👏', '🧠', '👑', '🔥'].map((em) => (
-            <button
-              key={em}
-              type="button"
-              onClick={() => onEnviarReaccion(em)}
-              className="text-base sm:text-lg hover:scale-130 active:scale-95 transition-transform cursor-pointer px-0.5 sm:px-1 text-slate-200"
-            >
-              {em}
-            </button>
-          ))}
+        <div className="flex items-center justify-between gap-1 px-2.5 py-1 bg-slate-900/85 backdrop-blur-md rounded-2xl border border-white/10 shadow-sm">
+          <span className="hidden sm:inline text-[10px] font-semibold text-slate-400 uppercase tracking-wider shrink-0">
+            Reaccionar:
+          </span>
+          <div className="flex items-center justify-around flex-1">
+            {['👋', '🧱', '😱', '😂', '👏', '🧠', '👑', '🔥'].map((em) => (
+              <button
+                key={em}
+                type="button"
+                onClick={() => onEnviarReaccion(em)}
+                className="text-base sm:text-lg hover:scale-125 active:scale-95 transition-transform cursor-pointer px-1 py-0.5 text-slate-200 leading-none"
+                title={`Reaccionar ${em}`}
+              >
+                {em}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
-      <div className="flex flex-wrap items-center justify-center gap-2 p-2 bg-slate-900/85 backdrop-blur-md rounded-2xl border border-white/10 shadow-xl">
-        <button
-          type="button"
-          disabled={deshabilitado}
-          onClick={() => onCambiarModo('mover')}
-          className={`px-3.5 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm transition-all flex items-center gap-1.5 cursor-pointer border ${
-            estado.modoAccion === 'mover'
-              ? 'bg-emerald-400/20 text-emerald-200 border-emerald-400/40 shadow-sm shadow-emerald-500/10'
-              : 'bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700/80 border-white/10'
-          } ${deshabilitado ? 'opacity-50 cursor-not-allowed' : 'active:scale-95'}`}
-        >
-          <span>👟</span>
-          <span>Mover</span>
-        </button>
-
-        <button
-          type="button"
-          disabled={deshabilitado || !puedePonerMuro}
-          onClick={() => onCambiarModo('muro')}
-          className={`px-3.5 sm:px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm transition-all flex items-center gap-1.5 cursor-pointer border ${
-            estado.modoAccion === 'muro'
-              ? 'bg-amber-400/20 text-amber-200 border-amber-400/40 shadow-sm shadow-amber-500/10'
-              : 'bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700/80 border-white/10'
-          } ${
-            deshabilitado || !puedePonerMuro
-              ? 'opacity-40 cursor-not-allowed'
-              : 'active:scale-95'
-          }`}
-        >
-          <span>🧱</span>
-          <span>Poner Muro ({jugador.muros})</span>
-        </button>
-
-        {estado.modoAccion === 'muro' && (
+      <div className="p-1.5 sm:p-2 bg-slate-900/85 backdrop-blur-md rounded-2xl border border-white/10 shadow-xl space-y-1.5">
+        {/* Fila principal fija (3 columnas constantes: Mover | Muro | Rotar) */}
+        <div className="grid grid-cols-[1fr_1.15fr_auto] gap-1.5">
           <button
             type="button"
             disabled={deshabilitado}
+            onClick={() => onCambiarModo('mover')}
+            className={`min-h-[38px] px-2.5 py-1.5 rounded-xl font-semibold text-xs sm:text-sm transition-colors flex items-center justify-center gap-1.5 cursor-pointer border whitespace-nowrap ${
+              estado.modoAccion === 'mover'
+                ? 'bg-emerald-400/20 text-emerald-200 border-emerald-400/45 shadow-sm shadow-emerald-500/10'
+                : 'bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700/80 border-white/10'
+            } ${deshabilitado ? 'opacity-50 cursor-not-allowed' : 'active:scale-95'}`}
+          >
+            <span>👟</span>
+            <span>Mover</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={deshabilitado || !puedePonerMuro}
+            onClick={() => onCambiarModo('muro')}
+            className={`min-h-[38px] px-2.5 py-1.5 rounded-xl font-semibold text-xs sm:text-sm transition-colors flex items-center justify-center gap-1.5 cursor-pointer border whitespace-nowrap tabular-nums ${
+              enModoMuro
+                ? 'bg-amber-400/20 text-amber-200 border-amber-400/45 shadow-sm shadow-amber-500/10'
+                : 'bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700/80 border-white/10'
+            } ${
+              deshabilitado || !puedePonerMuro
+                ? 'opacity-40 cursor-not-allowed'
+                : 'active:scale-95'
+            }`}
+          >
+            <span>🧱</span>
+            <span>Muro ({jugador.muros})</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={deshabilitado || !enModoMuro}
             onClick={onRotarMuro}
-            className="px-3 py-2 rounded-xl font-semibold text-xs bg-orange-400/20 text-orange-200 border border-orange-400/35 hover:bg-orange-400/30 active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+            title={
+              enModoMuro
+                ? 'Rotar orientación del muro (R)'
+                : 'Cambia a modo Muro para rotar'
+            }
+            className={`min-h-[38px] min-w-[74px] px-2.5 py-1.5 rounded-xl font-semibold text-xs transition-colors flex items-center justify-center gap-1 border whitespace-nowrap ${
+              enModoMuro && !deshabilitado
+                ? 'bg-orange-400/20 text-orange-200 border-orange-400/40 hover:bg-orange-400/30 active:scale-95 cursor-pointer'
+                : 'bg-slate-800/50 text-slate-500 border-white/5 opacity-55 cursor-not-allowed'
+            }`}
           >
             <span>🔄</span>
-            <span>{estado.orientacionMuro === 'H' ? 'Horizontal (H)' : 'Vertical (V)'}</span>
+            <span>{estado.orientacionMuro === 'H' ? 'Horiz.' : 'Vert.'}</span>
           </button>
-        )}
+        </div>
 
-        {permitirPistas && (
+        {/* Fila secundaria compacta: Pista, Deshacer, Historial */}
+        <div className="flex items-center justify-center gap-1.5">
+          {permitirPistas && (
+            <button
+              type="button"
+              disabled={deshabilitado}
+              onClick={onPedirPista}
+              className={`flex-1 min-h-[34px] px-2.5 py-1 rounded-xl font-medium text-xs bg-slate-800/80 text-slate-200 hover:text-white hover:bg-slate-700/80 border border-white/10 transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap ${
+                deshabilitado ? 'opacity-45 cursor-not-allowed' : 'active:scale-95 cursor-pointer'
+              }`}
+              title="Pedir pista (-1 pt)"
+            >
+              <span>💡</span>
+              <span>Pista</span>
+            </button>
+          )}
+
+          {hayHistorial && (
+            <button
+              type="button"
+              disabled={deshabilitado}
+              onClick={onDeshacer}
+              className={`flex-1 min-h-[34px] px-2.5 py-1 rounded-xl font-medium text-xs bg-slate-800/80 text-slate-200 hover:text-white hover:bg-slate-700/80 border border-white/10 transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap ${
+                deshabilitado ? 'opacity-45 cursor-not-allowed' : 'active:scale-95 cursor-pointer'
+              }`}
+              title="Deshacer jugada (-2 pts)"
+            >
+              <span>↩️</span>
+              <span>Deshacer</span>
+            </button>
+          )}
+
           <button
             type="button"
-            disabled={deshabilitado}
-            onClick={onPedirPista}
-            className="px-2.5 sm:px-3 py-2 rounded-xl font-medium text-xs bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700/80 border border-white/10 active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
-            title="Pedir pista (-1 pt)"
+            onClick={onAbrirHistorial}
+            className="flex-1 min-h-[34px] px-2.5 py-1 rounded-xl font-medium text-xs bg-indigo-500/15 text-indigo-200 border border-indigo-400/25 hover:bg-indigo-500/25 active:scale-95 transition-colors flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap tabular-nums"
+            title="Ver registro de jugadas"
           >
-            <span>💡</span>
-            <span className="hidden sm:inline">Pista</span>
+            <span>📜</span>
+            <span>Historial ({estado.registroAcciones ? estado.registroAcciones.length : 0})</span>
           </button>
-        )}
-
-        {hayHistorial && (
-          <button
-            type="button"
-            disabled={deshabilitado}
-            onClick={onDeshacer}
-            className="px-2.5 sm:px-3 py-2 rounded-xl font-medium text-xs bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700/80 border border-white/10 active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
-            title="Deshacer jugada (-2 pts)"
-          >
-            <span>↩️</span>
-            <span className="hidden sm:inline">Deshacer</span>
-          </button>
-        )}
-
-        <button
-          type="button"
-          onClick={onAbrirHistorial}
-          className="px-2.5 sm:px-3 py-2 rounded-xl font-medium text-xs bg-indigo-500/15 text-indigo-200 border border-indigo-400/25 hover:bg-indigo-500/25 active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
-          title="Ver registro de jugadas"
-        >
-          <span>📜</span>
-          <span>Historial ({estado.registroAcciones ? estado.registroAcciones.length : 0})</span>
-        </button>
+        </div>
       </div>
     </div>
   );
