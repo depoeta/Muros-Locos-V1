@@ -293,7 +293,7 @@ async function crearSesion(d1, userId, rol, duracionHoras = 720) {
     await asegurarTablasD1(d1);
     try {
       await d1.prepare('DELETE FROM sesiones WHERE expira_en <= ?').bind(ahora).run();
-      const activas = await d1.prepare('SELECT token_hash FROM sesiones WHERE id = ?').bind(userId).all();
+      const activas = await d1.prepare('SELECT token_hash FROM sesiones WHERE id = ? AND expira_en > ?').bind(userId, ahora).all();
       if (activas && activas.results && activas.results.length >= 2) {
         await d1.prepare('DELETE FROM sesiones WHERE id = ?').bind(userId).run();
       }
@@ -329,16 +329,16 @@ async function resolverSesion(request, env, d1) {
   }
   const headerAdminToken = (request.headers.get('X-Admin-Token') || '').trim();
   const rawAdminPass = env?.ADMIN_SECRET_KEY || env?.ADMIN_KEY || env?.ADMIN_PASSWORD;
-  const ADMIN_PASS = String(rawAdminPass || 'muros2026').trim();
+  const ADMIN_PASS = rawAdminPass ? String(rawAdminPass).trim() : '';
 
-  if (headerAdminToken && (compararTiempoConstante(headerAdminToken, ADMIN_PASS) || headerAdminToken === 'muros2026')) {
+  if (ADMIN_PASS && headerAdminToken && compararTiempoConstante(headerAdminToken, ADMIN_PASS)) {
     return { userId: 'admin', rol: 'dev', token: headerAdminToken, porClaveMaestra: true };
   }
 
   if (!token) token = headerAdminToken;
   if (!token) return null;
 
-  if (compararTiempoConstante(token, ADMIN_PASS) || token === 'muros2026') {
+  if (ADMIN_PASS && compararTiempoConstante(token, ADMIN_PASS)) {
     return { userId: 'admin', rol: 'dev', token, porClaveMaestra: true };
   }
 
@@ -390,7 +390,7 @@ function construirPerfilSupremo(previo = {}) {
   };
 }
 
-function sanitizarCuentaPublica(acc) {
+function sanitizarCuentaPublica(acc, incluirPrivados = true) {
   if (!acc || typeof acc !== 'object') return null;
   const copia = { ...acc };
   delete copia.clave;
@@ -400,14 +400,28 @@ function sanitizarCuentaPublica(acc) {
   if (copia.id === 'admin') {
     copia.rol = 'dev';
     copia.esSupremo = true;
+  } else {
+    copia.esSupremo = false;
+  }
+  if (!incluirPrivados) {
+    delete copia.historialPartidas;
+    delete copia.fechaRegistro;
+    delete copia.ultimaConexion;
+    copia.inventario = {
+      personajes: [],
+      ...(copia.inventario?.activoId ? { activoId: copia.inventario.activoId } : {}),
+    };
   }
   return copia;
 }
 
-function sanitizarMapaCuentasPublicas(mapa) {
+function sanitizarMapaCuentasPublicas(mapa, opciones = {}) {
+  const esStaff = Boolean(opciones?.esStaff);
+  const selfId = opciones?.selfId ? String(opciones.selfId) : null;
   const out = {};
   for (const [id, acc] of Object.entries(mapa || {})) {
-    const pub = sanitizarCuentaPublica(acc);
+    const incluirPrivados = esStaff || (selfId !== null && id === selfId);
+    const pub = sanitizarCuentaPublica(acc, incluirPrivados);
     if (pub) out[id] = pub;
   }
   return out;
@@ -983,6 +997,66 @@ async function d1GuardarSalaOnline(d1, codigo, salaObj) {
   }
 }
 
+async function d1ActualizarSalaAtomica(d1, codigo, mutador) {
+  const limpio = normalizarCodigoSala(codigo);
+  if (!d1 || !limpio) return { ok: false, status: 404, error: 'Sala no disponible' };
+  await asegurarTablasD1(d1);
+
+  for (let intento = 0; intento < 5; intento++) {
+    let fila = await d1
+      .prepare('SELECT data_json, ultimo_cambio FROM salas_online WHERE codigo = ?')
+      .bind(limpio)
+      .first();
+
+    if (!fila || typeof fila.data_json !== 'string') {
+      const hidratada = await d1LeerSalaOnline(d1, limpio);
+      if (!hidratada) return { ok: false, status: 404, error: 'Sala no disponible' };
+      fila = await d1
+        .prepare('SELECT data_json, ultimo_cambio FROM salas_online WHERE codigo = ?')
+        .bind(limpio)
+        .first();
+      if (!fila || typeof fila.data_json !== 'string') {
+        return { ok: false, status: 404, error: 'Sala no disponible' };
+      }
+    }
+
+    let sala;
+    try {
+      sala = JSON.parse(fila.data_json);
+    } catch {
+      return { ok: false, status: 500, error: 'Estado de sala corrupto' };
+    }
+
+    const ahora = Date.now();
+    const maxInactividad = sala.enPartida ? 25 * 60 * 1000 : 15 * 60 * 1000;
+    const prevCambio = Number(fila.ultimo_cambio) || sala.ultimoCambio || 0;
+    if (ahora - prevCambio > maxInactividad) {
+      await d1.prepare('DELETE FROM salas_online WHERE codigo = ?').bind(limpio).run();
+      return { ok: false, status: 404, error: 'Sala expirada o cerrada' };
+    }
+
+    const resMut = await mutador(sala);
+    if (resMut && resMut.abort) {
+      return { ok: false, status: resMut.status || 409, error: resMut.error || 'Conflicto en sala' };
+    }
+
+    const nuevoCambio = Math.max(Date.now(), prevCambio + 1);
+    sala.ultimoCambio = nuevoCambio;
+    sala.version = (Number(sala.version) || 0) + 1;
+
+    const upd = await d1
+      .prepare('UPDATE salas_online SET data_json = ?, ultimo_cambio = ? WHERE codigo = ? AND ultimo_cambio = ?')
+      .bind(JSON.stringify(sala), nuevoCambio, limpio, fila.ultimo_cambio)
+      .run();
+
+    if ((upd?.meta?.changes ?? 1) > 0) {
+      return { ok: true, sala, extra: resMut };
+    }
+  }
+
+  return { ok: false, status: 409, error: 'Conflicto de concurrencia en sala, reintenta.' };
+}
+
 async function d1EliminarSalaOnline(d1, codigo) {
   const limpio = normalizarCodigoSala(codigo);
   if (!d1 || !limpio) return;
@@ -996,15 +1070,46 @@ async function d1EliminarSalaOnline(d1, codigo) {
 // MANEJADOR PRINCIPAL DE LA API
 // ==========================================
 
+function resolverOriginPermitido(request, env, url) {
+  const origin = (request.headers.get('Origin') || '').trim();
+  if (!origin) return url.origin;
+
+  const listaEnv = String(env?.ALLOWED_ORIGIN || env?.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (listaEnv.includes(origin) || origin === url.origin) {
+    return origin;
+  }
+
+  try {
+    const oUrl = new URL(origin);
+    if (
+      oUrl.hostname === 'localhost' ||
+      oUrl.hostname === '127.0.0.1' ||
+      oUrl.hostname.endsWith('.pages.dev') ||
+      oUrl.hostname.endsWith('.workers.dev') ||
+      oUrl.hostname.endsWith('.run.app')
+    ) {
+      return origin;
+    }
+  } catch {}
+
+  return url.origin;
+}
+
 async function manejarPeticionApi(request, env) {
   const url = new URL(request.url);
   const pathname = url.pathname;
+  const allowOrigin = resolverOriginPermitido(request, env, url);
 
   const cabecerasJson = {
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': allowOrigin,
+    'Vary': 'Origin',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-User, X-Admin-Token, X-Admin-Id, X-Self-Delete-Id, X-Self-Delete-Key, X-Register-Id',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-User, X-Admin-Token, X-Self-Delete-Id, X-Self-Delete-Key, X-Register-Id',
     'Access-Control-Expose-Headers': 'X-DB-Bound, X-Database-Bound',
     'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
     'Pragma': 'no-cache',
@@ -1025,19 +1130,20 @@ async function manejarPeticionApi(request, env) {
 
   const rawAdminPass = env?.ADMIN_SECRET_KEY || env?.ADMIN_KEY || env?.ADMIN_PASSWORD;
   const rawAdminUser = env?.ADMIN_USERNAME || env?.ADMIN_USER;
-  const ADMIN_PASS = String(rawAdminPass || 'muros2026').trim();
+  const ADMIN_PASS = rawAdminPass ? String(rawAdminPass).trim() : '';
   const ADMIN_USER = String(rawAdminUser || 'admin').trim();
-  const adminKeyConfigurada = Boolean(rawAdminPass && rawAdminPass.trim().length > 0);
+  const adminKeyConfigurada = Boolean(ADMIN_PASS.length > 0);
   const adminUserConfigurada = Boolean(rawAdminUser && rawAdminUser.trim().length > 0);
 
   async function verificarPermisosLlamante(cuentas, sesion) {
     const hUser = String(request.headers.get('X-Admin-User') || '').trim().toLowerCase();
     const hToken = String(request.headers.get('X-Admin-Token') || '').trim();
-    const hAdminId = String(request.headers.get('X-Admin-Id') || '').trim().toLowerCase();
 
     if (
-      (hToken && (compararTiempoConstante(hToken, ADMIN_PASS) || hToken === 'muros2026')) ||
-      (hUser === ADMIN_USER.toLowerCase() && hToken && (compararTiempoConstante(hToken, ADMIN_PASS) || hToken === 'muros2026'))
+      ADMIN_PASS &&
+      hToken &&
+      (compararTiempoConstante(hToken, ADMIN_PASS) ||
+        (hUser === ADMIN_USER.toLowerCase() && compararTiempoConstante(hToken, ADMIN_PASS)))
     ) {
       return {
         esSupremoUnico: true,
@@ -1048,7 +1154,17 @@ async function manejarPeticionApi(request, env) {
       };
     }
 
-    if (sesion && sesion.userId === 'admin') {
+    if (!sesion || sesion.revocada || !sesion.userId) {
+      return {
+        esSupremoUnico: false,
+        esDev: false,
+        esAdmin: false,
+        esMod: false,
+        actor: null,
+      };
+    }
+
+    if (sesion.userId === 'admin') {
       return {
         esSupremoUnico: true,
         esDev: true,
@@ -1058,11 +1174,7 @@ async function manejarPeticionApi(request, env) {
       };
     }
 
-    // Priorizar el user autenticado por token de sesión Bearer sobre X-Admin-Id
-    const cuentaLlamante =
-      (sesion && sesion.userId && cuentas[sesion.userId]) ||
-      (hAdminId && cuentas[hAdminId]) ||
-      null;
+    const cuentaLlamante = cuentas[sesion.userId] || null;
 
     if (cuentaLlamante) {
       const rol = cuentaLlamante.rol || 'jugador';
@@ -1162,9 +1274,13 @@ async function manejarPeticionApi(request, env) {
       userTrim.toLowerCase() === ADMIN_USER.toLowerCase() ||
       userTrim.toLowerCase() === 'admin';
     if (esUserSupremo) {
-      const claveValida =
-        compararTiempoConstante(claveTrim, ADMIN_PASS) ||
-        compararTiempoConstante(claveTrim, 'muros2026');
+      if (!ADMIN_PASS) {
+        return new Response(JSON.stringify({ ok: false, error: 'ADMIN_SECRET_KEY no configurada en el servidor.' }), {
+          status: 503,
+          headers: cabecerasJson,
+        });
+      }
+      const claveValida = compararTiempoConstante(claveTrim, ADMIN_PASS);
       if (!claveValida) {
         return new Response(JSON.stringify({ ok: false, error: 'Clave del Dev Supremo incorrecta.' }), {
           status: 401,
@@ -1493,11 +1609,18 @@ async function manejarPeticionApi(request, env) {
   // ==========================================
   if (pathname === '/api/cuentas') {
     if (request.method === 'GET') {
+      const sesion = await resolverSesion(request, env, d1);
       const cuentas = await d1ObtenerTodasCuentas(d1);
       if (!cuentas['admin']) {
         cuentas['admin'] = construirPerfilSupremo();
       }
-      return new Response(JSON.stringify(sanitizarMapaCuentasPublicas(cuentas)), { headers: cabecerasJson });
+      const perm = await verificarPermisosLlamante(cuentas, sesion);
+      const esStaff = Boolean(perm.esDev || perm.esAdmin || perm.esMod);
+      const selfId = sesion && !sesion.revocada && sesion.userId ? sesion.userId : null;
+      return new Response(
+        JSON.stringify(sanitizarMapaCuentasPublicas(cuentas, { esStaff, selfId })),
+        { headers: cabecerasJson }
+      );
     }
 
     if (request.method === 'POST') {
@@ -1506,12 +1629,17 @@ async function manejarPeticionApi(request, env) {
       const cuentasActuales = await d1ObtenerTodasCuentas(d1);
       const perm = await verificarPermisosLlamante(cuentasActuales, sesion);
 
-      // Si es llamada de actualización de perfil/aspecto propio desde un cliente autenticado
-      if (sesion && sesion.userId && body && typeof body === 'object') {
+      if (sesion && !sesion.revocada && sesion.userId && body && typeof body === 'object') {
         const entradaPropia = body[sesion.userId];
         if (entradaPropia && !perm.esDev && !perm.esAdmin) {
           const prev = cuentasActuales[sesion.userId];
           if (prev) {
+            const invPrev = prev.inventario?.personajes || [];
+            const activoSolicitado = entradaPropia.inventario?.activoId;
+            const activoValido =
+              activoSolicitado && invPrev.some((p) => p && p.id === activoSolicitado)
+                ? activoSolicitado
+                : undefined;
             const actualizada = {
               ...prev,
               avatarColor: entradaPropia.avatarColor || prev.avatarColor,
@@ -1521,10 +1649,7 @@ async function manejarPeticionApi(request, env) {
               avatarAura: entradaPropia.avatarAura ?? prev.avatarAura,
               temaTablero: entradaPropia.temaTablero || prev.temaTablero,
               inventario: entradaPropia.inventario
-                ? {
-                    personajes: prev.inventario?.personajes || [],
-                    activoId: entradaPropia.inventario.activoId || undefined,
-                  }
+                ? { personajes: invPrev, activoId: activoValido }
                 : prev.inventario,
               ultimaConexion: new Date().toISOString(),
             };
@@ -1544,7 +1669,6 @@ async function manejarPeticionApi(request, env) {
       for (const [id, rawAcc] of Object.entries(body || {})) {
         if (!rawAcc || typeof rawAcc !== 'object' || id === 'admin') continue;
         const prev = cuentasActuales[id] || {};
-        // Respetar jerarquía de roles
         let nuevoRol = prev.rol || 'jugador';
         const rolSolicitado = rawAcc.rol;
         if (rolSolicitado && ['dev', 'admin', 'mod', 'jugador'].includes(rolSolicitado)) {
@@ -1561,9 +1685,22 @@ async function manejarPeticionApi(request, env) {
 
         const fusionada = {
           ...prev,
-          ...rawAcc,
+          nombre: typeof rawAcc.nombre === 'string' && rawAcc.nombre.trim() ? rawAcc.nombre.trim() : prev.nombre,
+          avatarColor: rawAcc.avatarColor || prev.avatarColor,
+          avatarHat: rawAcc.avatarHat || prev.avatarHat,
+          avatarRopa: rawAcc.avatarRopa ?? prev.avatarRopa,
+          avatarRopaColor: rawAcc.avatarRopaColor ?? prev.avatarRopaColor,
+          avatarAura: rawAcc.avatarAura ?? prev.avatarAura,
+          temaTablero: rawAcc.temaTablero || prev.temaTablero,
           id,
           rol: nuevoRol,
+          puntos: prev.puntos ?? 0,
+          partidas: prev.partidas ?? 0,
+          victorias: prev.victorias ?? 0,
+          derrotas: prev.derrotas ?? 0,
+          empates: prev.empates ?? 0,
+          historialPartidas: Array.isArray(prev.historialPartidas) ? prev.historialPartidas : [],
+          inventario: prev.inventario || { personajes: [] },
           claveHash: prev.claveHash,
           claveSalt: prev.claveSalt,
           claveIter: prev.claveIter,
@@ -1851,7 +1988,13 @@ async function manejarPeticionApi(request, env) {
     const trimmedUser = String(body.user || '').trim();
     const trimmedKey = String(body.clave || '').trim();
     if (trimmedUser.toLowerCase() === ADMIN_USER.toLowerCase() || trimmedUser.toLowerCase() === 'admin') {
-      if (compararTiempoConstante(trimmedKey, ADMIN_PASS) || trimmedKey === 'muros2026') {
+      if (!ADMIN_PASS) {
+        return new Response(JSON.stringify({ ok: false, isSupremeAttempt: true, error: 'ADMIN_SECRET_KEY no configurada en el servidor.' }), {
+          status: 503,
+          headers: cabecerasJson,
+        });
+      }
+      if (compararTiempoConstante(trimmedKey, ADMIN_PASS)) {
         const cuentas = await d1ObtenerTodasCuentas(d1);
         const supremo = construirPerfilSupremo(cuentas['admin']);
         await d1GuardarCuentaCompleta(d1, supremo, false);
@@ -1884,7 +2027,7 @@ async function manejarPeticionApi(request, env) {
     const body = await request.json().catch(() => ({}));
     const { requiereSupremo, adminToken } = body || {};
 
-    if (adminToken && (compararTiempoConstante(adminToken, ADMIN_PASS) || adminToken === 'muros2026')) {
+    if (ADMIN_PASS && adminToken && compararTiempoConstante(String(adminToken).trim(), ADMIN_PASS)) {
       return new Response(
         JSON.stringify({ ok: true, isSupremeAdmin: true, isCloudAdmin: true, rol: 'dev', dbBound }),
         { headers: cabecerasJson }
@@ -2598,8 +2741,7 @@ async function manejarPeticionApi(request, env) {
       }
       if (!acc) continue;
 
-      // Seguridad: solo el propietario de la sesión (o un Dev) puede registrar sus resultados
-      const autorizado = sesion && (sesion.userId === acc.id || sesion.rol === 'dev');
+      const autorizado = sesion && !sesion.revocada && (sesion.userId === acc.id || sesion.rol === 'dev');
       if (!autorizado) continue;
 
       const histPrev = Array.isArray(acc.historialPartidas) ? acc.historialPartidas : [];
@@ -2608,15 +2750,25 @@ async function manejarPeticionApi(request, env) {
         continue; // Idempotente: no duplicar si ya se guardó (cola offline / reintento)
       }
 
+      const MAX_PUNTOS_PARTIDA_MUROS = 35;
+      const MAX_PUNTOS_DIARIOS_MUROS = 250;
+      const hoyUtc = new Date().toISOString().slice(0, 10);
+      const ptsHoy = histPrev.reduce((sum, h) => {
+        if (!h || typeof h.fecha !== 'string') return sum;
+        return h.fecha.slice(0, 10) === hoyUtc ? sum + Math.max(0, Number(h.puntos) || 0) : sum;
+      }, 0);
+      const cupoDiarioRestante = Math.max(0, MAX_PUNTOS_DIARIOS_MUROS - ptsHoy);
+
       const resultado = p.resultado === 'victoria' || p.resultado === 'empate' ? p.resultado : 'derrota';
-      const puntosGanados = Math.max(0, Number(p.puntosGanados) || 0);
+      const puntosSolicitados = Math.max(0, Math.round(Number(p.puntosGanados) || 0));
+      const puntosGanados = Math.min(puntosSolicitados, MAX_PUNTOS_PARTIDA_MUROS, cupoDiarioRestante);
       const ptsSemanalPartida =
         puntosGanados > 0
           ? puntosGanados
           : resultado === 'victoria'
-          ? Number(cfgSemanal.puntosVictoria ?? 3)
+          ? Math.min(cupoDiarioRestante, Number(cfgSemanal.puntosVictoria ?? 3))
           : resultado === 'empate'
-          ? Number(cfgSemanal.puntosEmpate ?? 1)
+          ? Math.min(cupoDiarioRestante, Number(cfgSemanal.puntosEmpate ?? 1))
           : 0;
 
       const registroPartida = {
@@ -2681,9 +2833,27 @@ async function manejarPeticionApi(request, env) {
 
   if (pathname === '/api/partida' && request.method === 'POST') {
     const sesion = await resolverSesion(request, env, d1);
+    if (!sesion || !sesion.userId || sesion.revocada) {
+      return new Response(
+        JSON.stringify({ ok: false, error: 'Sesión no válida o expirada.', guardados: [] }),
+        { status: 401, headers: cabecerasJson }
+      );
+    }
     const cuentas = await d1ObtenerTodasCuentas(d1);
     const body = await request.json().catch(() => ({}));
     const guardados = await procesarPartidaUnificada(body, sesion, cuentas);
+
+    if (guardados.length === 0) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          dbBound,
+          guardados,
+          error: 'No autorizado o cuenta no encontrada para registrar esta partida.',
+        }),
+        { status: 403, headers: cabecerasJson }
+      );
+    }
 
     return new Response(
       JSON.stringify({
@@ -2698,6 +2868,12 @@ async function manejarPeticionApi(request, env) {
 
   if (pathname === '/api/partidas/sincronizar' && request.method === 'POST') {
     const sesion = await resolverSesion(request, env, d1);
+    if (!sesion || !sesion.userId || sesion.revocada) {
+      return new Response(
+        JSON.stringify({ ok: false, error: 'Sesión no válida o expirada.', sincronizadas: [] }),
+        { status: 401, headers: cabecerasJson }
+      );
+    }
     const cuentas = await d1ObtenerTodasCuentas(d1);
     const body = await request.json().catch(() => ({}));
     const cola = Array.isArray(body.partidas) ? body.partidas : [];
@@ -3081,14 +3257,6 @@ async function manejarPeticionApi(request, env) {
 
     // POST /api/salas/:codigo/join
     if (subaccion === 'join' && request.method === 'POST') {
-      const sala = await d1LeerSalaOnline(d1, codigo);
-      if (!sala) {
-        return new Response(
-          JSON.stringify({ ok: false, error: `La sala ${codigo} no existe o el anfitrión ya la cerró.` }),
-          { status: 404, headers: cabecerasJson }
-        );
-      }
-
       const body = await request.json().catch(() => ({}));
       const peerId = String(body.peerId || '').trim();
       const cuentaId = body.cuentaId ? String(body.cuentaId).trim().toLowerCase() : undefined;
@@ -3107,99 +3275,110 @@ async function manejarPeticionApi(request, env) {
         });
       }
 
-      if (!Array.isArray(sala.jugadores)) sala.jugadores = [];
-      if (!sala.signals || typeof sala.signals !== 'object') sala.signals = {};
+      const resultado = await d1ActualizarSalaAtomica(d1, codigo, (sala) => {
+        if (!Array.isArray(sala.jugadores)) sala.jugadores = [];
+        if (!sala.signals || typeof sala.signals !== 'object') sala.signals = {};
 
-      let existente = sala.jugadores.find((p) => p.peerId === peerId);
-      if (!existente && sala.enPartida) {
-        const porNombre = sala.jugadores.find(
-          (p) => !p.esAnfitrion && String(p.nombre || '').toLowerCase() === nombre.toLowerCase()
-        );
-        if (porNombre) {
-          porNombre.peerId = peerId;
-          porNombre.conectado = true;
-          existente = porNombre;
+        let existente = sala.jugadores.find((p) => p.peerId === peerId);
+        if (!existente && sala.enPartida) {
+          const porNombre = sala.jugadores.find(
+            (p) => !p.esAnfitrion && String(p.nombre || '').toLowerCase() === nombre.toLowerCase()
+          );
+          if (porNombre) {
+            porNombre.peerId = peerId;
+            porNombre.conectado = true;
+            existente = porNombre;
+          } else {
+            return { abort: true, status: 409, error: 'La partida en esta sala ya comenzó.' };
+          }
+        }
+
+        let esAnfitrionResultado = false;
+        if (existente) {
+          existente.nombre = nombre;
+          existente.cuentaId = cuentaId || existente.cuentaId;
+          existente.color = color || existingColor(existente.color);
+          existente.hat = hat || existente.hat;
+          existente.ropa = ropa || existente.ropa || 'ninguna';
+          existente.ropaColor = ropaColor !== undefined ? ropaColor : existente.ropaColor;
+          existente.aura = aura || existente.aura || 'ninguna';
+          existente.conectado = true;
+          esAnfitrionResultado = Boolean(existente.esAnfitrion);
         } else {
-          return new Response(JSON.stringify({ ok: false, error: 'La partida en esta sala ya comenzó.' }), {
-            status: 409,
-            headers: cabecerasJson,
-          });
+          if (sala.jugadores.length >= (sala.maxJugadores || 2)) {
+            return { abort: true, status: 409, error: 'La sala ya está llena.' };
+          }
+          const coloresBase = ['#ff6b6b', '#4dabf7', '#ffd43b', '#51cf66'];
+          const gorrosBase = ['corona', 'pompon', 'antena', 'brote'];
+          const esPrimero = sala.jugadores.length === 0;
+          const nuevoId = sala.jugadores.length;
+          const nuevoJugador = {
+            id: nuevoId,
+            peerId,
+            cuentaId,
+            nombre,
+            color: color || coloresBase[nuevoId] || '#4dabf7',
+            hat: hat || gorrosBase[nuevoId] || 'pompon',
+            ropa,
+            ropaColor,
+            aura,
+            listo: true,
+            conectado: true,
+            esAnfitrion: esPrimero,
+          };
+          if (esPrimero) {
+            sala.hostPeerId = peerId;
+            sala.anfitrion = nombre;
+          }
+          sala.jugadores.push(nuevoJugador);
+          esAnfitrionResultado = esPrimero;
         }
-      }
 
-      let esAnfitrionResultado = false;
-      if (existente) {
-        existente.nombre = nombre;
-        existente.cuentaId = cuentaId || existente.cuentaId;
-        existente.color = color || existingColor(existente.color);
-        existente.hat = hat || existente.hat;
-        existente.ropa = ropa || existente.ropa || 'ninguna';
-        existente.ropaColor = ropaColor !== undefined ? ropaColor : existente.ropaColor;
-        existente.aura = aura || existente.aura || 'ninguna';
-        existente.conectado = true;
-        esAnfitrionResultado = Boolean(existente.esAnfitrion);
-      } else {
-        if (sala.jugadores.length >= (sala.maxJugadores || 2)) {
-          return new Response(JSON.stringify({ ok: false, error: 'La sala ya está llena.' }), {
-            status: 409,
-            headers: cabecerasJson,
-          });
+        if (offer && !esAnfitrionResultado) {
+          sala.signals[peerId] = {
+            ...(sala.signals[peerId] || {}),
+            offer,
+            answer: null,
+            updatedAt: Date.now(),
+          };
         }
-        const coloresBase = ['#ff6b6b', '#4dabf7', '#ffd43b', '#51cf66'];
-        const gorrosBase = ['corona', 'pompon', 'antena', 'brote'];
-        const esPrimero = sala.jugadores.length === 0;
-        const nuevoId = sala.jugadores.length;
-        const nuevoJugador = {
-          id: nuevoId,
-          peerId,
-          cuentaId,
-          nombre,
-          color: color || coloresBase[nuevoId] || '#4dabf7',
-          hat: hat || gorrosBase[nuevoId] || 'pompon',
-          ropa,
-          ropaColor,
-          aura,
-          listo: true,
-          conectado: true,
-          esAnfitrion: esPrimero,
-        };
-        if (esPrimero) {
-          sala.hostPeerId = peerId;
-          sala.anfitrion = nombre;
-        }
-        sala.jugadores.push(nuevoJugador);
-        esAnfitrionResultado = esPrimero;
-      }
 
-      if (offer && !esAnfitrionResultado) {
-        sala.signals[peerId] = {
-          ...(sala.signals[peerId] || {}),
-          offer,
-          answer: null,
-          updatedAt: Date.now(),
-        };
-      }
-
-      sala.jugadoresConectados = sala.jugadores.length;
-      await d1GuardarSalaOnline(d1, codigo, sala);
-
-      return new Response(JSON.stringify({ ok: true, sala, esAnfitrion: esAnfitrionResultado }), {
-        headers: cabecerasJson,
+        sala.jugadoresConectados = sala.jugadores.length;
+        return { esAnfitrion: esAnfitrionResultado };
       });
+
+      if (!resultado.ok) {
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            error: resultado.status === 404 ? `La sala ${codigo} no existe o el anfitrión ya la cerró.` : resultado.error,
+          }),
+          { status: resultado.status || 409, headers: cabecerasJson }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ ok: true, sala: resultado.sala, esAnfitrion: Boolean(resultado.extra?.esAnfitrion) }),
+        { headers: cabecerasJson }
+      );
     }
 
     // POST /api/salas/:codigo/signal
     if (subaccion === 'signal' && request.method === 'POST') {
-      const sala = await d1LeerSalaOnline(d1, codigo);
-      if (!sala) {
-        return new Response(JSON.stringify({ ok: false, error: 'Sala no disponible' }), {
-          status: 404,
-          headers: cabecerasJson,
-        });
-      }
       const body = await request.json().catch(() => ({}));
       const clientPeerId = String(body.clientPeerId || '').trim();
-      if (clientPeerId) {
+      if (!clientPeerId) {
+        const sala = await d1LeerSalaOnline(d1, codigo);
+        if (!sala) {
+          return new Response(JSON.stringify({ ok: false, error: 'Sala no disponible' }), {
+            status: 404,
+            headers: cabecerasJson,
+          });
+        }
+        return new Response(JSON.stringify({ ok: true }), { headers: cabecerasJson });
+      }
+
+      const resultado = await d1ActualizarSalaAtomica(d1, codigo, (sala) => {
         if (!sala.signals || typeof sala.signals !== 'object') sala.signals = {};
         const prev = sala.signals[clientPeerId] || {};
         sala.signals[clientPeerId] = {
@@ -3208,22 +3387,32 @@ async function manejarPeticionApi(request, env) {
           ...(body.answer !== undefined ? { answer: body.answer } : {}),
           updatedAt: Date.now(),
         };
-        await d1GuardarSalaOnline(d1, codigo, sala);
+      });
+
+      if (!resultado.ok) {
+        return new Response(JSON.stringify({ ok: false, error: resultado.error || 'Sala no disponible' }), {
+          status: resultado.status || 404,
+          headers: cabecerasJson,
+        });
       }
       return new Response(JSON.stringify({ ok: true }), { headers: cabecerasJson });
     }
 
     // POST /api/salas/:codigo/msg
     if (subaccion === 'msg' && request.method === 'POST') {
-      const sala = await d1LeerSalaOnline(d1, codigo);
-      if (!sala) {
-        return new Response(JSON.stringify({ ok: false, error: 'Sala no disponible' }), {
-          status: 404,
-          headers: cabecerasJson,
-        });
-      }
       const body = await request.json().catch(() => ({}));
-      if (body && body.msg) {
+      if (!body || !body.msg) {
+        const sala = await d1LeerSalaOnline(d1, codigo);
+        if (!sala) {
+          return new Response(JSON.stringify({ ok: false, error: 'Sala no disponible' }), {
+            status: 404,
+            headers: cabecerasJson,
+          });
+        }
+        return new Response(JSON.stringify({ ok: true, seq: sala.seq || 0 }), { headers: cabecerasJson });
+      }
+
+      const resultado = await d1ActualizarSalaAtomica(d1, codigo, (sala) => {
         sala.seq = (sala.seq || 0) + 1;
         if (!Array.isArray(sala.mensajes)) sala.mensajes = [];
         sala.mensajes.push({
@@ -3237,20 +3426,26 @@ async function manejarPeticionApi(request, env) {
         if (body.msg.type === 'START_GAME') {
           sala.enPartida = true;
         }
-        await d1GuardarSalaOnline(d1, codigo, sala);
+        return { seq: sala.seq };
+      });
+
+      if (!resultado.ok) {
+        return new Response(JSON.stringify({ ok: false, error: resultado.error || 'Sala no disponible' }), {
+          status: resultado.status || 404,
+          headers: cabecerasJson,
+        });
       }
-      return new Response(JSON.stringify({ ok: true, seq: sala.seq || 0 }), { headers: cabecerasJson });
+      return new Response(JSON.stringify({ ok: true, seq: resultado.extra?.seq || 0 }), { headers: cabecerasJson });
     }
 
     // POST /api/salas/:codigo/leave
     if (subaccion === 'leave' && request.method === 'POST') {
-      const sala = await d1LeerSalaOnline(d1, codigo);
-      if (sala) {
-        const body = await request.json().catch(() => ({}));
-        const peerId = String(body.peerId || '').trim();
-        const nombre = String(body.nombre || 'El otro jugador').trim();
-        const jugadorId = typeof body.jugadorId === 'number' ? body.jugadorId : 1;
+      const body = await request.json().catch(() => ({}));
+      const peerId = String(body.peerId || '').trim();
+      const nombre = String(body.nombre || 'El otro jugador').trim();
+      const jugadorId = typeof body.jugadorId === 'number' ? body.jugadorId : 1;
 
+      await d1ActualizarSalaAtomica(d1, codigo, (sala) => {
         if (!sala.enPartida && Array.isArray(sala.jugadores)) {
           sala.jugadores = sala.jugadores.filter((p) => (sala.esOficialStaff ? p.peerId !== peerId : (p.esAnfitrion || p.peerId !== peerId)));
           sala.jugadores.forEach((p, idx) => {
@@ -3278,8 +3473,7 @@ async function manejarPeticionApi(request, env) {
           ts: Date.now(),
         });
         if (sala.mensajes.length > 40) sala.mensajes = sala.mensajes.slice(-40);
-        await d1GuardarSalaOnline(d1, codigo, sala);
-      }
+      });
       return new Response(JSON.stringify({ ok: true }), { headers: cabecerasJson });
     }
 
@@ -3292,12 +3486,10 @@ async function manejarPeticionApi(request, env) {
     // PATCH /api/salas/:codigo
     if (!subaccion && request.method === 'PATCH') {
       const body = await request.json().catch(() => ({}));
-      const sala = await d1LeerSalaOnline(d1, codigo);
-      if (sala) {
+      await d1ActualizarSalaAtomica(d1, codigo, (sala) => {
         if (typeof body.jugadoresConectados === 'number') sala.jugadoresConectados = body.jugadoresConectados;
         if (typeof body.enPartida === 'boolean') sala.enPartida = body.enPartida;
-        await d1GuardarSalaOnline(d1, codigo, sala);
-      }
+      });
       return new Response(JSON.stringify({ ok: true, dbBound }), { headers: cabecerasJson });
     }
   }

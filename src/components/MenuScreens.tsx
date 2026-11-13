@@ -42,6 +42,7 @@ interface MenuScreenProps {
   onAbrirLogros: () => void;
   onAbrirComoJugar: () => void;
   onAbrirAjustes: () => void;
+  onAbrirCandado?: () => void;
 }
 
 export const MenuScreen: React.FC<MenuScreenProps> = ({
@@ -58,6 +59,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
   onAbrirLogros,
   onAbrirComoJugar,
   onAbrirAjustes,
+  onAbrirCandado,
 }) => {
   const [menuJuegosAbierto, setMenuJuegosAbierto] = useState(false);
 
@@ -165,18 +167,33 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
                 </button>
               )}
 
-              <div className={
-                esMinimalista
-                  ? 'px-3 py-2 rounded-lg bg-white/5 border border-dashed border-white/10 text-left'
-                  : 'px-2.5 py-1.5 rounded-xl bg-white/75 border border-dashed border-[#2b2140]/40 text-left'
-              }>
-                <span className={esMinimalista ? 'text-[11px] font-semibold text-slate-400 block' : 'text-[11px] font-extrabold text-[#86542d] block'}>
-                  ➕ Próximo juego
-                </span>
-                <span className={esMinimalista ? 'text-[9px] text-slate-500 block leading-tight' : 'text-[9px] font-semibold text-[#868e96] block leading-tight'}>
-                  Espacio listo para añadir otro minijuego
-                </span>
-              </div>
+              {onAbrirCandado && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    sounds.playClick();
+                    setMenuJuegosAbierto(false);
+                    onAbrirCandado();
+                  }}
+                  className={
+                    esMinimalista
+                      ? 'px-3 py-2 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 text-left cursor-pointer transition-colors'
+                      : 'px-2.5 py-2 rounded-xl bg-[#e7f5ff] hover:bg-[#d0ebff] border-2 border-[#2b2140] text-left cursor-pointer transition-colors'
+                  }
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span className={esMinimalista ? 'text-xs font-bold text-indigo-200 block' : 'text-xs font-black text-[#1864ab] block'}>
+                      🔐 Candado
+                    </span>
+                    <span className={esMinimalista ? 'text-[9px] bg-indigo-500/30 text-indigo-200 px-1.5 py-0.5 rounded' : 'text-[9px] font-black bg-white text-[#1864ab] px-1.5 py-0.5 rounded border border-[#2b2140]'}>
+                      Beta
+                    </span>
+                  </div>
+                  <span className={esMinimalista ? 'text-[10px] text-slate-400 block leading-tight mt-0.5' : 'text-[10px] font-bold text-[#364fc7] block leading-tight mt-0.5'}>
+                    Descifra la combinación · Modo local
+                  </span>
+                </button>
+              )}
             </div>
           )}
         </div>

@@ -63,6 +63,7 @@ import {
   VictoryModal,
 } from './components/Modals';
 import { OfflineIndicator } from './components/PWAInstallControl';
+import { CandadoGame } from './candado';
 
 function leerSalaDeUrl(): string | null {
   if (typeof window === 'undefined') return null;
@@ -96,6 +97,7 @@ export const App: React.FC = () => {
   const [screen, setScreen] = useState<PantallaApp>(() =>
     leerSalaDeUrl() ? 'online_lobby' : 'menu'
   );
+  const [juegoActivo, setJuegoActivo] = useState<'muros' | 'candado'>('muros');
   const [esTorneoConfig, setEsTorneoConfig] = useState<boolean>(false);
   const [userActual, setuserActual] = useState<UserCuenta | null>(() =>
     obteneruserActual()
@@ -1233,8 +1235,28 @@ export const App: React.FC = () => {
         </div>
       )}
 
+      {/* MINIJUEGO AISLADO: CANDADO (BETA LOCAL) */}
+      {juegoActivo === 'candado' && (
+        <CandadoGame
+          userActual={userActual}
+          sonidoActivo={ajustes.sonido}
+          animacionesReducidas={ajustes.animacionesReducidas}
+          onToggleSonido={() => {
+            setAjustes((prev) => {
+              const next = { ...prev, sonido: !prev.sonido };
+              guardarAjustes(next);
+              return next;
+            });
+          }}
+          onVolverAMurosLocos={() => {
+            setJuegoActivo('muros');
+            setScreen('menu');
+          }}
+        />
+      )}
+
       {/* RUTAS DE PANTALLA */}
-      {screen === 'menu' && (
+      {juegoActivo === 'muros' && screen === 'menu' && (
         <MenuScreen
           userActual={userActual}
           onAbrirPerfil={() => setModalActivo('perfil')}
@@ -1253,10 +1275,11 @@ export const App: React.FC = () => {
           onAbrirLogros={() => setModalActivo('logros')}
           onAbrirComoJugar={() => setModalActivo('como_jugar')}
           onAbrirAjustes={() => setModalActivo('ajustes')}
+          onAbrirCandado={() => setJuegoActivo('candado')}
         />
       )}
 
-      {screen === 'config' && (
+      {juegoActivo === 'muros' && screen === 'config' && (
         <ConfigScreen
           ajustes={ajustes}
           esTorneoInicial={esTorneoConfig}
@@ -1271,7 +1294,7 @@ export const App: React.FC = () => {
         />
       )}
 
-      {screen === 'online_lobby' && (
+      {juegoActivo === 'muros' && screen === 'online_lobby' && (
         <OnlineLobbyScreen
           userActual={userActual}
           codigoSalaInicial={codigoSalaUrl}
@@ -1288,7 +1311,7 @@ export const App: React.FC = () => {
         />
       )}
 
-      {screen === 'juego' && estado && (
+      {juegoActivo === 'muros' && screen === 'juego' && estado && (
         <div className="relative w-full max-w-4xl mx-auto flex-1 flex flex-col justify-between p-1.5 sm:p-2.5 z-10 min-h-0">
           {/* Barra superior de la partida con el ÚNICO botón de Aspecto (el que le aparece a todos) */}
           <div className="w-full max-w-[620px] mx-auto flex items-center justify-between px-2 py-1 mb-1 bg-white/75 backdrop-blur-xs rounded-2xl border-2 border-[#2b2140] shadow-sm shrink-0">

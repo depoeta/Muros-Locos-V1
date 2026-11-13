@@ -77,10 +77,16 @@ function escribirJson(rutaArchivo: string, datos: any) {
   }
 }
 
-const obtenerCredencialesAdmin = () => ({
-  user: String(process.env.ADMIN_USERNAME || process.env.ADMIN_USER || 'admin').trim(),
-  pass: String(process.env.ADMIN_SECRET_KEY || process.env.ADMIN_KEY || process.env.ADMIN_PASSWORD || 'muros2026').trim(),
-});
+const obtenerCredencialesAdmin = () => {
+  const configured = String(
+    process.env.ADMIN_SECRET_KEY || process.env.ADMIN_KEY || process.env.ADMIN_PASSWORD || ''
+  ).trim();
+  const pass = configured || (process.env.NODE_ENV !== 'production' ? 'muros2026' : '');
+  return {
+    user: String(process.env.ADMIN_USERNAME || process.env.ADMIN_USER || 'admin').trim(),
+    pass,
+  };
+};
 
 // ==========================================
 // HELPERS TABLA `config`
@@ -205,14 +211,14 @@ async function resolverSesionLocal(req: express.Request) {
   const headerAdminToken = String(req.header('X-Admin-Token') || '').trim();
   const { pass: ADMIN_PASS } = obtenerCredencialesAdmin();
 
-  if (headerAdminToken && (compararTiempoConstante(headerAdminToken, ADMIN_PASS) || headerAdminToken === 'muros2026')) {
+  if (ADMIN_PASS && headerAdminToken && compararTiempoConstante(headerAdminToken, ADMIN_PASS)) {
     return { userId: 'admin', rol: 'dev', token: headerAdminToken, porClaveMaestra: true };
   }
 
   if (!token) token = headerAdminToken;
   if (!token) return null;
 
-  if (compararTiempoConstante(token, ADMIN_PASS) || token === 'muros2026') {
+  if (ADMIN_PASS && compararTiempoConstante(token, ADMIN_PASS)) {
     return { userId: 'admin', rol: 'dev', token, porClaveMaestra: true };
   }
 
@@ -253,7 +259,7 @@ function construirPerfilSupremo(previo: any = {}) {
   };
 }
 
-function sanitizarCuentaPublica(acc: any) {
+function sanitizarCuentaPublica(acc: any, incluirPrivados = true) {
   if (!acc || typeof acc !== 'object') return null;
   const copia = { ...acc };
   delete copia.clave;
@@ -263,14 +269,31 @@ function sanitizarCuentaPublica(acc: any) {
   if (copia.id === 'admin') {
     copia.rol = 'dev';
     copia.esSupremo = true;
+  } else {
+    copia.esSupremo = false;
+  }
+  if (!incluirPrivados) {
+    delete copia.historialPartidas;
+    delete copia.fechaRegistro;
+    delete copia.ultimaConexion;
+    copia.inventario = {
+      personajes: [],
+      ...(copia.inventario?.activoId ? { activoId: copia.inventario.activoId } : {}),
+    };
   }
   return copia;
 }
 
-function sanitizarMapaCuentasPublicas(mapa: Record<string, any>) {
+function sanitizarMapaCuentasPublicas(
+  mapa: Record<string, any>,
+  opciones: { esStaff?: boolean; selfId?: string | null } = {}
+) {
+  const esStaff = Boolean(opciones?.esStaff);
+  const selfId = opciones?.selfId ? String(opciones.selfId) : null;
   const out: Record<string, any> = {};
   for (const [id, acc] of Object.entries(mapa || {})) {
-    const pub = sanitizarCuentaPublica(acc);
+    const incluirPrivados = esStaff || (selfId !== null && id === selfId);
+    const pub = sanitizarCuentaPublica(acc, incluirPrivados);
     if (pub) out[id] = pub;
   }
   return out;
@@ -475,7 +498,7 @@ function dbRenombrarIdEnCascada(oldId: string, newId: string): boolean {
   if (Array.isArray(salasPers)) {
     escribirJson(
       ARCHIVO_SALAS_PERSONALIZADAS,
-      salasPers.map((s: any) => (s.creadorId === oldId ? { ...s, creadorId: newId } : s))
+      salasPers.map((s: any) => (s.creadorId === oldId || s.creador_id === oldId ? { ...s, creadorId: newId, creador_id: newId } : s))
     );
   }
   tocarUltimaActualizacion();
@@ -669,15 +692,33 @@ function eliminarSalaOnline(codigo: string) {
   escribirJson(ARCHIVO_SALAS_ONLINE, salasRaw);
 }
 
+function actualizarSalaAtomicaLocal(
+  codigo: string,
+  mutador: (sala: any) => any
+): { ok: boolean; status?: number; error?: string; sala?: any; extra?: any } {
+  const limpio = normalizarCodigoSala(codigo);
+  if (!limpio) return { ok: false, status: 404, error: 'Sala no disponible' };
+  const sala = leerSalaOnline(limpio);
+  if (!sala) return { ok: false, status: 404, error: 'Sala no disponible' };
+  const resMut = mutador(sala);
+  if (resMut && resMut.abort) {
+    return { ok: false, status: resMut.status || 409, error: resMut.error || 'Conflicto en sala' };
+  }
+  sala.version = (Number(sala.version) || 0) + 1;
+  guardarSalaOnline(limpio, sala);
+  return { ok: true, sala, extra: resMut };
+}
+
 function verificarPermisosLlamante(req: express.Request, cuentas: Record<string, any>, sesion: any) {
   const { user: ADMIN_USER, pass: ADMIN_PASS } = obtenerCredencialesAdmin();
   const hUser = String(req.header('X-Admin-User') || '').trim().toLowerCase();
   const hToken = String(req.header('X-Admin-Token') || '').trim();
-  const hAdminId = String(req.header('X-Admin-Id') || '').trim().toLowerCase();
 
   if (
-    (hToken && (compararTiempoConstante(hToken, ADMIN_PASS) || hToken === 'muros2026')) ||
-    (hUser === ADMIN_USER.toLowerCase() && hToken && (compararTiempoConstante(hToken, ADMIN_PASS) || hToken === 'muros2026'))
+    ADMIN_PASS &&
+    hToken &&
+    (compararTiempoConstante(hToken, ADMIN_PASS) ||
+      (hUser === ADMIN_USER.toLowerCase() && compararTiempoConstante(hToken, ADMIN_PASS)))
   ) {
     return {
       esSupremoUnico: true,
@@ -688,7 +729,11 @@ function verificarPermisosLlamante(req: express.Request, cuentas: Record<string,
     };
   }
 
-  if (sesion && sesion.userId === 'admin') {
+  if (!sesion || sesion.revocada || !sesion.userId) {
+    return { esSupremoUnico: false, esDev: false, esAdmin: false, esMod: false, actor: null };
+  }
+
+  if (sesion.userId === 'admin') {
     return {
       esSupremoUnico: true,
       esDev: true,
@@ -698,10 +743,7 @@ function verificarPermisosLlamante(req: express.Request, cuentas: Record<string,
     };
   }
 
-  const cuentaLlamante =
-    (sesion && sesion.userId && cuentas[sesion.userId]) ||
-    (hAdminId && cuentas[hAdminId]) ||
-    null;
+  const cuentaLlamante = cuentas[sesion.userId] || null;
 
   if (cuentaLlamante) {
     const rol = cuentaLlamante.rol || 'jugador';
@@ -754,8 +796,10 @@ app.post('/api/login', async (req, res) => {
   const esUserSupremo =
     userTrim.toLowerCase() === ADMIN_USER.toLowerCase() || userTrim.toLowerCase() === 'admin';
   if (esUserSupremo) {
-    const claveValida =
-      compararTiempoConstante(claveTrim, ADMIN_PASS) || compararTiempoConstante(claveTrim, 'muros2026');
+    if (!ADMIN_PASS) {
+      return res.status(503).json({ ok: false, error: 'ADMIN_SECRET_KEY no configurada en el servidor.' });
+    }
+    const claveValida = compararTiempoConstante(claveTrim, ADMIN_PASS);
     if (!claveValida) {
       return res.status(401).json({ ok: false, error: 'Clave del Dev Supremo incorrecta.' });
     }
@@ -967,9 +1011,13 @@ app.post('/api/perfil/dar-de-baja', async (req, res) => {
   return res.json({ ok: true, mensaje: 'Cuenta eliminada definitivamente.' });
 });
 
-app.get('/api/cuentas', (_req, res) => {
+app.get('/api/cuentas', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
   const cuentas = dbObtenerTodasCuentas();
-  res.json(sanitizarMapaCuentasPublicas(cuentas));
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+  const esStaff = Boolean(perm.esDev || perm.esAdmin || perm.esMod);
+  const selfId = sesion && !(sesion as any).revocada && sesion.userId ? sesion.userId : null;
+  res.json(sanitizarMapaCuentasPublicas(cuentas, { esStaff, selfId }));
 });
 
 app.post('/api/cuentas', async (req, res) => {
@@ -978,10 +1026,14 @@ app.post('/api/cuentas', async (req, res) => {
   const cuentasActuales = dbObtenerTodasCuentas();
   const perm = verificarPermisosLlamante(req, cuentasActuales, sesion);
 
-  if (sesion && sesion.userId && raw && typeof raw === 'object' && raw[sesion.userId] && !perm.esDev && !perm.esAdmin) {
+  if (sesion && !(sesion as any).revocada && sesion.userId && raw && typeof raw === 'object' && raw[sesion.userId] && !perm.esDev && !perm.esAdmin) {
     const ent = raw[sesion.userId];
     const prev = cuentasActuales[sesion.userId];
     if (prev) {
+      const invPrev = prev.inventario?.personajes || [];
+      const activoSol = ent.inventario?.activoId;
+      const activoValido =
+        activoSol && invPrev.some((p: any) => p && p.id === activoSol) ? activoSol : undefined;
       const act = {
         ...prev,
         avatarColor: ent.avatarColor || prev.avatarColor,
@@ -990,7 +1042,7 @@ app.post('/api/cuentas', async (req, res) => {
         avatarRopaColor: ent.avatarRopaColor ?? prev.avatarRopaColor,
         avatarAura: ent.avatarAura ?? prev.avatarAura,
         temaTablero: ent.temaTablero || prev.temaTablero,
-        inventario: ent.inventario ? { personajes: prev.inventario?.personajes || [], activoId: ent.inventario.activoId } : prev.inventario,
+        inventario: ent.inventario ? { personajes: invPrev, activoId: activoValido } : prev.inventario,
         ultimaConexion: new Date().toISOString(),
       };
       dbGuardarCuentaCompleta(act, true);
@@ -1012,7 +1064,32 @@ app.post('/api/cuentas', async (req, res) => {
       else if (perm.esDev && prev.rol !== 'dev' && rolSol !== 'dev') nuevoRol = rolSol;
       else if (perm.esAdmin && prev.rol !== 'dev' && prev.rol !== 'admin' && (rolSol === 'mod' || rolSol === 'jugador')) nuevoRol = rolSol;
     }
-    dbGuardarCuentaCompleta({ ...prev, ...(rawAcc as any), id, rol: nuevoRol, claveHash: prev.claveHash, claveSalt: prev.claveSalt, claveIter: prev.claveIter }, false);
+    const rAcc = rawAcc as any;
+    dbGuardarCuentaCompleta(
+      {
+        ...prev,
+        nombre: typeof rAcc.nombre === 'string' && rAcc.nombre.trim() ? rAcc.nombre.trim() : prev.nombre,
+        avatarColor: rAcc.avatarColor || prev.avatarColor,
+        avatarHat: rAcc.avatarHat || prev.avatarHat,
+        avatarRopa: rAcc.avatarRopa ?? prev.avatarRopa,
+        avatarRopaColor: rAcc.avatarRopaColor ?? prev.avatarRopaColor,
+        avatarAura: rAcc.avatarAura ?? prev.avatarAura,
+        temaTablero: rAcc.temaTablero || prev.temaTablero,
+        id,
+        rol: nuevoRol,
+        puntos: prev.puntos ?? 0,
+        partidas: prev.partidas ?? 0,
+        victorias: prev.victorias ?? 0,
+        derrotas: prev.derrotas ?? 0,
+        empates: prev.empates ?? 0,
+        historialPartidas: Array.isArray(prev.historialPartidas) ? prev.historialPartidas : [],
+        inventario: prev.inventario || { personajes: [] },
+        claveHash: prev.claveHash,
+        claveSalt: prev.claveSalt,
+        claveIter: prev.claveIter,
+      },
+      false
+    );
   }
   tocarUltimaActualizacion();
   res.json({ ok: true, dbBound: true });
@@ -1153,7 +1230,10 @@ app.post('/api/admin/verify', async (req, res) => {
   const { user, clave } = req.body || {};
   const { user: ADMIN_USER, pass: ADMIN_PASS } = obtenerCredencialesAdmin();
   if (String(user || '').trim().toLowerCase() === ADMIN_USER.toLowerCase() || String(user || '').trim().toLowerCase() === 'admin') {
-    if (compararTiempoConstante(String(clave || '').trim(), ADMIN_PASS) || String(clave || '').trim() === 'muros2026') {
+    if (!ADMIN_PASS) {
+      return res.status(503).json({ ok: false, isSupremeAttempt: true, error: 'ADMIN_SECRET_KEY no configurada.' });
+    }
+    if (compararTiempoConstante(String(clave || '').trim(), ADMIN_PASS)) {
       const cuentas = dbObtenerTodasCuentas();
       const supremo = construirPerfilSupremo(cuentas['admin']);
       dbGuardarCuentaCompleta(supremo, false);
@@ -1180,7 +1260,7 @@ app.post('/api/admin/verify-action', async (req, res) => {
   const { requiereSupremo, adminToken } = req.body || {};
   const { pass: ADMIN_PASS } = obtenerCredencialesAdmin();
 
-  if (adminToken && (compararTiempoConstante(String(adminToken).trim(), ADMIN_PASS) || adminToken === 'muros2026')) {
+  if (ADMIN_PASS && adminToken && compararTiempoConstante(String(adminToken).trim(), ADMIN_PASS)) {
     return res.json({ ok: true, isSupremeAdmin: true, isCloudAdmin: true, rol: 'dev', dbBound: true });
   }
 
@@ -1656,7 +1736,7 @@ function procesarPartidaLocal(body: any, sesion: any, cuentas: Record<string, an
     }
     if (!acc) continue;
 
-    const autorizado = sesion && (sesion.userId === acc.id || sesion.rol === 'dev');
+    const autorizado = sesion && !sesion.revocada && (sesion.userId === acc.id || sesion.rol === 'dev');
     if (!autorizado) continue;
 
     const histPrev = Array.isArray(acc.historialPartidas) ? acc.historialPartidas : [];
@@ -1665,15 +1745,25 @@ function procesarPartidaLocal(body: any, sesion: any, cuentas: Record<string, an
       continue;
     }
 
+    const MAX_PUNTOS_PARTIDA_MUROS = 35;
+    const MAX_PUNTOS_DIARIOS_MUROS = 250;
+    const hoyUtc = new Date().toISOString().slice(0, 10);
+    const ptsHoy = histPrev.reduce((sum: number, h: any) => {
+      if (!h || typeof h.fecha !== 'string') return sum;
+      return h.fecha.slice(0, 10) === hoyUtc ? sum + Math.max(0, Number(h.puntos) || 0) : sum;
+    }, 0);
+    const cupoDiarioRestante = Math.max(0, MAX_PUNTOS_DIARIOS_MUROS - ptsHoy);
+
     const resultado = p.resultado === 'victoria' || p.resultado === 'empate' ? p.resultado : 'derrota';
-    const puntosGanados = Math.max(0, Number(p.puntosGanados) || 0);
+    const puntosSolicitados = Math.max(0, Math.round(Number(p.puntosGanados) || 0));
+    const puntosGanados = Math.min(puntosSolicitados, MAX_PUNTOS_PARTIDA_MUROS, cupoDiarioRestante);
     const ptsSemanalPartida =
       puntosGanados > 0
         ? puntosGanados
         : resultado === 'victoria'
-        ? Number(cfgSemanal.puntosVictoria ?? 3)
+        ? Math.min(cupoDiarioRestante, Number(cfgSemanal.puntosVictoria ?? 3))
         : resultado === 'empate'
-        ? Number(cfgSemanal.puntosEmpate ?? 1)
+        ? Math.min(cupoDiarioRestante, Number(cfgSemanal.puntosEmpate ?? 1))
         : 0;
 
     const registroPartida = {
@@ -1722,14 +1812,28 @@ function procesarPartidaLocal(body: any, sesion: any, cuentas: Record<string, an
 
 app.post('/api/partida', async (req, res) => {
   const sesion = await resolverSesionLocal(req);
+  if (!sesion || !sesion.userId || (sesion as any).revocada) {
+    return res.status(401).json({ ok: false, error: 'Sesión no válida o expirada.', guardados: [] });
+  }
   const cuentas = dbObtenerTodasCuentas();
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
   const guardados = procesarPartidaLocal(body, sesion, cuentas);
+  if (guardados.length === 0) {
+    return res.status(403).json({
+      ok: false,
+      dbBound: true,
+      guardados,
+      error: 'No autorizado o cuenta no encontrada para registrar esta partida.',
+    });
+  }
   res.json({ ok: true, dbBound: true, guardados, activeAccountIds: Object.keys(cuentas) });
 });
 
 app.post('/api/partidas/sincronizar', async (req, res) => {
   const sesion = await resolverSesionLocal(req);
+  if (!sesion || !sesion.userId || (sesion as any).revocada) {
+    return res.status(401).json({ ok: false, error: 'Sesión no válida o expirada.', sincronizadas: [] });
+  }
   const cuentas = dbObtenerTodasCuentas();
   const cola = Array.isArray(req.body?.partidas) ? req.body.partidas : [];
   const sincronizadas: string[] = [];
@@ -2005,9 +2109,6 @@ app.get('/api/salas/:codigo', (req, res) => {
 
 app.post('/api/salas/:codigo/join', (req, res) => {
   const codigo = normalizarCodigoSala(req.params.codigo);
-  const sala = leerSalaOnline(codigo);
-  if (!sala) return res.status(404).json({ ok: false, error: `La sala ${codigo} no existe o ya cerró.` });
-
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
   const peerId = String(body.peerId || '').trim();
   const cuentaId = body.cuentaId ? String(body.cuentaId).trim().toLowerCase() : undefined;
@@ -2020,116 +2121,126 @@ app.post('/api/salas/:codigo/join', (req, res) => {
   const offer = body.offer || null;
 
   if (!peerId) return res.status(400).json({ ok: false, error: 'Falta peerId' });
-  if (!Array.isArray(sala.jugadores)) sala.jugadores = [];
-  if (!sala.signals || typeof sala.signals !== 'object') sala.signals = {};
 
-  let existente = sala.jugadores.find((p: any) => p.peerId === peerId);
-  if (!existente && sala.enPartida) {
-    const porNombre = sala.jugadores.find((p: any) => !p.esAnfitrion && String(p.nombre || '').toLowerCase() === nombre.toLowerCase());
-    if (porNombre) {
-      porNombre.peerId = peerId;
-      porNombre.conectado = true;
-      existente = porNombre;
+  const resultado = actualizarSalaAtomicaLocal(codigo, (sala) => {
+    if (!Array.isArray(sala.jugadores)) sala.jugadores = [];
+    if (!sala.signals || typeof sala.signals !== 'object') sala.signals = {};
+
+    let existente = sala.jugadores.find((p: any) => p.peerId === peerId);
+    if (!existente && sala.enPartida) {
+      const porNombre = sala.jugadores.find((p: any) => !p.esAnfitrion && String(p.nombre || '').toLowerCase() === nombre.toLowerCase());
+      if (porNombre) {
+        porNombre.peerId = peerId;
+        porNombre.conectado = true;
+        existente = porNombre;
+      } else {
+        return { abort: true, status: 409, error: 'La partida en esta sala ya comenzó.' };
+      }
+    }
+
+    let esAnfitrionResultado = false;
+    if (existente) {
+      existente.nombre = nombre;
+      existente.cuentaId = cuentaId || existente.cuentaId;
+      existente.color = color || existente.color;
+      existente.hat = hat || existente.hat;
+      existente.ropa = ropa || existente.ropa || 'ninguna';
+      existente.ropaColor = ropaColor !== undefined ? ropaColor : existente.ropaColor;
+      existente.aura = aura || existente.aura || 'ninguna';
+      existente.conectado = true;
+      esAnfitrionResultado = Boolean(existente.esAnfitrion);
     } else {
-      return res.status(409).json({ ok: false, error: 'La partida en esta sala ya comenzó.' });
+      if (sala.jugadores.length >= (sala.maxJugadores || 2)) {
+        return { abort: true, status: 409, error: 'La sala ya está llena.' };
+      }
+      const coloresBase = ['#ff6b6b', '#4dabf7', '#ffd43b', '#51cf66'];
+      const gorrosBase = ['corona', 'pompon', 'antena', 'brote'];
+      const esPrimero = sala.jugadores.length === 0;
+      const nuevoId = sala.jugadores.length;
+      const nuevoJugador = {
+        id: nuevoId,
+        peerId,
+        cuentaId,
+        nombre,
+        color: color || coloresBase[nuevoId] || '#4dabf7',
+        hat: hat || gorrosBase[nuevoId] || 'pompon',
+        ropa,
+        ropaColor,
+        aura,
+        listo: true,
+        conectado: true,
+        esAnfitrion: esPrimero,
+      };
+      if (esPrimero) {
+        sala.hostPeerId = peerId;
+        sala.anfitrion = nombre;
+      }
+      sala.jugadores.push(nuevoJugador);
+      esAnfitrionResultado = esPrimero;
     }
-  }
 
-  let esAnfitrionResultado = false;
-  if (existente) {
-    existente.nombre = nombre;
-    existente.cuentaId = cuentaId || existente.cuentaId;
-    existente.color = color || existente.color;
-    existente.hat = hat || existente.hat;
-    existente.ropa = ropa || existente.ropa || 'ninguna';
-    existente.ropaColor = ropaColor !== undefined ? ropaColor : existente.ropaColor;
-    existente.aura = aura || existente.aura || 'ninguna';
-    existente.conectado = true;
-    esAnfitrionResultado = Boolean(existente.esAnfitrion);
-  } else {
-    if (sala.jugadores.length >= (sala.maxJugadores || 2)) {
-      return res.status(409).json({ ok: false, error: 'La sala ya está llena.' });
+    if (offer && !esAnfitrionResultado) {
+      sala.signals[peerId] = { ...(sala.signals[peerId] || {}), offer, answer: null, updatedAt: Date.now() };
     }
-    const coloresBase = ['#ff6b6b', '#4dabf7', '#ffd43b', '#51cf66'];
-    const gorrosBase = ['corona', 'pompon', 'antena', 'brote'];
-    const esPrimero = sala.jugadores.length === 0;
-    const nuevoId = sala.jugadores.length;
-    const nuevoJugador = {
-      id: nuevoId,
-      peerId,
-      cuentaId,
-      nombre,
-      color: color || coloresBase[nuevoId] || '#4dabf7',
-      hat: hat || gorrosBase[nuevoId] || 'pompon',
-      ropa,
-      ropaColor,
-      aura,
-      listo: true,
-      conectado: true,
-      esAnfitrion: esPrimero,
-    };
-    if (esPrimero) {
-      sala.hostPeerId = peerId;
-      sala.anfitrion = nombre;
-    }
-    sala.jugadores.push(nuevoJugador);
-    esAnfitrionResultado = esPrimero;
-  }
 
-  if (offer && !esAnfitrionResultado) {
-    sala.signals[peerId] = { ...(sala.signals[peerId] || {}), offer, answer: null, updatedAt: Date.now() };
-  }
+    sala.jugadoresConectados = sala.jugadores.length;
+    return { esAnfitrion: esAnfitrionResultado };
+  });
 
-  sala.jugadoresConectados = sala.jugadores.length;
-  guardarSalaOnline(codigo, sala);
-  res.json({ ok: true, sala, esAnfitrion: esAnfitrionResultado });
+  if (!resultado.ok) {
+    return res.status(resultado.status || 409).json({
+      ok: false,
+      error: resultado.status === 404 ? `La sala ${codigo} no existe o ya cerró.` : resultado.error,
+    });
+  }
+  res.json({ ok: true, sala: resultado.sala, esAnfitrion: Boolean(resultado.extra?.esAnfitrion) });
 });
 
 app.post('/api/salas/:codigo/signal', (req, res) => {
   const codigo = normalizarCodigoSala(req.params.codigo);
-  const sala = leerSalaOnline(codigo);
-  if (!sala) return res.status(404).json({ ok: false, error: 'Sala no disponible' });
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
   const clientPeerId = String(body.clientPeerId || '').trim();
-  if (clientPeerId) {
-    if (!sala.signals || typeof sala.signals !== 'object') sala.signals = {};
-    const prev = sala.signals[clientPeerId] || {};
-    sala.signals[clientPeerId] = {
-      ...prev,
-      ...(body.offer !== undefined ? { offer: body.offer } : {}),
-      ...(body.answer !== undefined ? { answer: body.answer } : {}),
-      updatedAt: Date.now(),
-    };
-    guardarSalaOnline(codigo, sala);
-  }
+  const resultado = actualizarSalaAtomicaLocal(codigo, (sala) => {
+    if (clientPeerId) {
+      if (!sala.signals || typeof sala.signals !== 'object') sala.signals = {};
+      const prev = sala.signals[clientPeerId] || {};
+      sala.signals[clientPeerId] = {
+        ...prev,
+        ...(body.offer !== undefined ? { offer: body.offer } : {}),
+        ...(body.answer !== undefined ? { answer: body.answer } : {}),
+        updatedAt: Date.now(),
+      };
+    }
+  });
+  if (!resultado.ok) return res.status(resultado.status || 404).json({ ok: false, error: resultado.error || 'Sala no disponible' });
   res.json({ ok: true });
 });
 
 app.post('/api/salas/:codigo/msg', (req, res) => {
   const codigo = normalizarCodigoSala(req.params.codigo);
-  const sala = leerSalaOnline(codigo);
-  if (!sala) return res.status(404).json({ ok: false, error: 'Sala no disponible' });
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
-  if (body && body.msg) {
-    sala.seq = (sala.seq || 0) + 1;
-    if (!Array.isArray(sala.mensajes)) sala.mensajes = [];
-    sala.mensajes.push({ seq: sala.seq, from: String(body.from || ''), to: body.to ? String(body.to) : null, msg: body.msg, ts: Date.now() });
-    if (sala.mensajes.length > 40) sala.mensajes = sala.mensajes.slice(-40);
-    if (body.msg.type === 'START_GAME') sala.enPartida = true;
-    guardarSalaOnline(codigo, sala);
-  }
-  res.json({ ok: true, seq: sala.seq || 0 });
+  const resultado = actualizarSalaAtomicaLocal(codigo, (sala) => {
+    if (body && body.msg) {
+      sala.seq = (sala.seq || 0) + 1;
+      if (!Array.isArray(sala.mensajes)) sala.mensajes = [];
+      sala.mensajes.push({ seq: sala.seq, from: String(body.from || ''), to: body.to ? String(body.to) : null, msg: body.msg, ts: Date.now() });
+      if (sala.mensajes.length > 40) sala.mensajes = sala.mensajes.slice(-40);
+      if (body.msg.type === 'START_GAME') sala.enPartida = true;
+    }
+    return { seq: sala.seq || 0 };
+  });
+  if (!resultado.ok) return res.status(resultado.status || 404).json({ ok: false, error: resultado.error || 'Sala no disponible' });
+  res.json({ ok: true, seq: resultado.extra?.seq || 0 });
 });
 
 app.post('/api/salas/:codigo/leave', (req, res) => {
   const codigo = normalizarCodigoSala(req.params.codigo);
-  const sala = leerSalaOnline(codigo);
-  if (sala) {
-    const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
-    const peerId = String(body.peerId || '').trim();
-    const nombre = String(body.nombre || 'El otro jugador').trim();
-    const jugadorId = typeof body.jugadorId === 'number' ? body.jugadorId : 1;
+  const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
+  const peerId = String(body.peerId || '').trim();
+  const nombre = String(body.nombre || 'El otro jugador').trim();
+  const jugadorId = typeof body.jugadorId === 'number' ? body.jugadorId : 1;
 
+  actualizarSalaAtomicaLocal(codigo, (sala) => {
     if (!sala.enPartida && Array.isArray(sala.jugadores)) {
       sala.jugadores = sala.jugadores.filter((p: any) => (sala.esOficialStaff ? p.peerId !== peerId : (p.esAnfitrion || p.peerId !== peerId)));
       sala.jugadores.forEach((p: any, idx: number) => {
@@ -2151,20 +2262,17 @@ app.post('/api/salas/:codigo/leave', (req, res) => {
     if (!Array.isArray(sala.mensajes)) sala.mensajes = [];
     sala.mensajes.push({ seq: sala.seq, from: peerId, to: null, msg: { type: 'PLAYER_LEFT', jugadorId, nombre }, ts: Date.now() });
     if (sala.mensajes.length > 40) sala.mensajes = sala.mensajes.slice(-40);
-    guardarSalaOnline(codigo, sala);
-  }
+  });
   res.json({ ok: true });
 });
 
 app.patch('/api/salas/:codigo', (req, res) => {
   const codigo = normalizarCodigoSala(req.params.codigo);
-  const sala = leerSalaOnline(codigo);
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
-  if (sala) {
+  actualizarSalaAtomicaLocal(codigo, (sala) => {
     if (typeof body.jugadoresConectados === 'number') sala.jugadoresConectados = body.jugadoresConectados;
     if (typeof body.enPartida === 'boolean') sala.enPartida = body.enPartida;
-    guardarSalaOnline(codigo, sala);
-  }
+  });
   res.json({ ok: true, dbBound: true });
 });
 

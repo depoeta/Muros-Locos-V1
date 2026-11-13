@@ -158,10 +158,6 @@ function crearHeadersAutenticados(extra?: Record<string, string>): Record<string
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
-  const cur = obteneruserActual();
-  if (cur && cur.id) {
-    headers['X-Admin-Id'] = cur.id;
-  }
   return headers;
 }
 
@@ -506,7 +502,10 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
           cache: 'no-store',
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         }),
-        fetch(`/api/cuentas?_t=${ts}`, { cache: 'no-store' }),
+        fetch(`/api/cuentas?_t=${ts}`, {
+          cache: 'no-store',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        }),
         fetch(`/api/ranking?_t=${ts}`, { cache: 'no-store' }),
       ]);
       const ms = Math.round(performance.now() - t0);
@@ -552,7 +551,7 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
             id: acc.id || idKey,
             nombre: acc.nombre || idKey,
             rol: isSupremo ? 'dev' : (acc.rol || 'jugador'),
-            esSupremo: isSupremo || acc.rol === 'dev',
+            esSupremo: isSupremo,
             avatarColor: acc.avatarColor || '#ff6b6b',
             avatarHat: (acc.avatarHat as AvatarTipoDeGorro) || 'corona',
             avatarRopa: (acc.avatarRopa as AvatarTipoDeRopa) || 'ninguna',
@@ -932,7 +931,8 @@ export function actualizarDespuesDePartida(
       body: JSON.stringify(payloadD1),
     })
       .then(async (res) => {
-        if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data?.ok || !Array.isArray(data?.guardados) || data.guardados.length === 0) {
           encolarPartidaOffline(payloadD1);
           return;
         }
@@ -1048,8 +1048,12 @@ export function penalizarAbandono(
     body: JSON.stringify(payloadD1),
   })
     .then(async (res) => {
-      if (!res.ok) encolarPartidaOffline(payloadD1);
-      else await sincronizarConNube(true);
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok || !Array.isArray(data?.guardados) || data.guardados.length === 0) {
+        encolarPartidaOffline(payloadD1);
+        return;
+      }
+      await sincronizarConNube(true);
     })
     .catch(() => {
       encolarPartidaOffline(payloadD1);
@@ -1274,7 +1278,7 @@ export async function iniciarSesionAsync(
       const user: UserCuenta = {
         ...data.user,
         rol: data.user.id === 'admin' ? 'dev' : (data.user.rol || 'jugador'),
-        esSupremo: Boolean(data.user.id === 'admin' || data.user.esSupremo || data.user.rol === 'dev'),
+        esSupremo: Boolean(data.user.id === 'admin' || data.user.esSupremo),
       };
       guardarUserActual(user);
       const cuentas = cargarCuentas();
