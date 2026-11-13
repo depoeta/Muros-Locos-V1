@@ -1,12 +1,12 @@
 import React from 'react';
-import { HatType, PersonajeAuraType, PersonajeRopaType } from '../types/murosLocos';
+import { AvatarTipoDeAura, AvatarTipoDeGorro, AvatarTipoDeRopa } from '../types/murosLocos';
 
 interface CartoonCharacterProps {
   color: string;
-  hat: HatType;
-  ropa?: PersonajeRopaType;
+  hat: AvatarTipoDeGorro;
+  ropa?: AvatarTipoDeRopa;
   ropaColor?: string;
-  aura?: PersonajeAuraType;
+  aura?: AvatarTipoDeAura;
   size?: number;
   isActive?: boolean;
   isDancing?: boolean;

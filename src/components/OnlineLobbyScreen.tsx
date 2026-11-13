@@ -9,22 +9,28 @@ import React, { useEffect, useRef, useState } from 'react';
 import { sounds } from '../game/murosLocosEngine';
 import { generarCodigoSala, normalizeRoomCode, onlineService } from '../game/onlineService';
 import {
-  HatType,
-  OnlineDiagnosticData,
-  OnlinePlayerInfo,
-  PERSONAJES_REGISTRO,
-  PublicRoomInfo,
+  AvatarTipoDeAura,
+  AvatarTipoDeGorro,
+  AvatarTipoDeRopa,
+  DatosDiagnosticoOnline,
+  InfoJugadorOnline,
+  RegDeAvatar,
+  InfoSalaPublica,
   SalaPersonalizada,
-  UserAccount,
+  UserCuenta,
 } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
-import { obtenerSalasPersonalizadasAsync } from '../game/storage';
+import {
+  obtenerDesbloqueosLocales,
+  obtenerDesbloqueosPersonajesAsync,
+  obtenerSalasPersonalizadasAsync,
+} from '../game/storage';
 
 // =========================================================================
 // 1. ONLINE DIAGNOSTICS OVERLAY
 // =========================================================================
 export const OnlineDiagnosticsOverlay: React.FC = () => {
-  const [data, setData] = useState<OnlineDiagnosticData>(() => onlineService.getDiagnosticData());
+  const [data, setData] = useState<DatosDiagnosticoOnline>(() => onlineService.getDiagnosticData());
   const [expandido, setExpandido] = useState(false);
 
   useEffect(() => {
@@ -210,7 +216,7 @@ export const OnlineDiagnosticsOverlay: React.FC = () => {
 // 2. ONLINE LOBBY SCREEN
 // =========================================================================
 interface OnlineLobbyScreenProps {
-  usuarioActual?: UserAccount | null;
+  userActual?: UserCuenta | null;
   codigoSalaInicial?: string | null;
   onConsumirSalaInicial?: () => void;
   onIniciarPartidaOnline: (maxJugadores: 2 | 4) => void;
@@ -221,7 +227,7 @@ interface OnlineLobbyScreenProps {
 type LobbyTab = 'publicas' | 'crear' | 'unirse' | 'en_sala';
 
 export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
-  usuarioActual,
+  userActual,
   codigoSalaInicial,
   onConsumirSalaInicial,
   onIniciarPartidaOnline,
@@ -229,21 +235,28 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
   onShowToast,
 }) => {
   const [tab, setTab] = useState<LobbyTab>(() => (codigoSalaInicial ? 'unirse' : 'publicas'));
-  const [nombre, setNombre] = useState<string>(() => (usuarioActual ? usuarioActual.nombre : 'Invitado'));
-  const [color, setColor] = useState<string>(() => (usuarioActual ? usuarioActual.avatarColor : '#ff6b6b'));
-  const [hat, setHat] = useState<HatType>(() => (usuarioActual ? usuarioActual.avatarHat : 'corona'));
+  const [nombre, setNombre] = useState<string>(() => (userActual ? userActual.nombre : 'Invitado'));
+  const [color, setColor] = useState<string>(() => (userActual ? userActual.avatarColor : '#ff6b6b'));
+  const [hat, setHat] = useState<AvatarTipoDeGorro>(() => (userActual ? userActual.avatarHat : 'corona'));
+  const [ropa, setRopa] = useState<AvatarTipoDeRopa>(() => (userActual?.avatarRopa || 'ninguna'));
+  const [ropaColor, setRopaColor] = useState<string | undefined>(() => userActual?.avatarRopaColor);
+  const [aura, setAura] = useState<AvatarTipoDeAura>(() => (userActual?.avatarAura || 'ninguna'));
+  const [desbloqueos, setDesbloqueos] = useState<Record<string, number>>(() => obtenerDesbloqueosLocales());
   const [codigoInput, setCodigoInput] = useState<string>(() =>
     codigoSalaInicial ? normalizeRoomCode(codigoSalaInicial) : ''
   );
   const [roomCode, setRoomCode] = useState<string>('');
   const [maxJugadores, setMaxJugadores] = useState<2 | 4>(2);
   const [publicarEnLista, setPublicarEnLista] = useState<boolean>(true);
-  const [salasDinamicas, setSalasDinamicas] = useState<PublicRoomInfo[]>([]);
+  const [salasDinamicas, setSalasDinamicas] = useState<InfoSalaPublica[]>([]);
   const [salasPersonalizadas, setSalasPersonalizadas] = useState<SalaPersonalizada[]>([]);
   const [cargandoSalas, setCargandoSalas] = useState<boolean>(false);
   const [conectando, setConectando] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [jugadoresEnLobby, setJugadoresEnLobby] = useState<OnlinePlayerInfo[]>([]);
+  const [jugadoresEnLobby, setJugadoresEnLobby] = useState<InfoJugadorOnline[]>([]);
+  const [esAnfitrionLocal, setEsAnfitrionLocal] = useState<boolean>(
+    () => onlineService.getRole() === 'host'
+  );
   const autoJoinedCodeRef = useRef<string | null>(null);
 
   const onConsumirRef = useRef(onConsumirSalaInicial);
@@ -252,16 +265,25 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
   onShowToastRef.current = onShowToast;
   const onIniciarPartidaRef = useRef(onIniciarPartidaOnline);
   onIniciarPartidaRef.current = onIniciarPartidaOnline;
-  const profileRef = useRef({ usuarioActual, nombre, color, hat });
-  profileRef.current = { usuarioActual, nombre, color, hat };
+  const profileRef = useRef({ userActual, nombre, color, hat, ropa, ropaColor, aura });
+  profileRef.current = { userActual, nombre, color, hat, ropa, ropaColor, aura };
 
   useEffect(() => {
-    if (usuarioActual) {
-      setNombre(usuarioActual.nombre);
-      setColor(usuarioActual.avatarColor || '#ff6b6b');
-      setHat(usuarioActual.avatarHat || 'corona');
+    obtenerDesbloqueosPersonajesAsync()
+      .then((d) => setDesbloqueos(d))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (userActual) {
+      setNombre(userActual.nombre);
+      setColor(userActual.avatarColor || '#ff6b6b');
+      setHat(userActual.avatarHat || 'corona');
+      setRopa(userActual.avatarRopa || 'ninguna');
+      setRopaColor(userActual.avatarRopaColor);
+      setAura(userActual.avatarAura || 'ninguna');
     }
-  }, [usuarioActual]);
+  }, [userActual]);
 
   const recargarSalasPublicas = async () => {
     setCargandoSalas(true);
@@ -301,6 +323,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
         setJugadoresEnLobby([...players]);
         setMaxJugadores(max);
         setRoomCode(onlineService.getRoomCode());
+        setEsAnfitrionLocal(onlineService.getRole() === 'host');
         setTab('en_sala');
         setConectando(false);
         setErrorMsg(null);
@@ -315,6 +338,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
     if (currentPlayers.length > 0 && onlineService.getRoomCode()) {
       setJugadoresEnLobby([...currentPlayers]);
       setRoomCode(onlineService.getRoomCode());
+      setEsAnfitrionLocal(onlineService.getRole() === 'host');
     }
     return () => {
       onlineService.setCallbacks({
@@ -324,7 +348,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
     };
   }, []);
 
-  // Si el usuario entra desde un enlace directo (?sala=7TQERX), unirse automáticamente a esa sala
+  // Si el user entra desde un enlace directo (?sala=7TQERX), unirse automáticamente a esa sala
   useEffect(() => {
     let targetCode = normalizeRoomCode(codigoSalaInicial || '');
     if (!targetCode) {
@@ -334,7 +358,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
       } catch {}
     }
 
-    if (targetCode.length >= 4 && autoJoinedCodeRef.current !== targetCode) {
+    if (targetCode.length >= 3 && autoJoinedCodeRef.current !== targetCode) {
       autoJoinedCodeRef.current = targetCode;
       setCodigoInput(targetCode);
       setRoomCode(targetCode);
@@ -344,15 +368,21 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
       onConsumirRef.current?.();
 
       const snap = profileRef.current;
-      const joinName = (snap.usuarioActual?.nombre || snap.nombre || 'Invitado').trim();
-      const joinColor = snap.usuarioActual?.avatarColor || snap.color || '#4dabf7';
-      const joinHat = snap.usuarioActual?.avatarHat || snap.hat || 'corona';
+      const joinName = (snap.userActual?.nombre || snap.nombre || 'Invitado').trim();
+      const joinColor = snap.userActual?.avatarColor || snap.color || '#4dabf7';
+      const joinHat = snap.userActual?.avatarHat || snap.hat || 'corona';
 
       onlineService
-        .joinRoom(targetCode, joinName, joinColor, joinHat)
+        .joinRoom(targetCode, joinName, joinColor, joinHat, {
+          cuentaId: snap.userActual?.id,
+          ropa: snap.userActual?.avatarRopa || snap.ropa,
+          ropaColor: snap.userActual?.avatarRopaColor ?? snap.ropaColor,
+          aura: snap.userActual?.avatarAura || snap.aura,
+        })
         .then(() => {
           setConectando(false);
           setErrorMsg(null);
+          setEsAnfitrionLocal(onlineService.getRole() === 'host');
           const list = onlineService.getLobbyPlayers();
           if (list.length > 0) setJugadoresEnLobby([...list]);
           setTab('en_sala');
@@ -374,19 +404,25 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
 
   const handleEntrarSalaPublica = async (salaId: string, maxP: 2 | 4) => {
     const code = normalizeRoomCode(salaId);
-    if (code.length < 4) return;
+    if (code.length < 3) return;
     sounds.playClick();
     setConectando(true);
     setErrorMsg(null);
     setRoomCode(code);
     setMaxJugadores(maxP);
 
-    const joinName = (usuarioActual?.nombre || nombre || 'Invitado').trim();
+    const joinName = (userActual?.nombre || nombre || 'Invitado').trim();
 
     try {
-      await onlineService.joinRoom(code, joinName, color, hat);
+      await onlineService.joinRoom(code, joinName, color, hat, {
+        cuentaId: userActual?.id,
+        ropa,
+        ropaColor,
+        aura,
+      });
       setConectando(false);
       setErrorMsg(null);
+      setEsAnfitrionLocal(onlineService.getRole() === 'host');
       const list = onlineService.getLobbyPlayers();
       if (list.length > 0) setJugadoresEnLobby([...list]);
       setTab('en_sala');
@@ -406,13 +442,19 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
     setConectando(true);
     setErrorMsg(null);
     const code = generarCodigoSala();
-    const hostName = (usuarioActual?.nombre || nombre || 'Anfitrión').trim();
+    const hostName = (userActual?.nombre || nombre || 'Anfitrión').trim();
     setRoomCode(code);
 
     try {
-      await onlineService.createRoom(code, hostName, color, hat, maxJugadores, publicarEnLista);
+      await onlineService.createRoom(code, hostName, color, hat, maxJugadores, publicarEnLista, {
+        cuentaId: userActual?.id,
+        ropa,
+        ropaColor,
+        aura,
+      });
       setConectando(false);
       setErrorMsg(null);
+      setEsAnfitrionLocal(true);
       setJugadoresEnLobby([...onlineService.getLobbyPlayers()]);
       setTab('en_sala');
       onShowToast(`¡Sala ${code} creada! ${publicarEnLista ? 'Publicada en la lista.' : 'Privada lista.'}`);
@@ -424,7 +466,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
 
   const handleUnirseSala = async () => {
     const code = normalizeRoomCode(codigoInput);
-    if (code.length < 4) {
+    if (code.length < 3) {
       setErrorMsg('Introduce un código de sala válido');
       sounds.playError();
       return;
@@ -436,12 +478,18 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
     setCodigoInput(code);
     setRoomCode(code);
 
-    const joinName = (usuarioActual?.nombre || nombre || 'Invitado').trim();
+    const joinName = (userActual?.nombre || nombre || 'Invitado').trim();
 
     try {
-      await onlineService.joinRoom(code, joinName, color, hat);
+      await onlineService.joinRoom(code, joinName, color, hat, {
+        cuentaId: userActual?.id,
+        ropa,
+        ropaColor,
+        aura,
+      });
       setConectando(false);
       setErrorMsg(null);
+      setEsAnfitrionLocal(onlineService.getRole() === 'host');
       const list = onlineService.getLobbyPlayers();
       if (list.length > 0) setJugadoresEnLobby([...list]);
       setTab('en_sala');
@@ -469,7 +517,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
       });
   };
 
-  const isHost = onlineService.getRole() === 'host';
+  const isHost = esAnfitrionLocal;
 
   // Mantener viva la sala (pública o privada) mientras el anfitrión espera en el lobby
   useEffect(() => {
@@ -489,8 +537,8 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
     }
   }, [isHost, tab, jugadoresEnLobby.length, maxJugadores]);
 
-  const userPoints = usuarioActual?.puntos || 0;
-  const esAdmin = usuarioActual?.rol === 'admin';
+  const userPoints = userActual?.puntos || 0;
+  const esStaffPrivilegiado = userActual?.rol === 'admin' || userActual?.rol === 'dev';
 
   return (
     <div className="relative w-full h-full flex flex-col items-center justify-between p-3 sm:p-5 max-w-xl mx-auto z-10 overflow-y-auto">
@@ -569,14 +617,22 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
               Tu Personaje
             </span>
             <div className="flex items-center gap-3">
-              <CartoonCharacter color={color} hat={hat} size={54} showShadow={false} />
+              <CartoonCharacter
+                color={color}
+                hat={hat}
+                ropa={ropa}
+                ropaColor={ropaColor}
+                aura={aura}
+                size={54}
+                showShadow={false}
+              />
 
               <div className="flex-1">
                 <div className="flex items-center justify-between mb-0.5">
                   <label className="text-[11px] font-bold text-[#86542d] block">
                     Nombre en partida:
                   </label>
-                  {usuarioActual ? (
+                  {userActual ? (
                     <span className="text-[10px] bg-[#d3f9d8] text-[#134e20] font-black px-1.5 py-0.5 rounded border border-[#2b2140]">
                       ⭐ Perfil Oficial
                     </span>
@@ -589,16 +645,16 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                 <input
                   type="text"
                   maxLength={15}
-                  value={usuarioActual ? usuarioActual.nombre : nombre}
+                  value={userActual ? userActual.nombre : nombre}
                   onChange={(e) => {
-                    if (!usuarioActual) {
+                    if (!userActual) {
                       setNombre(e.target.value);
                     }
                   }}
-                  readOnly={Boolean(usuarioActual)}
+                  readOnly={Boolean(userActual)}
                   placeholder="Tu nombre"
                   className={`w-full text-sm font-extrabold text-[#2b2140] border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none ${
-                    usuarioActual
+                    userActual
                       ? 'bg-[#edf2ff] cursor-not-allowed select-none'
                       : 'bg-[#f8f9fa] focus:ring-2 focus:ring-[#ffd43b]'
                   }`}
@@ -607,8 +663,12 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
             </div>
 
             <div className="grid grid-cols-5 gap-1.5 mt-1">
-              {PERSONAJES_REGISTRO.map((h) => {
-                const unlocked = h.puntosRequeridos === 0 || esAdmin || userPoints >= h.puntosRequeridos;
+              {RegDeAvatar.map((h) => {
+                const reqPts = h.desbloqueoTipo === 'inicial' ? 0 : (desbloqueos[h.id] ?? h.puntosRequeridos);
+                const unlocked = reqPts === 0 || esStaffPrivilegiado || userPoints >= reqPts;
+                if (!unlocked && h.desbloqueoTipo === 'puntos') {
+                  return null;
+                }
                 return (
                   <button
                     key={h.id}
@@ -616,12 +676,12 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                     onClick={() => {
                       if (!unlocked) {
                         sounds.playError();
-                        onShowToast(`🔒 ${h.label} requiere ${h.puntosRequeridos} pts`);
+                        onShowToast(`🔒 ${h.nombre} requiere ${reqPts} pts`);
                         return;
                       }
                       sounds.playClick();
                       setHat(h.id);
-                      setColor(h.defaultColor);
+                      setColor(h.colorDefault);
                     }}
                     className={`relative py-1.5 px-1 rounded-xl text-xs font-black border-2 border-[#2b2140] flex flex-col items-center gap-0.5 transition-all cursor-pointer ${
                       !unlocked
@@ -632,8 +692,8 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                     }`}
                   >
                     {!unlocked && <span className="absolute top-0.5 right-0.5 text-[8px]">🔒</span>}
-                    <span className="text-base">{h.icon}</span>
-                    <span className="text-[9px] truncate max-w-full">{h.label}</span>
+                    <span className="text-base">{h.emoji}</span>
+                    <span className="text-[9px] truncate max-w-full">{h.nombre}</span>
                   </button>
                 );
               })}
@@ -726,14 +786,22 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                         }}
                         className="p-2.5 rounded-xl border-2 border-[#2b2140] bg-[#e7f5ff] hover:bg-[#d0ebff] active:translate-y-0.5 shadow-[0_2px_0_#2b2140] flex items-center gap-2.5 text-left transition-all cursor-pointer"
                       >
-                        <CartoonCharacter color={sala.color} hat={sala.hat} size={36} showShadow={false} />
+                        <CartoonCharacter
+                          color={sala.color}
+                          hat={sala.hat}
+                          ropa={sala.ropa}
+                          ropaColor={sala.ropaColor}
+                          aura={sala.aura}
+                          size={36}
+                          showShadow={false}
+                        />
                         <div className="min-w-0 flex-1">
                           <span className="font-extrabold text-xs text-[#2b2140] block truncate">
                             {sala.nombre}
                           </span>
                           <span className="text-[10px] text-[#1864ab] font-bold block">
                             Anfitrión: {sala.anfitrion} •{' '}
-                            {(sala as any).jugadoresConectados || 1}/{sala.maxJugadores} jugadores
+                            {sala.jugadoresConectados || 1}/{sala.maxJugadores} jugadores
                           </span>
                         </div>
                         <span className="text-[10px] bg-[#ffd43b] text-[#5c3c00] font-black px-1.5 py-0.5 rounded border border-[#2b2140] shrink-0">
@@ -907,7 +975,15 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                   key={p.peerId}
                   className="p-2.5 rounded-xl border-2 border-[#2b2140] bg-[#fff8e7] flex items-center gap-2.5 shadow-sm"
                 >
-                  <CartoonCharacter color={p.color} hat={p.hat} size={42} showShadow={false} />
+                  <CartoonCharacter
+                    color={p.color}
+                    hat={p.hat}
+                    ropa={p.ropa}
+                    ropaColor={p.ropaColor}
+                    aura={p.aura}
+                    size={42}
+                    showShadow={false}
+                  />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
                       <span className="font-extrabold text-sm text-[#2b2140] truncate">

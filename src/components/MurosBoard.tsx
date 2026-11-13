@@ -13,21 +13,21 @@ import {
   validarMuro,
   WALL_GRID_SIZE,
 } from '../game/murosLocosEngine';
-import { BoardTheme, Coord, GameState, WallOrientation } from '../types/murosLocos';
+import { TemaTablero, Coordenada, EstadoDeJuego, OrientacionMuro } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
 
 interface MurosBoardProps {
-  estado: GameState;
+  estado: EstadoDeJuego;
   modoDaltonico: boolean;
   animacionesReducidas?: boolean;
-  temaTablero?: BoardTheme;
+  temaTablero?: TemaTablero;
   perspectivaInvertida?: boolean;
   rotacionGrados?: number;
   rotationMode?: boolean;
   vistaPropiaOnline?: boolean;
   onTogglePerspectiva?: () => void;
-  onMover: (destino: Coord) => void;
-  onPonerMuro: (orientacion: WallOrientation, r: number, c: number) => void;
+  onMover: (destino: Coordenada) => void;
+  onPonerMuro: (orientacion: OrientacionMuro, r: number, c: number) => void;
   onRotarMuro: () => void;
   onCambiarModo?: (modo: 'mover' | 'muro') => void;
   onInvalidWallAttempt: (motivo: string) => void;
@@ -35,7 +35,7 @@ interface MurosBoardProps {
 }
 
 const THEMES: Record<
-  BoardTheme,
+  TemaTablero,
   {
     frameBg: string;
     frameStyle: React.CSSProperties;
@@ -112,7 +112,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
 }) => {
   const currentTheme = THEMES[temaTablero] || THEMES.madera;
   const boardRef = useRef<HTMLDivElement>(null);
-  const [hoveredIntersection, setHoveredIntersection] = useState<Coord | null>(null);
+  const [hoveredIntersection, setHoveredIntersection] = useState<Coordenada | null>(null);
   const [ghostValidity, setGhostValidity] = useState<'ok' | 'fuera' | 'solape' | 'bloquea'>('ok');
 
   // Guardamos el último turno de un jugador HUMANO para no girar nunca hacia el lado de un Bot
@@ -175,10 +175,10 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
 
   // La rotación visual la realiza íntegramente CSS transform: rotate(anguloRotacion) sobre el marco;
   // no invertir coordenadas aquí evita la doble inversión (180° + 180° = 0°) que anulaba la vista de J2.
-  const toLogicalCell = (vr: number, vc: number): Coord => ({ r: vr, c: vc });
-  const toVisualCell = (r: number, c: number): Coord => ({ r, c });
-  const toLogicalIntersection = (vr: number, vc: number): Coord => ({ r: vr, c: vc });
-  const toVisualIntersection = (r: number, c: number): Coord => ({ r, c });
+  const toLogicalCell = (vr: number, vc: number): Coordenada => ({ r: vr, c: vc });
+  const toVisualCell = (r: number, c: number): Coordenada => ({ r, c });
+  const toLogicalIntersection = (vr: number, vc: number): Coordenada => ({ r: vr, c: vc });
+  const toVisualIntersection = (r: number, c: number): Coordenada => ({ r, c });
 
   const isGoalForActivePlayer = (r: number, c: number): boolean => {
     return esMeta(jugadorActivo, r, c, estado.n);
@@ -300,7 +300,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
           const curR = jugadorActivo.r;
           const curC = jugadorActivo.c;
 
-          let matched: Coord | undefined;
+          let matched: Coordenada | undefined;
           if (isUp) {
             matched =
               movimientos.find((m) => m.r < curR && m.c === curC) ||
@@ -328,7 +328,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
 
         // Modo Muro: mover el cursor del muro fantasma
         if (estado.modoAccion === 'muro') {
-          setHoveredIntersection((prev) => {
+          setHoveredIntersection((prev: Coordenada | null) => {
             const curR = prev ? prev.r : 3;
             const curC = prev ? prev.c : 3;
             let nextR = curR;
@@ -628,6 +628,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                         ropaColor={player.ropaColor}
                         aura={player.aura}
                         size={46}
+                        inGame={true}
                         isActive={estado.turnoActual === player.id}
                         isDancing={estado.ganador === player.id}
                       />

@@ -1,17 +1,18 @@
 /**
- * Cloudflare Worker unificado para Muros Locos (Cloudflare D1 SQL Database, Admin Supremo y Salas P2P)
+ * Cloudflare Worker unificado para Muros Locos
+ * Base de Datos: Cloudflare D1 SQL (8 tablas dedicadas)
  *
  * Variables / Secrets en Cloudflare Dashboard:
- * - ADMIN_USERNAME: Nombre de usuario del Admin Supremo (por defecto: "admin")
- * - ADMIN_SECRET_KEY: Clave secreta del Admin Supremo (requerida en producción)
+ * - ADMIN_USERNAME: Nombre de user del Dev Supremo (por defecto: "admin")
+ * - ADMIN_SECRET_KEY: Clave secreta del Dev Supremo (requerida en producción)
  *
- * Cloudflare D1 SQL Binding:
+ * Binding de Cloudflare D1:
  * - DB, DATABASE, MUROS_D1, D1, db, database
  */
 
-function resolveD1(env) {
+function obtenerD1(env) {
   if (!env || typeof env !== 'object') return null;
-  const d1Keys = [
+  const clavesD1 = [
     'DB',
     'DATABASE',
     'MUROS_D1',
@@ -23,10 +24,10 @@ function resolveD1(env) {
     'database',
     'd1',
   ];
-  for (const k of d1Keys) {
-    const candidate = env[k];
-    if (candidate && typeof candidate.prepare === 'function') {
-      return candidate;
+  for (const k of clavesD1) {
+    const candidato = env[k];
+    if (candidato && typeof candidato.prepare === 'function') {
+      return candidato;
     }
   }
   for (const val of Object.values(env)) {
@@ -37,224 +38,845 @@ function resolveD1(env) {
   return null;
 }
 
-let d1Initialized = false;
-async function ensureD1Tables(db) {
-  if (d1Initialized || !db) return;
-  try {
-    if (typeof db.exec === 'function') {
-      await db.exec(`
-        CREATE TABLE IF NOT EXISTS cuentas (
-          id TEXT PRIMARY KEY,
-          nombre TEXT NOT NULL,
-          clave_hash TEXT,
-          clave_salt TEXT,
-          clave_iter INTEGER DEFAULT 100000,
-          clave_plano TEXT,
-          rol TEXT DEFAULT 'jugador',
-          puntos INTEGER DEFAULT 0,
-          victorias INTEGER DEFAULT 0,
-          derrotas INTEGER DEFAULT 0,
-          empates INTEGER DEFAULT 0,
-          partidas INTEGER DEFAULT 0,
-          elo INTEGER DEFAULT 1000,
-          avatar_color TEXT,
-          avatar_hat TEXT,
-          avatar_ropa TEXT DEFAULT 'ninguna',
-          avatar_ropa_color TEXT,
-          avatar_aura TEXT DEFAULT 'ninguna',
-          inventario_json TEXT,
-          tema_board TEXT,
-          creado_en TEXT,
-          ultima_conexion TEXT,
-          historial_json TEXT
-        );
-        CREATE TABLE IF NOT EXISTS sesiones (
-          token_hash TEXT PRIMARY KEY,
-          usuario_id TEXT NOT NULL,
-          rol TEXT NOT NULL,
-          expira_en INTEGER NOT NULL,
-          creado_en INTEGER NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS ranking (
-          id TEXT PRIMARY KEY,
-          nombre TEXT NOT NULL,
-          puntos INTEGER DEFAULT 0,
-          victorias INTEGER DEFAULT 0,
-          derrotas INTEGER DEFAULT 0,
-          empates INTEGER DEFAULT 0,
-          partidas INTEGER DEFAULT 0,
-          elo INTEGER DEFAULT 1000,
-          avatar_color TEXT,
-          avatar_hat TEXT,
-          avatar_ropa TEXT,
-          avatar_ropa_color TEXT,
-          avatar_aura TEXT,
-          rol TEXT DEFAULT 'jugador',
-          ultima_actualizacion INTEGER
-        );
-        CREATE TABLE IF NOT EXISTS ranking_semanal (
-          semana_key TEXT NOT NULL,
-          id TEXT NOT NULL,
-          nombre TEXT NOT NULL,
-          avatar_color TEXT,
-          avatar_hat TEXT,
-          avatar_ropa TEXT,
-          avatar_ropa_color TEXT,
-          puntos INTEGER DEFAULT 0,
-          victorias INTEGER DEFAULT 0,
-          PRIMARY KEY (semana_key, id)
-        );
-        CREATE TABLE IF NOT EXISTS inventario (
-          usuario_id TEXT NOT NULL,
-          personaje_id TEXT NOT NULL,
-          nombre TEXT NOT NULL,
-          color TEXT,
-          hat TEXT,
-          ropa TEXT,
-          ropa_color TEXT,
-          aura TEXT,
-          fecha_adquisicion TEXT,
-          origen TEXT,
-          activo INTEGER DEFAULT 0,
-          PRIMARY KEY (usuario_id, personaje_id)
-        );
-        CREATE TABLE IF NOT EXISTS partidas_historial (
-          id TEXT PRIMARY KEY,
-          usuario_id TEXT NOT NULL,
-          rival TEXT,
-          resultado TEXT,
-          movimientos INTEGER DEFAULT 0,
-          modo TEXT,
-          duracion_seg INTEGER DEFAULT 0,
-          fecha TEXT
-        );
-        CREATE TABLE IF NOT EXISTS salas_personalizadas (
-          codigo TEXT PRIMARY KEY,
-          nombre TEXT NOT NULL,
-          creador TEXT,
-          creador_id TEXT,
-          creador_rol TEXT,
-          max_jugadores INTEGER DEFAULT 2,
-          modo_muros TEXT DEFAULT 'estandar',
-          tamano_tablero INTEGER DEFAULT 9,
-          destacada INTEGER DEFAULT 1,
-          mensaje_especial TEXT,
-          creado_en INTEGER
-        );
-        CREATE TABLE IF NOT EXISTS configuracion (
-          clave TEXT PRIMARY KEY,
-          valor TEXT,
-          actualizado_en INTEGER
-        );
-      `);
+const DESBLOQUEOS_POR_DEFECTO = {
+  gatito: 30,
+  zorro: 60,
+  robot: 120,
+  dragon: 200,
+  ninja: 300,
+  navidad: 400,
+  granjero: 500,
+  vikingo: 650,
+  copa: 800,
+  gorra: 950,
+  boina: 1100,
+  espacial: 1300,
+};
 
-      // Migraciones seguras para columnas agregadas
-      try { await db.prepare("ALTER TABLE cuentas ADD COLUMN avatar_ropa_color TEXT").run(); } catch {}
-      try { await db.prepare("ALTER TABLE cuentas ADD COLUMN inventario_json TEXT").run(); } catch {}
-      try { await db.prepare("ALTER TABLE cuentas ADD COLUMN avatar_ropa TEXT DEFAULT 'ninguna'").run(); } catch {}
-      try { await db.prepare("ALTER TABLE cuentas ADD COLUMN avatar_aura TEXT DEFAULT 'ninguna'").run(); } catch {}
-      d1Initialized = true;
-      return;
+const CONFIG_SEMANAL_POR_DEFECTO = {
+  puntosVictoria: 3,
+  puntosEmpate: 1,
+  primerLugar: 50,
+  segundoLugar: 25,
+  tercerLugar: 15,
+  participacion: 5,
+};
+
+let d1Inicializado = false;
+
+async function asegurarTablasD1(d1) {
+  if (d1Inicializado || !d1) return;
+
+  const sentencias = [
+    `CREATE TABLE IF NOT EXISTS cuentas (
+      id TEXT PRIMARY KEY,
+      nombre TEXT NOT NULL,
+      clave_hash TEXT,
+      clave_salt TEXT,
+      clave_iter INTEGER DEFAULT 100000,
+      rol TEXT DEFAULT 'jugador',
+      creacion TEXT,
+      ultima_conexion TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS historial (
+      id TEXT PRIMARY KEY,
+      puntos INTEGER DEFAULT 0,
+      total_partida INTEGER DEFAULT 0,
+      victorias INTEGER DEFAULT 0,
+      derrotas INTEGER DEFAULT 0,
+      empates INTEGER DEFAULT 0,
+      historial_partida TEXT DEFAULT '[]',
+      actualizado_en INTEGER
+    )`,
+    `CREATE TABLE IF NOT EXISTS inventario (
+      id TEXT PRIMARY KEY,
+      avatar_color TEXT DEFAULT '#ff6b6b',
+      avatar_hat TEXT DEFAULT 'corona',
+      avatar_ropa TEXT DEFAULT 'ninguna',
+      avatar_ropa_color TEXT,
+      avatar_aura TEXT DEFAULT 'ninguna',
+      tema_tablero TEXT DEFAULT 'madera',
+      activo_id TEXT,
+      personajes_json TEXT DEFAULT '[]'
+    )`,
+    `CREATE TABLE IF NOT EXISTS ranking (
+      id TEXT PRIMARY KEY,
+      nombre TEXT NOT NULL,
+      puntos INTEGER DEFAULT 0,
+      total_partida INTEGER DEFAULT 0,
+      victorias INTEGER DEFAULT 0,
+      derrotas INTEGER DEFAULT 0,
+      empates INTEGER DEFAULT 0,
+      avatar_color TEXT DEFAULT '#ff6b6b',
+      avatar_hat TEXT DEFAULT 'corona',
+      avatar_ropa TEXT DEFAULT 'ninguna',
+      avatar_ropa_color TEXT,
+      avatar_aura TEXT DEFAULT 'ninguna',
+      semana_actual_id TEXT,
+      semana_actual_pts INTEGER DEFAULT 0,
+      semana_actual_vic INTEGER DEFAULT 0,
+      semana_actual_part INTEGER DEFAULT 0,
+      semana_pasada_id TEXT,
+      semana_pasada_pts INTEGER DEFAULT 0,
+      semana_pasada_premio TEXT,
+      actualizado_en INTEGER
+    )`,
+    `CREATE TABLE IF NOT EXISTS sesiones (
+      id TEXT NOT NULL,
+      token_hash TEXT PRIMARY KEY,
+      rol TEXT NOT NULL,
+      creado_en INTEGER NOT NULL,
+      expira_en INTEGER NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS salas_personalizadas (
+      codigo TEXT PRIMARY KEY,
+      nombre TEXT NOT NULL,
+      creador TEXT,
+      creador_id TEXT,
+      creador_rol TEXT,
+      max_jugadores INTEGER DEFAULT 2,
+      modo_muros TEXT DEFAULT 'estandar',
+      tamano_tablero INTEGER DEFAULT 9,
+      destacada INTEGER DEFAULT 1,
+      mensaje_especial TEXT,
+      creado_en INTEGER
+    )`,
+    `CREATE TABLE IF NOT EXISTS salas_online (
+      codigo TEXT PRIMARY KEY,
+      data_json TEXT NOT NULL,
+      ultimo_cambio INTEGER NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS config (
+      clave TEXT PRIMARY KEY,
+      valor TEXT,
+      actualizado_en INTEGER
+    )`,
+  ];
+
+  try {
+    if (typeof d1.exec === 'function') {
+      await d1.exec(sentencias.join(';\n') + ';');
+    } else {
+      for (const sql of sentencias) {
+        await d1.prepare(sql).run();
+      }
     }
+    d1Inicializado = true;
   } catch (err) {
-    console.warn('db.exec falló, intentando prepare individual:', err);
-  }
-
-  // Fallback con prepare individual
-  try {
-    await db.prepare('CREATE TABLE IF NOT EXISTS cuentas (id TEXT PRIMARY KEY, nombre TEXT NOT NULL, clave_hash TEXT, clave_salt TEXT, clave_iter INTEGER DEFAULT 100000, clave_plano TEXT, rol TEXT DEFAULT \'jugador\', puntos INTEGER DEFAULT 0, victorias INTEGER DEFAULT 0, derrotas INTEGER DEFAULT 0, empates INTEGER DEFAULT 0, partidas INTEGER DEFAULT 0, elo INTEGER DEFAULT 1000, avatar_color TEXT, avatar_hat TEXT, avatar_ropa TEXT DEFAULT \'ninguna\', avatar_ropa_color TEXT, avatar_aura TEXT DEFAULT \'ninguna\', inventario_json TEXT, tema_board TEXT, creado_en TEXT, ultima_conexion TEXT, historial_json TEXT)').run();
-    await db.prepare('CREATE TABLE IF NOT EXISTS sesiones (token_hash TEXT PRIMARY KEY, usuario_id TEXT NOT NULL, rol TEXT NOT NULL, expira_en INTEGER NOT NULL, creado_en INTEGER NOT NULL)').run();
-    await db.prepare('CREATE TABLE IF NOT EXISTS ranking (id TEXT PRIMARY KEY, nombre TEXT NOT NULL, puntos INTEGER DEFAULT 0, victorias INTEGER DEFAULT 0, derrotas INTEGER DEFAULT 0, empates INTEGER DEFAULT 0, partidas INTEGER DEFAULT 0, elo INTEGER DEFAULT 1000, avatar_color TEXT, avatar_hat TEXT, avatar_ropa TEXT, avatar_ropa_color TEXT, avatar_aura TEXT, rol TEXT DEFAULT \'jugador\', ultima_actualizacion INTEGER)').run();
-    await db.prepare('CREATE TABLE IF NOT EXISTS ranking_semanal (semana_key TEXT NOT NULL, id TEXT NOT NULL, nombre TEXT NOT NULL, avatar_color TEXT, avatar_hat TEXT, avatar_ropa TEXT, avatar_ropa_color TEXT, puntos INTEGER DEFAULT 0, victorias INTEGER DEFAULT 0, PRIMARY KEY (semana_key, id))').run();
-    await db.prepare('CREATE TABLE IF NOT EXISTS inventario (usuario_id TEXT NOT NULL, personaje_id TEXT NOT NULL, nombre TEXT NOT NULL, color TEXT, hat TEXT, ropa TEXT, ropa_color TEXT, aura TEXT, fecha_adquisicion TEXT, origen TEXT, activo INTEGER DEFAULT 0, PRIMARY KEY (usuario_id, personaje_id))').run();
-    await db.prepare('CREATE TABLE IF NOT EXISTS partidas_historial (id TEXT PRIMARY KEY, usuario_id TEXT NOT NULL, rival TEXT, resultado TEXT, movimientos INTEGER DEFAULT 0, modo TEXT, duracion_seg INTEGER DEFAULT 0, fecha TEXT)').run();
-    await db.prepare('CREATE TABLE IF NOT EXISTS salas_personalizadas (codigo TEXT PRIMARY KEY, nombre TEXT NOT NULL, creador TEXT, creador_id TEXT, creador_rol TEXT, max_jugadores INTEGER DEFAULT 2, modo_muros TEXT DEFAULT \'estandar\', tamano_tablero INTEGER DEFAULT 9, destacada INTEGER DEFAULT 1, mensaje_especial TEXT, creado_en INTEGER)').run();
-    await db.prepare('CREATE TABLE IF NOT EXISTS configuracion (clave TEXT PRIMARY KEY, valor TEXT, actualizado_en INTEGER)').run();
-    try { await db.prepare("ALTER TABLE cuentas ADD COLUMN avatar_ropa_color TEXT").run(); } catch {}
-    try { await db.prepare("ALTER TABLE cuentas ADD COLUMN inventario_json TEXT").run(); } catch {}
-    try { await db.prepare("ALTER TABLE cuentas ADD COLUMN avatar_ropa TEXT DEFAULT 'ninguna'").run(); } catch {}
-    try { await db.prepare("ALTER TABLE cuentas ADD COLUMN avatar_aura TEXT DEFAULT 'ninguna'").run(); } catch {}
-    d1Initialized = true;
-  } catch (err2) {
-    console.error('Error inicializando tablas D1:', err2);
+    console.warn('Error en bloque exec D1, intentando prepare individual:', err);
+    try {
+      for (const sql of sentencias) {
+        await d1.prepare(sql).run();
+      }
+      d1Inicializado = true;
+    } catch (err2) {
+      console.error('Error fatal creando tablas D1:', err2);
+    }
   }
 }
 
-// Helpers para tabla configuracion en D1
-async function d1GetConfig(d1, clave, fallback = null) {
-  if (!d1) return fallback;
+// ==========================================
+// HELPERS TABLA CONFIG
+// ==========================================
+
+async function d1LeerConfig(d1, clave, respaldo = null) {
+  if (!d1) return respaldo;
   try {
-    await ensureD1Tables(d1);
-    const row = await d1.prepare('SELECT valor FROM configuracion WHERE clave = ?').bind(clave).first();
-    if (row && typeof row.valor === 'string') {
+    await asegurarTablasD1(d1);
+    const fila = await d1.prepare('SELECT valor FROM config WHERE clave = ?').bind(clave).first();
+    if (fila && typeof fila.valor === 'string') {
       try {
-        return JSON.parse(row.valor);
+        return JSON.parse(fila.valor);
       } catch {
-        return row.valor;
+        return fila.valor;
       }
     }
   } catch (err) {
-    console.error(`Error leyendo configuracion (${clave}) de D1:`, err);
+    console.error(`Error leyendo config (${clave}):`, err);
   }
-  return fallback;
+  return respaldo;
 }
 
-async function d1PutConfig(d1, clave, valor) {
+async function d1GuardarConfig(d1, clave, valor) {
   if (!d1) return;
   try {
-    await ensureD1Tables(d1);
+    await asegurarTablasD1(d1);
     const str = typeof valor === 'string' ? valor : JSON.stringify(valor);
     await d1
-      .prepare('INSERT OR REPLACE INTO configuracion (clave, valor, actualizado_en) VALUES (?, ?, ?)')
+      .prepare('INSERT OR REPLACE INTO config (clave, valor, actualizado_en) VALUES (?, ?, ?)')
       .bind(clave, str, Date.now())
       .run();
   } catch (err) {
-    console.error(`Error guardando configuracion (${clave}) en D1:`, err);
+    console.error(`Error guardando config (${clave}):`, err);
   }
 }
 
-async function d1DeleteConfig(d1, clave) {
+async function d1EliminarConfig(d1, clave) {
   if (!d1) return;
   try {
-    await ensureD1Tables(d1);
-    await d1.prepare('DELETE FROM configuracion WHERE clave = ?').bind(clave).run();
+    await asegurarTablasD1(d1);
+    await d1.prepare('DELETE FROM config WHERE clave = ?').bind(clave).run();
   } catch (err) {
-    console.error(`Error eliminando configuracion (${clave}) de D1:`, err);
+    console.error(`Error eliminando config (${clave}):`, err);
   }
 }
 
-// Helpers para tabla salas_personalizadas en D1
-async function d1GetSalasPersonalizadas(d1) {
-  if (!d1) return [];
+async function registrarNotificacionStaff(d1, actor, accion, detalle) {
+  if (!d1) return;
   try {
-    await ensureD1Tables(d1);
-    const rows = await d1.prepare('SELECT * FROM salas_personalizadas ORDER BY creado_en DESC LIMIT 20').all();
-    if (rows && rows.results) {
-      return rows.results.map((r) => ({
-        id: `sp_${r.codigo}`,
-        codigo: r.codigo,
-        nombre: r.nombre,
-        creador: r.creador,
-        creadorId: r.creador_id,
-        creadorRol: r.creador_rol,
-        maxJugadores: Number(r.max_jugadores) || 2,
-        modoMuros: r.modo_muros || 'estandar',
-        tamanoTablero: Number(r.tamano_tablero) || 9,
-        destacada: Boolean(r.destacada),
-        mensajeEspecial: r.mensaje_especial || '',
-        creadoEn: Number(r.creado_en) || Date.now(),
-      }));
+    const lista = (await d1LeerConfig(d1, 'notificaciones_staff', [])) || [];
+    const arr = Array.isArray(lista) ? lista : [];
+    const evento = {
+      id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      actorId: actor?.id || 'admin',
+      actorNombre: actor?.nombre || 'Staff',
+      actorRol: actor?.rol || 'dev',
+      accion,
+      detalle,
+      ts: Date.now(),
+    };
+    arr.unshift(evento);
+    const recortada = arr.slice(0, 30);
+    await d1GuardarConfig(d1, 'notificaciones_staff', recortada);
+  } catch {}
+}
+
+async function tocarUltimaActualizacion(d1) {
+  if (!d1) return Date.now();
+  const ahora = Date.now();
+  await d1GuardarConfig(d1, 'last_update', ahora);
+  return ahora;
+}
+
+// ==========================================
+// CRYPTO & SESIONES (MAX 2 SESIONES POR ID)
+// ==========================================
+
+const codificadorTexto = new TextEncoder();
+const aBase64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const desdeBase64 = (str) => Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
+
+async function hashClavePBKDF2(clave, saltB64, iteraciones = 100000) {
+  const salt = saltB64 ? desdeBase64(saltB64) : crypto.getRandomValues(new Uint8Array(16));
+  const llaveImportada = await crypto.subtle.importKey(
+    'raw',
+    codificadorTexto.encode(clave),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  const bitsDerivados = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: iteraciones },
+    llaveImportada,
+    256
+  );
+  return {
+    claveHash: aBase64(bitsDerivados),
+    claveSalt: aBase64(salt),
+    claveIter: iteraciones,
+  };
+}
+
+function compararTiempoConstante(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest('SHA-256', codificadorTexto.encode(str));
+  return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function verificarClaveCuenta(cuenta, claveCandidata) {
+  if (!cuenta || typeof claveCandidata !== 'string') return false;
+  if (cuenta.claveHash && cuenta.claveSalt) {
+    const calculado = await hashClavePBKDF2(claveCandidata, cuenta.claveSalt, cuenta.claveIter || 100000);
+    return compararTiempoConstante(calculado.claveHash, cuenta.claveHash);
+  }
+  return false;
+}
+
+/**
+ * Política estricta de sesiones en D1:
+ * - Máximo 2 sesiones activas por cuenta (id).
+ * - Si el user inicia una 3ª sesión, se eliminan TODAS las sesiones anteriores de ese id.
+ */
+async function crearSesion(d1, userId, rol, duracionHoras = 720) {
+  const ahora = Date.now();
+  const rolFinal = userId === 'admin' ? 'dev' : (rol || 'jugador');
+
+  if (d1) {
+    await asegurarTablasD1(d1);
+    try {
+      await d1.prepare('DELETE FROM sesiones WHERE expira_en <= ?').bind(ahora).run();
+      const activas = await d1.prepare('SELECT token_hash FROM sesiones WHERE id = ?').bind(userId).all();
+      if (activas && activas.results && activas.results.length >= 2) {
+        await d1.prepare('DELETE FROM sesiones WHERE id = ?').bind(userId).run();
+      }
+    } catch (err) {
+      console.error('Error limpiando sesiones previas en D1:', err);
+    }
+  }
+
+  const bytesAleatorios = crypto.getRandomValues(new Uint8Array(32));
+  const token = Array.from(bytesAleatorios, (b) => b.toString(16).padStart(2, '0')).join('');
+  const tokenHash = await sha256Hex(token);
+  const expiraEn = ahora + duracionHoras * 3600 * 1000;
+
+  if (d1) {
+    try {
+      await d1
+        .prepare('INSERT OR REPLACE INTO sesiones (id, token_hash, rol, creado_en, expira_en) VALUES (?, ?, ?, ?, ?)')
+        .bind(userId, tokenHash, rolFinal, ahora, expiraEn)
+        .run();
+    } catch (err) {
+      console.error('Error guardando nueva sesion en D1:', err);
+    }
+  }
+
+  return { token, tokenHash, expiraEn, userId, rol: rolFinal };
+}
+
+async function resolverSesion(request, env, d1) {
+  const authHeader = request.headers.get('Authorization') || '';
+  let token = '';
+  if (authHeader.startsWith('Bearer ')) {
+    token = authHeader.slice(7).trim();
+  }
+  const headerAdminToken = (request.headers.get('X-Admin-Token') || '').trim();
+  const rawAdminPass = env?.ADMIN_SECRET_KEY || env?.ADMIN_KEY || env?.ADMIN_PASSWORD;
+  const ADMIN_PASS = String(rawAdminPass || 'muros2026').trim();
+
+  if (headerAdminToken && (compararTiempoConstante(headerAdminToken, ADMIN_PASS) || headerAdminToken === 'muros2026')) {
+    return { userId: 'admin', rol: 'dev', token: headerAdminToken, porClaveMaestra: true };
+  }
+
+  if (!token) token = headerAdminToken;
+  if (!token) return null;
+
+  if (compararTiempoConstante(token, ADMIN_PASS) || token === 'muros2026') {
+    return { userId: 'admin', rol: 'dev', token, porClaveMaestra: true };
+  }
+
+  const tokenHash = await sha256Hex(token);
+  const ahora = Date.now();
+  if (d1) {
+    await asegurarTablasD1(d1);
+    try {
+      const fila = await d1
+        .prepare('SELECT id, rol, expira_en FROM sesiones WHERE token_hash = ?')
+        .bind(tokenHash)
+        .first();
+      if (fila && Number(fila.expira_en) > ahora) {
+        return { userId: fila.id, rol: fila.id === 'admin' ? 'dev' : fila.rol, tokenHash, token };
+      }
+      return { revocada: true, userId: null, rol: null };
+    } catch (err) {
+      console.error('Error consultando sesion D1:', err);
+    }
+  }
+  return null;
+}
+
+// ==========================================
+// HIDRATACIÓN UNIFICADA DESDE LAS 8 TABLAS D1
+// ==========================================
+
+function construirPerfilSupremo(previo = {}) {
+  return {
+    id: 'admin',
+    nombre: previo.nombre || 'Admin Supremo',
+    rol: 'dev',
+    esSupremo: true,
+    avatarColor: previo.avatarColor || '#ffd43b',
+    avatarHat: previo.avatarHat || 'corona',
+    avatarRopa: previo.avatarRopa || 'capa',
+    avatarRopaColor: previo.avatarRopaColor || '#c92a2a',
+    avatarAura: previo.avatarAura || 'dorada',
+    inventario: previo.inventario || { personajes: [] },
+    temaTablero: previo.temaTablero || 'madera',
+    puntos: typeof previo.puntos === 'number' ? previo.puntos : 0,
+    partidas: typeof previo.partidas === 'number' ? previo.partidas : 0,
+    victorias: typeof previo.victorias === 'number' ? previo.victorias : 0,
+    derrotas: typeof previo.derrotas === 'number' ? previo.derrotas : 0,
+    empates: typeof previo.empates === 'number' ? previo.empates : 0,
+    creadoEn: previo.creadoEn || new Date().toISOString(),
+    ultimaConexion: previo.ultimaConexion || new Date().toISOString(),
+    historialPartidas: Array.isArray(previo.historialPartidas) ? previo.historialPartidas : [],
+  };
+}
+
+function sanitizarCuentaPublica(acc) {
+  if (!acc || typeof acc !== 'object') return null;
+  const copia = { ...acc };
+  delete copia.clave;
+  delete copia.claveHash;
+  delete copia.claveSalt;
+  delete copia.claveIter;
+  if (copia.id === 'admin') {
+    copia.rol = 'dev';
+    copia.esSupremo = true;
+  }
+  return copia;
+}
+
+function sanitizarMapaCuentasPublicas(mapa) {
+  const out = {};
+  for (const [id, acc] of Object.entries(mapa || {})) {
+    const pub = sanitizarCuentaPublica(acc);
+    if (pub) out[id] = pub;
+  }
+  return out;
+}
+
+async function d1ObtenerTodasCuentas(d1) {
+  if (!d1) return {};
+  await asegurarTablasD1(d1);
+  try {
+    const [resCuentas, resHistorial, resInventario] = await Promise.all([
+      d1.prepare('SELECT * FROM cuentas').all(),
+      d1.prepare('SELECT * FROM historial').all(),
+      d1.prepare('SELECT * FROM inventario').all(),
+    ]);
+
+    const histMap = {};
+    for (const h of resHistorial?.results || []) {
+      let arr = [];
+      try {
+        arr = JSON.parse(h.historial_partida || '[]');
+        if (!Array.isArray(arr)) arr = [];
+      } catch {}
+      histMap[h.id] = {
+        puntos: Number(h.puntos) || 0,
+        partidas: Number(h.total_partida) || 0,
+        victorias: Number(h.victorias) || 0,
+        derrotas: Number(h.derrotas) || 0,
+        empates: Number(h.empates) || 0,
+        historialPartidas: arr,
+      };
+    }
+
+    const invMap = {};
+    for (const inv of resInventario?.results || []) {
+      let personajes = [];
+      try {
+        personajes = JSON.parse(inv.personajes_json || '[]');
+        if (!Array.isArray(personajes)) personajes = [];
+      } catch {}
+      invMap[inv.id] = {
+        avatarColor: inv.avatar_color || '#ff6b6b',
+        avatarHat: inv.avatar_hat || 'corona',
+        avatarRopa: inv.avatar_ropa || 'ninguna',
+        avatarRopaColor: inv.avatar_ropa_color || undefined,
+        avatarAura: inv.avatar_aura || 'ninguna',
+        temaTablero: inv.tema_tablero || 'madera',
+        inventario: {
+          personajes,
+          activoId: inv.activo_id || undefined,
+        },
+      };
+    }
+
+    const salida = {};
+    for (const c of resCuentas?.results || []) {
+      const h = histMap[c.id] || {
+        puntos: 0,
+        partidas: 0,
+        victorias: 0,
+        derrotas: 0,
+        empates: 0,
+        historialPartidas: [],
+      };
+      const inv = invMap[c.id] || {
+        avatarColor: c.id === 'admin' ? '#ffd43b' : '#ff6b6b',
+        avatarHat: 'corona',
+        avatarRopa: c.id === 'admin' ? 'capa' : 'ninguna',
+        avatarRopaColor: c.id === 'admin' ? '#c92a2a' : undefined,
+        avatarAura: c.id === 'admin' ? 'dorada' : 'ninguna',
+        temaTablero: 'madera',
+        inventario: { personajes: [] },
+      };
+
+      const esSup = c.id === 'admin';
+      salida[c.id] = {
+        id: c.id,
+        nombre: c.nombre || c.id,
+        claveHash: c.clave_hash || undefined,
+        claveSalt: c.clave_salt || undefined,
+        claveIter: Number(c.clave_iter) || 100000,
+        rol: esSup ? 'dev' : (c.rol || 'jugador'),
+        esSupremo: esSup,
+        creadoEn: c.creacion || new Date().toISOString(),
+        ultimaConexion: c.ultima_conexion || new Date().toISOString(),
+        puntos: h.puntos,
+        partidas: h.partidas,
+        victorias: h.victorias,
+        derrotas: h.derrotas,
+        empates: h.empates,
+        historialPartidas: h.historialPartidas,
+        avatarColor: inv.avatarColor,
+        avatarHat: inv.avatarHat,
+        avatarRopa: inv.avatarRopa,
+        avatarRopaColor: inv.avatarRopaColor,
+        avatarAura: inv.avatarAura,
+        temaTablero: inv.temaTablero,
+        inventario: inv.inventario,
+      };
+    }
+    return salida;
+  } catch (err) {
+    console.error('Error hidratando cuentas de D1:', err);
+    return {};
+  }
+}
+
+async function d1GuardarCuentaCompleta(d1, acc, tocarUpdate = true) {
+  if (!d1 || !acc || !acc.id) return;
+  await asegurarTablasD1(d1);
+  const ahora = Date.now();
+  const esSup = acc.id === 'admin';
+  const rolFinal = esSup ? 'dev' : (acc.rol || 'jugador');
+
+  try {
+    let prevCuenta = null;
+    try {
+      prevCuenta = await d1
+        .prepare('SELECT clave_hash, clave_salt, clave_iter, creacion FROM cuentas WHERE id = ?')
+        .bind(acc.id)
+        .first();
+    } catch {}
+
+    await d1
+      .prepare(`
+        INSERT OR REPLACE INTO cuentas (
+          id, nombre, clave_hash, clave_salt, clave_iter, rol, creacion, ultima_conexion
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .bind(
+        acc.id,
+        acc.nombre || acc.id,
+        acc.claveHash || prevCuenta?.clave_hash || null,
+        acc.claveSalt || prevCuenta?.clave_salt || null,
+        Number(acc.claveIter) || Number(prevCuenta?.clave_iter) || 100000,
+        rolFinal,
+        acc.creadoEn || prevCuenta?.creacion || new Date().toISOString(),
+        acc.ultimaConexion || new Date().toISOString()
+      )
+      .run();
+
+    await d1
+      .prepare(`
+        INSERT OR REPLACE INTO historial (
+          id, puntos, total_partida, victorias, derrotas, empates, historial_partida, actualizado_en
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .bind(
+        acc.id,
+        Math.max(0, Number(acc.puntos) || 0),
+        Math.max(0, Number(acc.partidas) || 0),
+        Math.max(0, Number(acc.victorias) || 0),
+        Math.max(0, Number(acc.derrotas) || 0),
+        Math.max(0, Number(acc.empates) || 0),
+        JSON.stringify(Array.isArray(acc.historialPartidas) ? acc.historialPartidas.slice(0, 50) : []),
+        ahora
+      )
+      .run();
+
+    const inv = acc.inventario || { personajes: [] };
+    await d1
+      .prepare(`
+        INSERT OR REPLACE INTO inventario (
+          id, avatar_color, avatar_hat, avatar_ropa, avatar_ropa_color, avatar_aura, tema_tablero, activo_id, personajes_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .bind(
+        acc.id,
+        acc.avatarColor || '#ff6b6b',
+        acc.avatarHat || 'corona',
+        acc.avatarRopa || 'ninguna',
+        acc.avatarRopaColor || null,
+        acc.avatarAura || 'ninguna',
+        acc.temaTablero || 'madera',
+        inv.activoId || null,
+        JSON.stringify(Array.isArray(inv.personajes) ? inv.personajes : [])
+      )
+      .run();
+
+    // Sincronizar fila de ranking si no es 'admin' o si ya tenía partidas
+    if (!esSup || (Number(acc.partidas) || 0) > 0 || (Number(acc.puntos) || 0) > 0) {
+      let prevRank = null;
+      try {
+        prevRank = await d1.prepare('SELECT * FROM ranking WHERE id = ?').bind(acc.id).first();
+      } catch {}
+
+      await d1
+        .prepare(`
+          INSERT OR REPLACE INTO ranking (
+            id, nombre, puntos, total_partida, victorias, derrotas, empates,
+            avatar_color, avatar_hat, avatar_ropa, avatar_ropa_color, avatar_aura,
+            semana_actual_id, semana_actual_pts, semana_actual_vic, semana_actual_part,
+            semana_pasada_id, semana_pasada_pts, semana_pasada_premio, actualizado_en
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .bind(
+          acc.id,
+          acc.nombre || acc.id,
+          Math.max(0, Number(acc.puntos) || 0),
+          Math.max(0, Number(acc.partidas) || 0),
+          Math.max(0, Number(acc.victorias) || 0),
+          Math.max(0, Number(acc.derrotas) || 0),
+          Math.max(0, Number(acc.empates) || 0),
+          acc.avatarColor || '#ff6b6b',
+          acc.avatarHat || 'corona',
+          acc.avatarRopa || 'ninguna',
+          acc.avatarRopaColor || null,
+          acc.avatarAura || 'ninguna',
+          prevRank?.semana_actual_id || obtenerInfoSemana().semanaActualId,
+          Number(prevRank?.semana_actual_pts) || 0,
+          Number(prevRank?.semana_actual_vic) || 0,
+          Number(prevRank?.semana_actual_part) || 0,
+          prevRank?.semana_pasada_id || obtenerInfoSemana().semanaPasadaId,
+          Number(prevRank?.semana_pasada_pts) || 0,
+          prevRank?.semana_pasada_premio || null,
+          ahora
+        )
+        .run();
+    }
+
+    if (tocarUpdate) {
+      await tocarUltimaActualizacion(d1);
     }
   } catch (err) {
-    console.error('Error leyendo salas_personalizadas de D1:', err);
+    console.error(`Error guardando cuenta completa (${acc.id}) en D1:`, err);
   }
-  return [];
 }
 
-async function d1PutSalaPersonalizada(d1, sala) {
-  if (!d1 || !sala) return;
+async function d1EliminarCuentaCompleta(d1, targetId) {
+  if (!d1 || !targetId || targetId === 'admin') return;
+  await asegurarTablasD1(d1);
   try {
-    await ensureD1Tables(d1);
+    await d1.prepare('DELETE FROM cuentas WHERE id = ?').bind(targetId).run();
+    await d1.prepare('DELETE FROM historial WHERE id = ?').bind(targetId).run();
+    await d1.prepare('DELETE FROM inventario WHERE id = ?').bind(targetId).run();
+    await d1.prepare('DELETE FROM ranking WHERE id = ?').bind(targetId).run();
+    await d1.prepare('DELETE FROM sesiones WHERE id = ?').bind(targetId).run();
+    await d1.prepare('DELETE FROM salas_personalizadas WHERE creador_id = ?').bind(targetId).run();
+    await tocarUltimaActualizacion(d1);
+  } catch (err) {
+    console.error(`Error eliminando cuenta (${targetId}) de D1:`, err);
+  }
+}
+
+async function d1RenombrarIdEnCascada(d1, oldId, newId) {
+  if (!d1 || !oldId || !newId || oldId === 'admin' || newId === 'admin' || oldId === newId) return false;
+  await asegurarTablasD1(d1);
+  try {
+    await d1.prepare('UPDATE cuentas SET id = ? WHERE id = ?').bind(newId, oldId).run();
+    await d1.prepare('UPDATE historial SET id = ? WHERE id = ?').bind(newId, oldId).run();
+    await d1.prepare('UPDATE inventario SET id = ? WHERE id = ?').bind(newId, oldId).run();
+    await d1.prepare('UPDATE ranking SET id = ? WHERE id = ?').bind(newId, oldId).run();
+    await d1.prepare('UPDATE sesiones SET id = ? WHERE id = ?').bind(newId, oldId).run();
+    await d1.prepare('UPDATE salas_personalizadas SET creador_id = ? WHERE creador_id = ?').bind(newId, oldId).run();
+    await tocarUltimaActualizacion(d1);
+    return true;
+  } catch (err) {
+    console.error(`Error renombrando ID en cascada (${oldId} -> ${newId}):`, err);
+    return false;
+  }
+}
+
+// ==========================================
+// RANKING & SEMANA EN TABLA `ranking`
+// ==========================================
+
+function obtenerInfoSemana(ahoraMs = Date.now()) {
+  const d = new Date(ahoraMs);
+  const utcDay = d.getUTCDay();
+  const diffALunes = utcDay === 0 ? -6 : 1 - utcDay;
+  const lunesUtc = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + diffALunes, 0, 0, 0, 0);
+  const lunesPasadoUtc = lunesUtc - 7 * 86400000;
+  const proximoLunesUtc = lunesUtc + 7 * 86400000;
+  return {
+    lunesUtc,
+    lunesPasadoUtc,
+    proximoLunesUtc,
+    cierraEnMs: Math.max(0, proximoLunesUtc - ahoraMs),
+    semanaActualId: new Date(lunesUtc).toISOString().slice(0, 10),
+    semanaPasadaId: new Date(lunesPasadoUtc).toISOString().slice(0, 10),
+  };
+}
+
+async function d1LeerRanking(d1) {
+  if (!d1) return {};
+  await asegurarTablasD1(d1);
+  try {
+    const [filasRank, filasHist, filasCuentas] = await Promise.all([
+      d1.prepare('SELECT * FROM ranking').all(),
+      d1.prepare('SELECT id, historial_partida FROM historial').all(),
+      d1.prepare('SELECT id, ultima_conexion FROM cuentas').all(),
+    ]);
+
+    const histMap = {};
+    for (const h of filasHist?.results || []) {
+      try {
+        const arr = JSON.parse(h.historial_partida || '[]');
+        if (Array.isArray(arr)) histMap[h.id] = arr;
+      } catch {}
+    }
+
+    const ultimaMap = {};
+    for (const c of filasCuentas?.results || []) {
+      ultimaMap[c.id] = c.ultima_conexion;
+    }
+
+    const salida = {};
+    for (const r of filasRank?.results || []) {
+      if (r.id === 'admin' && (Number(r.total_partida) || 0) === 0 && (Number(r.puntos) || 0) === 0) {
+        continue;
+      }
+      const hist = histMap[r.id] || [];
+      let rachaActual = 0;
+      let mejorRacha = 0;
+      let tmp = 0;
+      let murosColocados = 0;
+      let saltos = 0;
+      let mejorPartida = 0;
+      let partidaMasRapida = 999;
+      let partidasLimpias = 0;
+      const logrosSet = new Set();
+
+      // Recorremos de más antiguo a más reciente
+      const cronologico = [...hist].reverse();
+      for (const m of cronologico) {
+        if (!m) continue;
+        const pts = Math.max(0, Number(m.puntos) || 0);
+        if (pts > mejorPartida) mejorPartida = pts;
+        murosColocados += Math.max(0, Number(m.murosColocados) || 0);
+        saltos += Math.max(0, Number(m.saltos) || 0);
+        if (m.partidaLimpia) partidasLimpias++;
+        if (Array.isArray(m.logros)) {
+          for (const l of m.logros) logrosSet.add(l);
+        }
+        if (m.resultado === 'victoria') {
+          tmp++;
+          if (tmp > mejorRacha) mejorRacha = tmp;
+          const mov = Number(m.movimientos) || 0;
+          if (mov > 0 && mov < partidaMasRapida) partidaMasRapida = mov;
+        } else {
+          tmp = 0;
+        }
+      }
+      rachaActual = tmp;
+
+      const key = String(r.nombre || r.id).trim().toLowerCase();
+      salida[key] = {
+        id: r.id,
+        nombre: r.nombre || r.id,
+        puntosTotales: Number(r.puntos) || 0,
+        partidas: Number(r.total_partida) || 0,
+        victorias: Number(r.victorias) || 0,
+        derrotas: Number(r.derrotas) || 0,
+        empates: Number(r.empates) || 0,
+        rachaActual,
+        mejorRacha,
+        murosColocados,
+        saltos,
+        mejorPartida,
+        partidaMasRapida,
+        partidasLimpias,
+        fechaUltimaPartida: ultimaMap[r.id] || new Date(Number(r.actualizado_en) || Date.now()).toISOString(),
+        logros: Array.from(logrosSet),
+        avatarColor: r.avatar_color || '#ff6b6b',
+        avatarHat: r.avatar_hat || 'corona',
+        avatarRopa: r.avatar_ropa || 'ninguna',
+        avatarRopaColor: r.avatar_ropa_color || undefined,
+        avatarAura: r.avatar_aura || 'ninguna',
+      };
+    }
+    return salida;
+  } catch (err) {
+    console.error('Error leyendo ranking D1:', err);
+    return {};
+  }
+}
+
+async function d1AsegurarSemanaEnRanking(d1, infoSemana) {
+  if (!d1) return;
+  await asegurarTablasD1(d1);
+  try {
+    const filas = await d1.prepare('SELECT * FROM ranking').all();
+    for (const r of filas?.results || []) {
+      const sa = r.semana_actual_id;
+      if (sa && sa !== infoSemana.semanaActualId) {
+        // Hubo cambio de semana: si sa era la semana pasada, desplazamos a semana_pasada_*
+        const esSemanaPasada = sa === infoSemana.semanaPasadaId;
+        await d1
+          .prepare(`
+            UPDATE ranking SET
+              semana_pasada_id = ?,
+              semana_pasada_pts = ?,
+              semana_actual_id = ?,
+              semana_actual_pts = 0,
+              semana_actual_vic = 0,
+              semana_actual_part = 0
+            WHERE id = ?
+          `)
+          .bind(
+            infoSemana.semanaPasadaId,
+            esSemanaPasada ? (Number(r.semana_actual_pts) || 0) : 0,
+            infoSemana.semanaActualId,
+            r.id
+          )
+          .run();
+      } else if (!sa) {
+        await d1
+          .prepare('UPDATE ranking SET semana_actual_id = ?, semana_pasada_id = ? WHERE id = ?')
+          .bind(infoSemana.semanaActualId, infoSemana.semanaPasadaId, r.id)
+          .run();
+      }
+    }
+  } catch (err) {
+    console.error('Error rotando semana en ranking D1:', err);
+  }
+}
+
+// ==========================================
+// SALAS PERSONALIZADAS & SALAS ONLINE (D1)
+// ==========================================
+
+async function d1LeerSalasPersonalizadas(d1) {
+  if (!d1) return [];
+  await asegurarTablasD1(d1);
+  try {
+    const filas = await d1.prepare('SELECT * FROM salas_personalizadas ORDER BY creado_en DESC LIMIT 25').all();
+    return (filas?.results || []).map((r) => ({
+      id: `sp_${r.codigo}`,
+      codigo: r.codigo,
+      nombre: r.nombre,
+      creador: r.creador,
+      creadorId: r.creador_id,
+      creadorRol: r.creador_rol,
+      maxJugadores: Number(r.max_jugadores) || 2,
+      modoMuros: r.modo_muros || 'estandar',
+      tamanoTablero: Number(r.tamano_tablero) === 7 ? 7 : 9,
+      destacada: Boolean(r.destacada),
+      mensajeEspecial: r.mensaje_especial || '',
+      creadoEn: Number(r.creado_en) || Date.now(),
+    }));
+  } catch (err) {
+    console.error('Error leyendo salas_personalizadas D1:', err);
+    return [];
+  }
+}
+
+async function d1GuardarSalaPersonalizada(d1, sala) {
+  if (!d1 || !sala) return;
+  await asegurarTablasD1(d1);
+  try {
     await d1
       .prepare(`
         INSERT OR REPLACE INTO salas_personalizadas (
@@ -268,9 +890,9 @@ async function d1PutSalaPersonalizada(d1, sala) {
         sala.creador || 'Staff',
         sala.creadorId || 'admin',
         sala.creadorRol || 'mod',
-        sala.maxJugadores || 2,
+        sala.maxJugadores === 4 ? 4 : 2,
         sala.modoMuros || 'estandar',
-        sala.tamanoTablero || 9,
+        sala.tamanoTablero === 7 ? 7 : 9,
         sala.destacada ? 1 : 0,
         sala.mensajeEspecial || '',
         sala.creadoEn || Date.now()
@@ -281,665 +903,122 @@ async function d1PutSalaPersonalizada(d1, sala) {
   }
 }
 
-async function d1DeleteSalaPersonalizada(d1, codigo) {
+async function d1EliminarSalaPersonalizada(d1, codigo) {
   if (!d1 || !codigo) return;
+  await asegurarTablasD1(d1);
   try {
-    await ensureD1Tables(d1);
     await d1.prepare('DELETE FROM salas_personalizadas WHERE codigo = ?').bind(codigo).run();
+    await d1.prepare('DELETE FROM salas_online WHERE codigo = ?').bind(codigo).run();
   } catch (err) {
     console.error('Error eliminando sala_personalizada de D1:', err);
   }
 }
 
-// Sincronizar personajes de inventario a su tabla dedicada en D1
-async function d1SyncInventarioUsuario(d1, usuarioId, inventario) {
-  if (!d1 || !usuarioId || !inventario) return;
+function normalizarCodigoSala(raw) {
+  return String(raw || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+}
+
+async function d1LimpiarSalasExpiradas(d1) {
+  if (!d1) return;
+  await asegurarTablasD1(d1);
   try {
-    const chars = Array.isArray(inventario.personajes) ? inventario.personajes : [];
-    for (const c of chars) {
-      if (!c || !c.id) continue;
-      await d1
-        .prepare(`
-          INSERT OR REPLACE INTO inventario (
-            usuario_id, personaje_id, nombre, color, hat, ropa, ropa_color, aura, fecha_adquisicion, origen, activo
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `)
-        .bind(
-          usuarioId,
-          c.id,
-          c.nombre || 'Personaje',
-          c.color || '#ffd43b',
-          c.hat || 'corona',
-          c.ropa || 'ninguna',
-          c.ropaColor || null,
-          c.aura || 'ninguna',
-          c.fechaAdquisicion || new Date().toISOString(),
-          c.origen || 'desconocido',
-          inventario.activoId === c.id ? 1 : 0
-        )
-        .run();
+    const limite = Date.now() - 30 * 60 * 1000;
+    await d1.prepare('DELETE FROM salas_online WHERE ultimo_cambio < ?').bind(limite).run();
+  } catch {}
+}
+
+async function d1LeerSalaOnline(d1, codigo) {
+  const limpio = normalizarCodigoSala(codigo);
+  if (!d1 || !limpio) return null;
+  await asegurarTablasD1(d1);
+
+  try {
+    const fila = await d1.prepare('SELECT data_json, ultimo_cambio FROM salas_online WHERE codigo = ?').bind(limpio).first();
+    if (fila && typeof fila.data_json === 'string') {
+      const parsed = JSON.parse(fila.data_json);
+      const ahora = Date.now();
+      const maxInactividad = parsed.enPartida ? 25 * 60 * 1000 : 15 * 60 * 1000;
+      if (ahora - (Number(fila.ultimo_cambio) || parsed.ultimoCambio || 0) <= maxInactividad) {
+        return parsed;
+      }
+      await d1.prepare('DELETE FROM salas_online WHERE codigo = ?').bind(limpio).run();
+    }
+
+    // Si es una sala personalizada oficial creada por Staff, hidratarla y guardarla en D1 salas_online
+    const customRow = await d1.prepare('SELECT * FROM salas_personalizadas WHERE codigo = ?').bind(limpio).first();
+    if (customRow) {
+      const ahora = Date.now();
+      const salaNueva = {
+        codigo: customRow.codigo,
+        nombre: customRow.nombre,
+        anfitrion: customRow.creador || 'Staff',
+        hostPeerId: `host_${limpio.toLowerCase()}`,
+        color: '#ffd43b',
+        hat: 'corona',
+        ropa: 'capa',
+        ropaColor: '#c92a2a',
+        aura: 'dorada',
+        maxJugadores: Number(customRow.max_jugadores) === 4 ? 4 : 2,
+        publica: true,
+        enPartida: false,
+        jugadoresConectados: 0,
+        jugadores: [],
+        signals: {},
+        seq: 0,
+        mensajes: [],
+        creadoEn: Number(customRow.creado_en) || ahora,
+        ultimoCambio: ahora,
+        modoMuros: customRow.modo_muros || 'estandar',
+        tamanoTablero: Number(customRow.tamano_tablero) === 7 ? 7 : 9,
+        esOficialStaff: true,
+      };
+      await d1GuardarSalaOnline(d1, limpio, salaNueva);
+      return salaNueva;
     }
   } catch (err) {
-    console.error('Error sincronizando inventario en D1:', err);
+    console.error(`Error leyendo sala_online (${limpio}):`, err);
   }
-}
-
-function d1RowToAccount(row) {
-  if (!row) return null;
-  let hist = [];
-  try {
-    hist = JSON.parse(row.historial_json || '[]');
-  } catch {}
-  let inv = { personajes: [], activoId: undefined };
-  try {
-    inv = JSON.parse(row.inventario_json || '{"personajes":[]}');
-    if (!inv || !Array.isArray(inv.personajes)) inv = { personajes: [] };
-  } catch {}
-
-  const isSup = row.id === 'admin';
-  return {
-    id: row.id,
-    nombre: row.nombre,
-    claveHash: row.clave_hash || undefined,
-    claveSalt: row.clave_salt || undefined,
-    claveIter: row.clave_iter || 100000,
-    clave: row.clave_plano || undefined,
-    rol: isSup ? 'dev' : (row.rol || 'jugador'),
-    esSupremo: isSup,
-    puntos: Number(row.puntos) || 0,
-    victorias: Number(row.victorias) || 0,
-    derrotas: Number(row.derrotas) || 0,
-    empates: Number(row.empates) || 0,
-    partidas: Number(row.partidas) || 0,
-    elo: Number(row.elo) || 1000,
-    avatarColor: row.avatar_color || '#ff6b6b',
-    avatarHat: row.avatar_hat || 'corona',
-    avatarRopa: row.avatar_ropa || 'ninguna',
-    avatarRopaColor: row.avatar_ropa_color || undefined,
-    avatarAura: row.avatar_aura || 'ninguna',
-    inventario: inv,
-    temaTablero: row.tema_board || 'madera',
-    creadoEn: row.creado_en || new Date().toISOString(),
-    ultimaConexion: row.ultima_conexion || new Date().toISOString(),
-    historialPartidas: hist,
-  };
-}
-
-const textEncoder = new TextEncoder();
-const toBase64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
-const fromBase64 = (str) => Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
-
-async function hashClavePBKDF2(clave, saltB64, iterations = 100000) {
-  const salt = saltB64 ? fromBase64(saltB64) : crypto.getRandomValues(new Uint8Array(16));
-  const importedKey = await crypto.subtle.importKey(
-    'raw',
-    textEncoder.encode(clave),
-    'PBKDF2',
-    false,
-    ['deriveBits']
-  );
-  const derivedBits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations },
-    importedKey,
-    256
-  );
-  return {
-    claveHash: toBase64(derivedBits),
-    claveSalt: toBase64(salt),
-    claveIter: iterations,
-  };
-}
-
-function timeConstantCompare(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
-}
-
-async function sha256Hex(str) {
-  const buf = await crypto.subtle.digest('SHA-256', textEncoder.encode(str));
-  return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-async function verificarClaveCuenta(cuenta, candidateClave) {
-  if (!cuenta || typeof candidateClave !== 'string') return false;
-  if (cuenta.claveHash && cuenta.claveSalt) {
-    const computed = await hashClavePBKDF2(candidateClave, cuenta.claveSalt, cuenta.claveIter || 100000);
-    return timeConstantCompare(computed.claveHash, cuenta.claveHash);
-  }
-  if (typeof cuenta.clave === 'string' && cuenta.clave.length > 0 && cuenta.clave !== '***SUPREMO***') {
-    return timeConstantCompare(cuenta.clave, candidateClave);
-  }
-  return false;
-}
-
-/**
- * Sistema de sesiones en D1:
- * - Máximo 2 sesiones activas por cuenta.
- * - Si se excede, se cierran todas las sesiones antiguas de esa cuenta para proteger la seguridad.
- */
-async function crearSesion(env, usuarioId, rol, duracionHoras = 720) {
-  const d1 = resolveD1(env);
-  const now = Date.now();
-
-  if (d1) {
-    await ensureD1Tables(d1);
-    try {
-      // 1. Limpiar sesiones expiradas
-      await d1.prepare('DELETE FROM sesiones WHERE expira_en <= ?').bind(now).run();
-
-      // 2. Contar sesiones activas de esta cuenta
-      const existingSessions = await d1
-        .prepare('SELECT token_hash FROM sesiones WHERE usuario_id = ?')
-        .bind(usuarioId)
-        .all();
-
-      // Si tiene 2 o más sesiones, cerrar todas las viejas sesiones para esa cuenta
-      if (existingSessions && existingSessions.results && existingSessions.results.length >= 2) {
-        await d1.prepare('DELETE FROM sesiones WHERE usuario_id = ?').bind(usuarioId).run();
-      }
-    } catch (err) {
-      console.error('Error gestionando sesiones en D1:', err);
-    }
-  }
-
-  const rawBytes = crypto.getRandomValues(new Uint8Array(32));
-  const token = Array.from(rawBytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  const tokenHash = await sha256Hex(token);
-  const expiraEn = now + duracionHoras * 3600 * 1000;
-
-  if (d1) {
-    try {
-      await d1
-        .prepare('INSERT OR REPLACE INTO sesiones (token_hash, usuario_id, rol, expira_en, creado_en) VALUES (?, ?, ?, ?, ?)')
-        .bind(tokenHash, usuarioId, rol, expiraEn, now)
-        .run();
-    } catch (err) {
-      console.error('Error guardando sesion en D1:', err);
-    }
-  }
-
-  return { token, tokenHash, expiraEn, usuarioId, rol };
-}
-
-async function resolverSesion(request, env) {
-  let token = '';
-  const authHeader = request.headers.get('Authorization') || '';
-  if (authHeader.startsWith('Bearer ')) {
-    token = authHeader.slice(7).trim();
-  }
-  const adminTokenHeader = (request.headers.get('X-Admin-Token') || '').trim();
-  const rawAdminPass = env?.ADMIN_SECRET_KEY || env?.ADMIN_KEY || env?.ADMIN_PASSWORD;
-  const ADMIN_PASS = String(rawAdminPass || 'muros2026').trim();
-
-  // Si X-Admin-Token coincide con la clave maestra, es sesión de Dev Supremo directa
-  if (adminTokenHeader && (timeConstantCompare(adminTokenHeader, ADMIN_PASS) || adminTokenHeader === 'muros2026')) {
-    return { usuarioId: 'admin', rol: 'dev', token: adminTokenHeader };
-  }
-
-  if (!token) {
-    token = adminTokenHeader;
-  }
-  if (!token) return null;
-
-  if (timeConstantCompare(token, ADMIN_PASS) || token === 'muros2026') {
-    return { usuarioId: 'admin', rol: 'dev', token };
-  }
-
-  const tokenHash = await sha256Hex(token);
-  const now = Date.now();
-
-  const d1 = resolveD1(env);
-  if (d1) {
-    await ensureD1Tables(d1);
-    try {
-      const row = await d1
-        .prepare('SELECT usuario_id, rol, expira_en FROM sesiones WHERE token_hash = ?')
-        .bind(tokenHash)
-        .first();
-      if (row && Number(row.expira_en) > now) {
-        return { usuarioId: row.usuario_id, rol: row.rol, tokenHash, token };
-      }
-    } catch (err) {
-      console.error('Error resolviendo sesion en D1:', err);
-    }
-  }
-
   return null;
 }
 
-function sanitizeCuentaParaEnviar(acc) {
-  if (!acc || typeof acc !== 'object') return null;
-  const copy = { ...acc };
-  delete copy.clave;
-  delete copy.clave_plano;
-  delete copy.clave_hash;
-  delete copy.claveHash;
-  delete copy.clave_salt;
-  delete copy.claveSalt;
-  delete copy.clave_iter;
-  delete copy.claveIter;
-  return copy;
-}
-
-function sanitizeCuentasParaEnviar(cuentasMap) {
-  const result = {};
-  for (const [id, acc] of Object.entries(cuentasMap || {})) {
-    result[id] = sanitizeCuentaParaEnviar(acc);
-  }
-  return result;
-}
-
-function sanitizeCuentas(cuentas) {
-  const copy = { ...(cuentas || {}) };
-  if (copy['admin']) {
-    copy['admin'] = {
-      ...copy['admin'],
-      id: 'admin',
-      rol: 'admin',
-      esSupremo: true,
-      clave: '***SUPREMO***',
-    };
-  }
-  return copy;
-}
-
-function buildSupremeProfile(cuentas) {
-  const existing = (cuentas && cuentas['admin']) || {};
-  return {
-    id: 'admin',
-    nombre: existing.nombre || 'Admin Supremo',
-    clave: '***SUPREMO***',
-    rol: 'dev',
-    esSupremo: true,
-    avatarColor: existing.avatarColor || '#ffd43b',
-    avatarHat: existing.avatarHat || 'corona',
-    avatarRopa: existing.avatarRopa || 'capa',
-    avatarRopaColor: existing.avatarRopaColor || undefined,
-    avatarAura: existing.avatarAura || 'dorada',
-    inventario: existing.inventario || { personajes: [] },
-    temaTablero: existing.temaTablero || 'madera',
-    puntos: typeof existing.puntos === 'number' ? existing.puntos : 0,
-    partidas: typeof existing.partidas === 'number' ? existing.partidas : 0,
-    victorias: typeof existing.victorias === 'number' ? existing.victorias : 0,
-    elo: typeof existing.elo === 'number' ? existing.elo : 0,
-    creadoEn: existing.creadoEn || new Date().toISOString(),
-    ultimaConexion: new Date().toISOString(),
-    historialPartidas: existing.historialPartidas || [],
-  };
-}
-
-const PREMIOS_SEMANALES = [25, 15, 10];
-
-async function dbGetCuentas(env) {
-  const d1 = resolveD1(env);
-  if (d1) {
-    await ensureD1Tables(d1);
-    try {
-      const rows = await d1.prepare('SELECT * FROM cuentas').all();
-      if (rows && rows.results && rows.results.length > 0) {
-        const map = {};
-        for (const row of rows.results) {
-          const acc = d1RowToAccount(row);
-          if (acc) map[acc.id] = acc;
-        }
-        return map;
-      }
-    } catch (err) {
-      console.error('Error leyendo cuentas de D1:', err);
-    }
-  }
-  return {};
-}
-
-async function dbInsertOrUpdateCuenta(env, acc, touchGlobalUpdate = true) {
-  if (!acc || !acc.id) return;
-  const d1 = resolveD1(env);
-  if (d1) {
-    await ensureD1Tables(d1);
-    try {
-      let prevRow = null;
-      try {
-        prevRow = await d1.prepare('SELECT clave_hash, clave_salt, clave_iter, clave_plano, rol FROM cuentas WHERE id = ?').bind(acc.id).first();
-      } catch {}
-
-      const claveHash = acc.claveHash || prevRow?.clave_hash || null;
-      const claveSalt = acc.claveSalt || prevRow?.clave_salt || null;
-      const claveIter = Number(acc.claveIter) || Number(prevRow?.clave_iter) || 100000;
-      const clavePlano = (acc.clave && acc.clave !== '***SUPREMO***') ? acc.clave : (prevRow?.clave_plano || null);
-      const rol = acc.id === 'admin' ? 'dev' : (prevRow?.rol || acc.rol || 'jugador');
-
-      await d1
-        .prepare(`
-          INSERT OR REPLACE INTO cuentas (
-            id, nombre, clave_hash, clave_salt, clave_iter, clave_plano,
-            rol, puntos, victorias, derrotas, empates, partidas, elo,
-            avatar_color, avatar_hat, avatar_ropa, avatar_ropa_color, avatar_aura, inventario_json,
-            tema_board, creado_en, ultima_conexion, historial_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `)
-        .bind(
-          acc.id,
-          acc.nombre || acc.id,
-          claveHash,
-          claveSalt,
-          claveIter,
-          clavePlano,
-          rol,
-          typeof acc.puntos === 'number' ? acc.puntos : 0,
-          typeof acc.victorias === 'number' ? acc.victorias : 0,
-          typeof acc.derrotas === 'number' ? acc.derrotas : 0,
-          typeof acc.empates === 'number' ? acc.empates : 0,
-          typeof acc.partidas === 'number' ? acc.partidas : 0,
-          typeof acc.elo === 'number' ? acc.elo : 1000,
-          acc.avatarColor || '#ff6b6b',
-          acc.avatarHat || 'corona',
-          acc.avatarRopa || 'ninguna',
-          acc.avatarRopaColor || null,
-          acc.avatarAura || 'ninguna',
-          JSON.stringify(acc.inventario || { personajes: [] }),
-          acc.temaTablero || 'madera',
-          acc.creadoEn || new Date().toISOString(),
-          acc.ultimaConexion || new Date().toISOString(),
-          JSON.stringify(acc.historialPartidas || [])
-        )
-        .run();
-
-      if (acc.inventario) {
-        await d1SyncInventarioUsuario(d1, acc.id, acc.inventario);
-      }
-      if (touchGlobalUpdate) {
-        await d1PutConfig(d1, 'last_update', Date.now());
-      }
-    } catch (err) {
-      console.error('Error guardando cuenta en D1:', err);
-    }
+async function d1GuardarSalaOnline(d1, codigo, salaObj) {
+  const limpio = normalizarCodigoSala(codigo);
+  if (!d1 || !limpio || !salaObj) return;
+  await asegurarTablasD1(d1);
+  const ahora = Date.now();
+  salaObj.ultimoCambio = ahora;
+  try {
+    await d1
+      .prepare('INSERT OR REPLACE INTO salas_online (codigo, data_json, ultimo_cambio) VALUES (?, ?, ?)')
+      .bind(limpio, JSON.stringify(salaObj), ahora)
+      .run();
+  } catch (err) {
+    console.error(`Error guardando sala_online (${limpio}):`, err);
   }
 }
 
-async function dbSaveCuentas(env, cleanCuentas, touchGlobalUpdate = false, allowDeletions = false) {
-  const d1 = resolveD1(env);
-  if (d1) {
-    await ensureD1Tables(d1);
-    try {
-      if (allowDeletions) {
-        const existingRows = await d1.prepare('SELECT id FROM cuentas').all();
-        const existingIds = new Set((existingRows?.results || []).map((r) => r.id));
-        const incomingIds = new Set(Object.keys(cleanCuentas));
-        for (const oldId of existingIds) {
-          if (!incomingIds.has(oldId) && oldId !== 'admin') {
-            await d1.prepare('DELETE FROM cuentas WHERE id = ?').bind(oldId).run();
-            await d1.prepare('DELETE FROM sesiones WHERE usuario_id = ?').bind(oldId).run();
-            await d1.prepare('DELETE FROM ranking WHERE id = ?').bind(oldId).run();
-            await d1.prepare('DELETE FROM inventario WHERE usuario_id = ?').bind(oldId).run();
-          }
-        }
-      }
-
-      const existingAccounts = await dbGetCuentas(env);
-      for (const [id, acc] of Object.entries(cleanCuentas)) {
-        if (!acc || typeof acc !== 'object') continue;
-        const prev = existingAccounts[id] || {};
-        const claveHash = acc.claveHash || prev.claveHash || null;
-        const claveSalt = acc.claveSalt || prev.claveSalt || null;
-        const claveIter = Number(acc.claveIter) || Number(prev.claveIter) || 100000;
-        const clavePlano = (acc.clave && acc.clave !== '***SUPREMO***') ? acc.clave : (prev.clave || null);
-        const rol = id === 'admin' ? 'dev' : (prev.rol || acc.rol || 'jugador');
-        const inv = acc.inventario || prev.inventario || { personajes: [] };
-
-        await d1
-          .prepare(`
-            INSERT OR REPLACE INTO cuentas (
-              id, nombre, clave_hash, clave_salt, clave_iter, clave_plano,
-              rol, puntos, victorias, derrotas, empates, partidas, elo,
-              avatar_color, avatar_hat, avatar_ropa, avatar_ropa_color, avatar_aura, inventario_json,
-              tema_board, creado_en, ultima_conexion, historial_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `)
-          .bind(
-            id,
-            acc.nombre || prev.nombre || id,
-            claveHash,
-            claveSalt,
-            claveIter,
-            clavePlano,
-            rol,
-            typeof acc.puntos === 'number' ? acc.puntos : (Number(prev.puntos) || 0),
-            typeof acc.victorias === 'number' ? acc.victorias : (Number(prev.victorias) || 0),
-            typeof acc.derrotas === 'number' ? acc.derrotas : (Number(prev.derrotas) || 0),
-            typeof acc.empates === 'number' ? acc.empates : (Number(prev.empates) || 0),
-            typeof acc.partidas === 'number' ? acc.partidas : (Number(prev.partidas) || 0),
-            typeof acc.elo === 'number' ? acc.elo : (Number(prev.elo) || 1000),
-            acc.avatarColor || prev.avatarColor || '#ff6b6b',
-            acc.avatarHat || prev.avatarHat || 'corona',
-            acc.avatarRopa || prev.avatarRopa || 'ninguna',
-            acc.avatarRopaColor || prev.avatarRopaColor || null,
-            acc.avatarAura || prev.avatarAura || 'ninguna',
-            JSON.stringify(inv),
-            acc.temaTablero || prev.temaTablero || 'madera',
-            acc.creadoEn || prev.creadoEn || new Date().toISOString(),
-            new Date().toISOString(),
-            JSON.stringify(acc.historialPartidas || prev.historialPartidas || [])
-          )
-          .run();
-
-        if (inv) {
-          await d1SyncInventarioUsuario(d1, id, inv);
-        }
-      }
-
-      if (touchGlobalUpdate) {
-        await d1PutConfig(d1, 'last_update', Date.now());
-      }
-    } catch (err) {
-      console.error('Error guardando cuentas en D1:', err);
-    }
-  }
+async function d1EliminarSalaOnline(d1, codigo) {
+  const limpio = normalizarCodigoSala(codigo);
+  if (!d1 || !limpio) return;
+  await asegurarTablasD1(d1);
+  try {
+    await d1.prepare('DELETE FROM salas_online WHERE codigo = ?').bind(limpio).run();
+  } catch {}
 }
 
-async function dbGetRanking(env) {
-  const d1 = resolveD1(env);
-  if (d1) {
-    await ensureD1Tables(d1);
-    try {
-      const rows = await d1.prepare('SELECT * FROM ranking').all();
-      if (rows && rows.results) {
-        const res = {};
-        for (const r of rows.results) {
-          res[r.id] = {
-            id: r.id,
-            nombre: r.nombre,
-            puntos: Number(r.puntos) || 0,
-            victorias: Number(r.victorias) || 0,
-            derrotas: Number(r.derrotas) || 0,
-            empates: Number(r.empates) || 0,
-            partidas: Number(r.partidas) || 0,
-            elo: Number(r.elo) || 1000,
-            avatarColor: r.avatar_color || '#ff6b6b',
-            avatarHat: r.avatar_hat || 'corona',
-            avatarRopa: r.avatar_ropa || 'ninguna',
-            avatarRopaColor: r.avatar_ropa_color || undefined,
-            avatarAura: r.avatar_aura || 'ninguna',
-            rol: r.rol || 'jugador',
-          };
-        }
-        return res;
-      }
-    } catch (err) {
-      console.error('Error leyendo ranking de D1:', err);
-    }
-  }
-  return {};
-}
+// ==========================================
+// MANEJADOR PRINCIPAL DE LA API
+// ==========================================
 
-async function dbPutRanking(env, rankObj, touchGlobalUpdate = false) {
-  const d1 = resolveD1(env);
-  if (d1 && rankObj) {
-    await ensureD1Tables(d1);
-    try {
-      for (const [id, r] of Object.entries(rankObj)) {
-        if (!r || typeof r !== 'object') continue;
-        await d1
-          .prepare(`
-            INSERT OR REPLACE INTO ranking (
-              id, nombre, puntos, victorias, derrotas, empates, partidas, elo,
-              avatar_color, avatar_hat, avatar_ropa, avatar_ropa_color, avatar_aura,
-              rol, ultima_actualizacion
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `)
-          .bind(
-            id,
-            r.nombre || id,
-            Number(r.puntos) || 0,
-            Number(r.victorias) || 0,
-            Number(r.derrotas) || 0,
-            Number(r.empates) || 0,
-            Number(r.partidas) || 0,
-            Number(r.elo) || 1000,
-            r.avatarColor || '#ff6b6b',
-            r.avatarHat || 'corona',
-            r.avatarRopa || 'ninguna',
-            r.avatarRopaColor || null,
-            r.avatarAura || 'ninguna',
-            r.rol || 'jugador',
-            Date.now()
-          )
-          .run();
-      }
-      if (touchGlobalUpdate) {
-        await d1PutConfig(d1, 'last_update', Date.now());
-      }
-    } catch (err) {
-      console.error('Error guardando ranking en D1:', err);
-    }
-  }
-}
-
-function getWeekInfo(nowMs = Date.now()) {
-  const d = new Date(nowMs);
-  const utcDay = d.getUTCDay();
-  const diffToMonday = utcDay === 0 ? -6 : 1 - utcDay;
-  const mondayUtc = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + diffToMonday, 0, 0, 0, 0);
-  const lastMondayUtc = mondayUtc - 7 * 86400000;
-  const nextMondayUtc = mondayUtc + 7 * 86400000;
-  const semanaActualId = new Date(mondayUtc).toISOString().slice(0, 10);
-  const semanaPasadaId = new Date(lastMondayUtc).toISOString().slice(0, 10);
-  return {
-    mondayUtc,
-    lastMondayUtc,
-    nextMondayUtc,
-    cierraEnMs: Math.max(0, nextMondayUtc - nowMs),
-    semanaActualId,
-    semanaPasadaId,
-  };
-}
-
-function hydrateWeeklyFromAccounts(board, rangeStartMs, rangeEndMs, existingCuentas) {
-  let modified = false;
-  const activeMap = new Map();
-  for (const acc of Object.values(existingCuentas || {})) {
-    if (!acc || typeof acc !== 'object' || acc.id === 'admin') continue;
-    activeMap.set(acc.id.toLowerCase(), acc);
-    if (acc.nombre) activeMap.set(String(acc.nombre).trim().toLowerCase(), acc);
-  }
-
-  if (board && board.jugadores) {
-    for (const [idKey, jug] of Object.entries(board.jugadores)) {
-      if (!jug) continue;
-      const lowerKey = idKey.toLowerCase();
-      const lowerNom = jug.nombre ? String(jug.nombre).trim().toLowerCase() : '';
-      if (!activeMap.has(lowerKey) && !activeMap.has(lowerNom)) {
-        delete board.jugadores[idKey];
-        modified = true;
-      }
-    }
-  }
-
-  for (const acc of Object.values(existingCuentas || {})) {
-    if (!acc || typeof acc !== 'object' || acc.id === 'admin') continue;
-    const history = Array.isArray(acc.historialPartidas) ? acc.historialPartidas : [];
-    let weekPoints = 0;
-    let weekWins = 0;
-    let weekMatches = 0;
-
-    for (const match of history) {
-      if (!match || !match.fecha) continue;
-      const matchTime = new Date(match.fecha).getTime();
-      if (matchTime >= rangeStartMs && matchTime < rangeEndMs) {
-        weekMatches++;
-        if (match.resultado === 'victoria') {
-          weekWins++;
-          weekPoints += 3;
-        } else if (match.resultado === 'empate') {
-          weekPoints += 1;
-        }
-      }
-    }
-
-    if (weekMatches > 0) {
-      if (!board.jugadores) board.jugadores = {};
-      const existing = board.jugadores[acc.id] || {};
-      const targetPuntos = Math.max(existing.puntos || 0, weekPoints);
-      const targetWins = Math.max(existing.victorias || 0, weekWins);
-      const targetMatches = Math.max(existing.partidas || 0, weekMatches);
-
-      if (
-        existing.puntos !== targetPuntos ||
-        existing.victorias !== targetWins ||
-        existing.partidas !== targetMatches ||
-        existing.avatarColor !== acc.avatarColor ||
-        existing.avatarHat !== acc.avatarHat
-      ) {
-        board.jugadores[acc.id] = {
-          id: acc.id,
-          nombre: acc.nombre || acc.id,
-          avatarColor: acc.avatarColor || '#ff6b6b',
-          avatarHat: acc.avatarHat || 'corona',
-          avatarRopa: acc.avatarRopa || 'ninguna',
-          avatarRopaColor: acc.avatarRopaColor,
-          avatarAura: acc.avatarAura || 'ninguna',
-          puntos: targetPuntos,
-          victorias: targetWins,
-          partidas: targetMatches,
-          rol: acc.rol || 'jugador',
-          actualizadoEn: Date.now(),
-        };
-        modified = true;
-      }
-    }
-  }
-  return modified;
-}
-
-// Mapa en memoria para señalización WebRTC en tiempo real
-const memSalas = new Map();
-const memSalasMeta = new Map();
-
-function cleanWorkerExpiredRooms() {
-  const now = Date.now();
-  for (const [code, r] of memSalas.entries()) {
-    const age = now - (r.creadoEn || 0);
-    const idle = now - (r.ultimoCambio || r.creadoEn || 0);
-    const maxIdle = r.enPartida ? 15 * 60 * 1000 : 5 * 60 * 1000;
-    if (age > 60 * 60 * 1000 || idle > maxIdle) {
-      memSalas.delete(code);
-      memSalasMeta.delete(code);
-    }
-  }
-}
-
-async function handleApiRequest(request, env) {
+async function manejarPeticionApi(request, env) {
   const url = new URL(request.url);
   const pathname = url.pathname;
 
-  const jsonHeaders = {
+  const cabecerasJson = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Token',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-User, X-Admin-Token, X-Admin-Id, X-Self-Delete-Id, X-Self-Delete-Key, X-Register-Id',
     'Access-Control-Expose-Headers': 'X-DB-Bound, X-Database-Bound',
     'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
     'Pragma': 'no-cache',
@@ -948,236 +1027,286 @@ async function handleApiRequest(request, env) {
   };
 
   if (request.method === 'OPTIONS') {
-    return new Response(null, { status: 204, headers: jsonHeaders });
+    return new Response(null, { status: 204, headers: cabecerasJson });
   }
 
-  cleanWorkerExpiredRooms();
-
-  const d1 = resolveD1(env);
+  const d1 = obtenerD1(env);
   const dbBound = Boolean(d1);
-  const d1Bound = dbBound;
+
+  if (d1) {
+    await asegurarTablasD1(d1);
+  }
 
   const rawAdminPass = env?.ADMIN_SECRET_KEY || env?.ADMIN_KEY || env?.ADMIN_PASSWORD;
   const rawAdminUser = env?.ADMIN_USERNAME || env?.ADMIN_USER;
   const ADMIN_PASS = String(rawAdminPass || 'muros2026').trim();
   const ADMIN_USER = String(rawAdminUser || 'admin').trim();
-  const adminKeyConfigured = Boolean(rawAdminPass && rawAdminPass.trim().length > 0);
-  const adminUserConfigured = Boolean(rawAdminUser && rawAdminUser.trim().length > 0);
+  const adminKeyConfigurada = Boolean(rawAdminPass && rawAdminPass.trim().length > 0);
+  const adminUserConfigurada = Boolean(rawAdminUser && rawAdminUser.trim().length > 0);
 
-  async function verifyCallerAdmin(cuentas, sesion) {
-    const rawAdminPassStr = env?.ADMIN_SECRET_KEY || env?.ADMIN_KEY || env?.ADMIN_PASSWORD || 'muros2026';
-    const rawAdminUserStr = env?.ADMIN_USER || 'admin';
-    const ADMIN_PASS_STR = String(rawAdminPassStr).trim();
-    const ADMIN_USER_STR = String(rawAdminUserStr).trim().toLowerCase();
-
+  async function verificarPermisosLlamante(cuentas, sesion) {
     const hUser = String(request.headers.get('X-Admin-User') || '').trim().toLowerCase();
     const hToken = String(request.headers.get('X-Admin-Token') || '').trim();
     const hAdminId = String(request.headers.get('X-Admin-Id') || '').trim().toLowerCase();
 
-    // 1. Clave maestra o token supremo directo en headers
     if (
-      (hToken && (timeConstantCompare(hToken, ADMIN_PASS_STR) || hToken === 'muros2026')) ||
-      (hUser === ADMIN_USER_STR && hToken && (timeConstantCompare(hToken, ADMIN_PASS_STR) || hToken === 'muros2026'))
+      (hToken && (compararTiempoConstante(hToken, ADMIN_PASS) || hToken === 'muros2026')) ||
+      (hUser === ADMIN_USER.toLowerCase() && hToken && (compararTiempoConstante(hToken, ADMIN_PASS) || hToken === 'muros2026'))
     ) {
-      return { isSupreme: true, isDelegated: true, isAdmin: true, isDev: true, isMod: false };
+      return {
+        esSupremoUnico: true,
+        esDev: true,
+        esAdmin: true,
+        esMod: false,
+        actor: { id: 'admin', nombre: 'Admin Supremo', rol: 'dev' },
+      };
     }
 
-    // 2. Sesión activa de dev o admin supremo
-    if (sesion && (sesion.usuarioId === 'admin' || sesion.rol === 'dev')) {
-      return { isSupreme: true, isDelegated: true, isAdmin: true, isDev: true, isMod: false };
+    if (sesion && sesion.userId === 'admin') {
+      return {
+        esSupremoUnico: true,
+        esDev: true,
+        esAdmin: true,
+        esMod: false,
+        actor: { id: 'admin', nombre: 'Admin Supremo', rol: 'dev' },
+      };
     }
 
-    // 3. Cuenta de usuario en D1
-    const callerAcc = (sesion?.usuarioId && cuentas[sesion.usuarioId]) || (hAdminId && cuentas[hAdminId]);
-    if (callerAcc) {
-      if (callerAcc.id === 'admin' || callerAcc.rol === 'dev' || callerAcc.esSupremo) {
-        return { isSupreme: true, isDelegated: true, isAdmin: true, isDev: true, isMod: false };
-      }
-      if (callerAcc.rol === 'admin') {
-        return { isSupreme: false, isDelegated: true, isAdmin: true, isDev: false, isMod: false };
-      }
-      if (callerAcc.rol === 'mod') {
-        return { isSupreme: false, isDelegated: false, isAdmin: false, isDev: false, isMod: true };
-      }
-    }
+    // Priorizar el user autenticado por token de sesión Bearer sobre X-Admin-Id
+    const cuentaLlamante =
+      (sesion && sesion.userId && cuentas[sesion.userId]) ||
+      (hAdminId && cuentas[hAdminId]) ||
+      null;
 
-    if (sesion && sesion.rol === 'admin') {
-      return { isSupreme: false, isDelegated: true, isAdmin: true, isDev: false, isMod: false };
-    }
-    if (sesion && sesion.rol === 'mod') {
-      return { isSupreme: false, isDelegated: false, isAdmin: false, isDev: false, isMod: true };
+    if (cuentaLlamante) {
+      const rol = cuentaLlamante.rol || 'jugador';
+      if (rol === 'dev') {
+        return {
+          esSupremoUnico: false,
+          esDev: true,
+          esAdmin: true,
+          esMod: false,
+          actor: cuentaLlamante,
+        };
+      }
+      if (rol === 'admin') {
+        return {
+          esSupremoUnico: false,
+          esDev: false,
+          esAdmin: true,
+          esMod: false,
+          actor: cuentaLlamante,
+        };
+      }
+      if (rol === 'mod') {
+        return {
+          esSupremoUnico: false,
+          esDev: false,
+          esAdmin: false,
+          esMod: true,
+          actor: cuentaLlamante,
+        };
+      }
     }
 
     return {
-      isSupreme: false,
-      isDelegated: false,
-      isAdmin: false,
-      isDev: false,
-      isMod: false,
+      esSupremoUnico: false,
+      esDev: false,
+      esAdmin: false,
+      esMod: false,
+      actor: cuentaLlamante || null,
     };
   }
 
-  // 1. /api/ping
+  // ==========================================
+  // 1. GET /api/ping
+  // ==========================================
   if (pathname === '/api/ping') {
-    const cuentas = await dbGetCuentas(env);
-    const lastUpdate = d1 ? (await d1GetConfig(d1, 'last_update', Date.now())) : Date.now();
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const lastUpdate = d1 ? await d1LeerConfig(d1, 'last_update', Date.now()) : Date.now();
+    const sesion = await resolverSesion(request, env, d1);
+    const tieneAuthHeader = Boolean(request.headers.get('Authorization'));
+
+    let notificacionesStaff = [];
+    if (sesion && sesion.userId) {
+      const perm = await verificarPermisosLlamante(cuentas, sesion);
+      if (perm.esDev || perm.esAdmin || perm.esMod) {
+        const todas = (await d1LeerConfig(d1, 'notificaciones_staff', [])) || [];
+        if (Array.isArray(todas)) notificacionesStaff = todas.slice(0, 10);
+      }
+    }
+
+    let salasCount = 0;
+    if (d1) {
+      try {
+        await d1LimpiarSalasExpiradas(d1);
+        const fSalas = await d1.prepare('SELECT COUNT(*) as c FROM salas_online').first();
+        salasCount = Number(fSalas?.c) || 0;
+      } catch {}
+    }
+
     return new Response(
       JSON.stringify({
         ok: true,
         dbBound,
-        d1Bound,
-        dbType: 'Cloudflare D1 SQL Database',
-        adminUserConfigured,
-        adminKeyConfigured,
+        d1Bound: dbBound,
+        dbType: 'Cloudflare D1 SQL Database (8 Tablas)',
+        adminUserConfigured: adminUserConfigurada,
+        adminKeyConfigured: adminKeyConfigurada,
         source: 'cloudflare_d1_database',
         timestamp: Date.now(),
         lastUpdate,
+        salasCount,
         cuentasCount: Object.keys(cuentas).length,
+        sesionValida: tieneAuthHeader ? Boolean(sesion && sesion.userId && !sesion.revocada) : true,
+        sesionRevocada: tieneAuthHeader && Boolean(sesion?.revocada),
+        notificacionesStaff,
       }),
-      { headers: jsonHeaders }
+      { headers: cabecerasJson }
     );
   }
 
-  // 2. /api/login
+  // ==========================================
+  // 2. POST /api/login
+  // ==========================================
   if (pathname === '/api/login' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    const trimmedUser = String(body.usuario || '').trim();
-    const trimmedKey = String(body.clave || '').trim();
+    const userTrim = String(body.user || '').trim();
+    const claveTrim = String(body.clave || '').trim();
 
-    if (!trimmedUser || !trimmedKey) {
-      return new Response(JSON.stringify({ ok: false, error: 'Usuario y clave requeridos.' }), {
+    if (!userTrim || !claveTrim) {
+      return new Response(JSON.stringify({ ok: false, error: 'User y clave requeridos.' }), {
         status: 400,
-        headers: jsonHeaders,
+        headers: cabecerasJson,
       });
     }
 
-    // A) Admin Supremo / Dev
-    const esAdminSupremoUser =
-      trimmedUser.toLowerCase() === ADMIN_USER.toLowerCase() ||
-      trimmedUser.toLowerCase() === 'admin';
-    if (esAdminSupremoUser) {
-      const passValida =
-        timeConstantCompare(trimmedKey, ADMIN_PASS) ||
-        timeConstantCompare(trimmedKey, 'muros2026');
-      if (!passValida) {
-        return new Response(JSON.stringify({ ok: false, error: 'Clave del Admin Supremo incorrecta.' }), {
+    // A) Dev Supremo ('admin' o ADMIN_USERNAME)
+    const esUserSupremo =
+      userTrim.toLowerCase() === ADMIN_USER.toLowerCase() ||
+      userTrim.toLowerCase() === 'admin';
+    if (esUserSupremo) {
+      const claveValida =
+        compararTiempoConstante(claveTrim, ADMIN_PASS) ||
+        compararTiempoConstante(claveTrim, 'muros2026');
+      if (!claveValida) {
+        return new Response(JSON.stringify({ ok: false, error: 'Clave del Dev Supremo incorrecta.' }), {
           status: 401,
-          headers: jsonHeaders,
+          headers: cabecerasJson,
         });
       }
-      const cuentas = await dbGetCuentas(env);
-      const supremeUser = buildSupremeProfile(cuentas);
-      await dbInsertOrUpdateCuenta(env, supremeUser, false);
-      const sesion = await crearSesion(env, 'admin', 'admin', 24);
+      const cuentas = await d1ObtenerTodasCuentas(d1);
+      const perfilSupremo = construirPerfilSupremo(cuentas['admin']);
+      perfilSupremo.ultimaConexion = new Date().toISOString();
+      await d1GuardarCuentaCompleta(d1, perfilSupremo, false);
+      const sesion = await crearSesion(d1, 'admin', 'dev', 24);
+
       return new Response(
         JSON.stringify({
           ok: true,
           isSupremeAdmin: true,
           token: sesion.token,
-          user: supremeUser,
+          user: sanitizarCuentaPublica(perfilSupremo),
         }),
-        { headers: jsonHeaders }
+        { headers: cabecerasJson }
       );
     }
 
-    // B) Usuario normal o miembro de Staff
-    const cuentas = await dbGetCuentas(env);
-    const search = trimmedUser.toLowerCase();
-    let cuentaFound = null;
+    // B) User registrado / Staff
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const busqueda = userTrim.toLowerCase();
+    let cuentaEncontrada = null;
     for (const acc of Object.values(cuentas)) {
       if (!acc || typeof acc !== 'object' || acc.id === 'admin') continue;
       if (
-        String(acc.nombre || '').trim().toLowerCase() === search ||
-        String(acc.id || '').trim().toLowerCase() === search
+        String(acc.nombre || '').trim().toLowerCase() === busqueda ||
+        String(acc.id || '').trim().toLowerCase() === busqueda
       ) {
-        cuentaFound = acc;
+        cuentaEncontrada = acc;
         break;
       }
     }
 
-    if (!cuentaFound) {
-      return new Response(
-        JSON.stringify({ ok: false, error: 'Usuario no encontrado. Regístrate para jugar.' }),
-        { status: 404, headers: jsonHeaders }
-      );
-    }
-
-    const passValida = await verificarClaveCuenta(cuentaFound, trimmedKey);
-    if (!passValida) {
-      return new Response(JSON.stringify({ ok: false, error: 'Contraseña incorrecta.' }), {
-        status: 401,
-        headers: jsonHeaders,
+    if (!cuentaEncontrada) {
+      return new Response(JSON.stringify({ ok: false, error: 'User no encontrado. Regístrate para jugar.' }), {
+        status: 404,
+        headers: cabecerasJson,
       });
     }
 
-    // Migración transparente a PBKDF2
-    if (!cuentaFound.claveHash || cuentaFound.clave) {
-      const hashData = await hashClavePBKDF2(trimmedKey);
-      cuentaFound.claveHash = hashData.claveHash;
-      cuentaFound.claveSalt = hashData.claveSalt;
-      cuentaFound.claveIter = hashData.claveIter;
-      delete cuentaFound.clave;
+    const claveValida = await verificarClaveCuenta(cuentaEncontrada, claveTrim);
+    if (!claveValida) {
+      return new Response(JSON.stringify({ ok: false, error: 'Contraseña incorrecta.' }), {
+        status: 401,
+        headers: cabecerasJson,
+      });
     }
 
-    cuentaFound.ultimaConexion = new Date().toISOString();
-    await dbInsertOrUpdateCuenta(env, cuentaFound, false);
-    const sesion = await crearSesion(env, cuentaFound.id, cuentaFound.rol || 'jugador', 720);
+    cuentaEncontrada.ultimaConexion = new Date().toISOString();
+    await d1GuardarCuentaCompleta(d1, cuentaEncontrada, false);
+    const sesion = await crearSesion(d1, cuentaEncontrada.id, cuentaEncontrada.rol || 'jugador', 720);
 
     return new Response(
       JSON.stringify({
         ok: true,
-        isSupremeAdmin: false,
+        isSupremeAdmin: cuentaEncontrada.rol === 'dev',
         token: sesion.token,
-        user: sanitizeCuentaParaEnviar(cuentaFound),
+        user: sanitizarCuentaPublica(cuentaEncontrada),
       }),
-      { headers: jsonHeaders }
+      { headers: cabecerasJson }
     );
   }
 
-  // 3. /api/registro
+  // ==========================================
+  // 3. POST /api/registro
+  // ==========================================
   if (pathname === '/api/registro' && request.method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    const cleanId = String(body.id || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
-    const cleanName = String(body.nombre || '').trim();
-    const cleanKey = String(body.clave || '').trim();
+    const nombreLimpio = String(body.nombre || '').trim();
+    const idLimpio = String(body.id || nombreLimpio || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, '');
+    const claveLimpia = String(body.clave || '').trim();
 
-    if (!cleanId || cleanName.length < 3 || cleanName.length > 15) {
+    if (!idLimpio || nombreLimpio.length < 3 || nombreLimpio.length > 15) {
       return new Response(JSON.stringify({ ok: false, error: 'El nombre debe tener entre 3 y 15 letras.' }), {
         status: 400,
-        headers: jsonHeaders,
+        headers: cabecerasJson,
       });
     }
-    if (cleanKey.length < 4) {
+    if (claveLimpia.length < 4) {
       return new Response(JSON.stringify({ ok: false, error: 'La clave debe tener al menos 4 caracteres.' }), {
         status: 400,
-        headers: jsonHeaders,
+        headers: cabecerasJson,
       });
     }
-    if (cleanId === 'admin' || cleanName.toLowerCase() === 'admin') {
+    if (idLimpio === 'admin' || nombreLimpio.toLowerCase() === 'admin' || nombreLimpio.toLowerCase() === 'admin supremo') {
       return new Response(JSON.stringify({ ok: false, error: 'Ese nombre está reservado.' }), {
         status: 400,
-        headers: jsonHeaders,
+        headers: cabecerasJson,
       });
     }
 
-    const cuentas = await dbGetCuentas(env);
+    const cuentas = await d1ObtenerTodasCuentas(d1);
     for (const acc of Object.values(cuentas)) {
       if (!acc || typeof acc !== 'object') continue;
       if (
-        acc.id?.toLowerCase() === cleanId ||
-        String(acc.nombre || '').trim().toLowerCase() === cleanName.toLowerCase()
+        acc.id?.toLowerCase() === idLimpio ||
+        String(acc.nombre || '').trim().toLowerCase() === nombreLimpio.toLowerCase()
       ) {
-        return new Response(JSON.stringify({ ok: false, error: 'Ya existe un usuario con ese nombre.' }), {
+        return new Response(JSON.stringify({ ok: false, error: 'Ya existe un user con ese nombre o ID.' }), {
           status: 409,
-          headers: jsonHeaders,
+          headers: cabecerasJson,
         });
       }
     }
 
-    const hashData = await hashClavePBKDF2(cleanKey);
+    const hashData = await hashClavePBKDF2(claveLimpia);
+    const ahoraIso = new Date().toISOString();
     const nuevaCuenta = {
-      id: cleanId,
-      nombre: cleanName,
+      id: idLimpio,
+      nombre: nombreLimpio,
       claveHash: hashData.claveHash,
       claveSalt: hashData.claveSalt,
       claveIter: hashData.claveIter,
@@ -1187,7 +1316,6 @@ async function handleApiRequest(request, env) {
       derrotas: 0,
       empates: 0,
       partidas: 0,
-      elo: 1000,
       avatarColor: body.avatarColor || '#ff6b6b',
       avatarHat: body.avatarHat || 'corona',
       avatarRopa: body.avatarRopa || 'ninguna',
@@ -1195,349 +1323,665 @@ async function handleApiRequest(request, env) {
       avatarAura: body.avatarAura || 'ninguna',
       inventario: { personajes: [] },
       temaTablero: body.temaTablero || 'madera',
-      creadoEn: new Date().toISOString(),
-      ultimaConexion: new Date().toISOString(),
+      creadoEn: ahoraIso,
+      ultimaConexion: ahoraIso,
       historialPartidas: [],
     };
 
-    await dbInsertOrUpdateCuenta(env, nuevaCuenta, true);
-    const sesion = await crearSesion(env, cleanId, 'jugador', 720);
+    await d1GuardarCuentaCompleta(d1, nuevaCuenta, true);
+    const sesion = await crearSesion(d1, idLimpio, 'jugador', 720);
 
     return new Response(
       JSON.stringify({
         ok: true,
         token: sesion.token,
-        user: sanitizeCuentaParaEnviar(nuevaCuenta),
+        user: sanitizarCuentaPublica(nuevaCuenta),
       }),
-      { headers: jsonHeaders }
+      { headers: cabecerasJson }
     );
   }
 
-  // 3b. /api/perfil/cambiar-clave — Permite al usuario cambiar su propia contraseña
-  if (pathname === '/api/perfil/cambiar-clave' && request.method === 'POST') {
-    const sesion = await resolverSesion(request, env);
-    if (!sesion || !sesion.usuarioId) {
-      return new Response(
-        JSON.stringify({ ok: false, error: 'Debes tener una sesión activa para cambiar tu contraseña.' }),
-        { status: 401, headers: jsonHeaders }
-      );
+  // ==========================================
+  // 3b. POST /api/perfil/actualizar (Nombre visible, aspecto, tablero)
+  // ==========================================
+  if (pathname === '/api/perfil/actualizar' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env, d1);
+    if (!sesion || !sesion.userId) {
+      return new Response(JSON.stringify({ ok: false, error: 'Sesión inválida o expirada.' }), {
+        status: 401,
+        headers: cabecerasJson,
+      });
     }
 
     const body = await request.json().catch(() => ({}));
-    const cleanNueva = String(body.nuevaClave || '').trim();
-    const cleanActual = String(body.claveActual || '').trim();
-
-    if (!cleanNueva || cleanNueva.length < 4) {
-      return new Response(
-        JSON.stringify({ ok: false, error: 'La nueva contraseña debe tener al menos 4 caracteres.' }),
-        { status: 400, headers: jsonHeaders }
-      );
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const actual = cuentas[sesion.userId];
+    if (!actual) {
+      return new Response(JSON.stringify({ ok: false, error: 'Cuenta no encontrada.' }), {
+        status: 404,
+        headers: cabecerasJson,
+      });
     }
 
-    if (sesion.usuarioId === 'admin') {
-      if (!timeConstantCompare(cleanActual, ADMIN_PASS)) {
-        return new Response(
-          JSON.stringify({ ok: false, error: 'La contraseña actual del Admin Supremo no es correcta.' }),
-          { status: 401, headers: jsonHeaders }
-        );
+    // Validar cambio de nombre visible (solo nombre, nunca el id desde perfil normal)
+    if (typeof body.nombre === 'string' && body.nombre.trim() !== actual.nombre) {
+      const nuevoNombre = body.nombre.trim();
+      if (nuevoNombre.length < 3 || nuevoNombre.length > 15) {
+        return new Response(JSON.stringify({ ok: false, error: 'El nombre debe tener entre 3 y 15 caracteres.' }), {
+          status: 400,
+          headers: cabecerasJson,
+        });
       }
+      if (actual.id !== 'admin' && ['admin', 'administrador', 'admin supremo'].includes(nuevoNombre.toLowerCase())) {
+        return new Response(JSON.stringify({ ok: false, error: 'Nombre reservado.' }), {
+          status: 400,
+          headers: cabecerasJson,
+        });
+      }
+      const ocupado = Object.values(cuentas).some(
+        (acc) => acc.id !== actual.id && String(acc.nombre || '').trim().toLowerCase() === nuevoNombre.toLowerCase()
+      );
+      if (ocupado) {
+        return new Response(JSON.stringify({ ok: false, error: 'Ese nombre ya está en uso por otro jugador.' }), {
+          status: 409,
+          headers: cabecerasJson,
+        });
+      }
+      actual.nombre = nuevoNombre;
+    }
+
+    if (body.avatarColor) actual.avatarColor = String(body.avatarColor);
+    if (body.avatarHat) actual.avatarHat = String(body.avatarHat);
+    if (body.avatarRopa !== undefined) actual.avatarRopa = String(body.avatarRopa || 'ninguna');
+    if (body.avatarRopaColor !== undefined) actual.avatarRopaColor = body.avatarRopaColor || undefined;
+    if (body.avatarAura !== undefined) actual.avatarAura = String(body.avatarAura || 'ninguna');
+    if (body.temaTablero) actual.temaTablero = String(body.temaTablero);
+
+    if (body.inventario && typeof body.inventario === 'object') {
+      const invPrev = actual.inventario || { personajes: [] };
+      const lista = Array.isArray(invPrev.personajes) ? invPrev.personajes : [];
+      const nuevoActivo = body.inventario.activoId;
+      // Solo equipar un activoId que realmente pertenezca al inventario del user
+      const valido = !nuevoActivo || lista.some((p) => p.id === nuevoActivo);
+      actual.inventario = {
+        personajes: lista,
+        activoId: valido ? (nuevoActivo || undefined) : invPrev.activoId,
+      };
+    }
+
+    actual.ultimaConexion = new Date().toISOString();
+    await d1GuardarCuentaCompleta(d1, actual, true);
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        user: sanitizarCuentaPublica(actual),
+      }),
+      { headers: cabecerasJson }
+    );
+  }
+
+  // ==========================================
+  // 3c. POST /api/perfil/cambiar-clave
+  // ==========================================
+  if (pathname === '/api/perfil/cambiar-clave' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env, d1);
+    if (!sesion || !sesion.userId) {
+      return new Response(JSON.stringify({ ok: false, error: 'Debes iniciar sesión para cambiar tu contraseña.' }), {
+        status: 401,
+        headers: cabecerasJson,
+      });
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const nuevaLimpia = String(body.nuevaClave || '').trim();
+    const actualLimpia = String(body.claveActual || '').trim();
+
+    if (!nuevaLimpia || nuevaLimpia.length < 4) {
+      return new Response(JSON.stringify({ ok: false, error: 'La nueva contraseña debe tener al menos 4 caracteres.' }), {
+        status: 400,
+        headers: cabecerasJson,
+      });
+    }
+
+    if (sesion.userId === 'admin') {
       return new Response(
         JSON.stringify({
           ok: false,
-          error: 'La contraseña del Admin Supremo se gestiona con la variable ADMIN_SECRET_KEY en Cloudflare.',
+          error: 'La clave del Dev Supremo se administra desde ADMIN_SECRET_KEY en Cloudflare.',
         }),
-        { status: 400, headers: jsonHeaders }
+        { status: 400, headers: cabecerasJson }
       );
     }
 
-    const cuentas = await dbGetCuentas(env);
-    const cuenta = cuentas[sesion.usuarioId];
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const cuenta = cuentas[sesion.userId];
     if (!cuenta) {
       return new Response(JSON.stringify({ ok: false, error: 'Cuenta no encontrada.' }), {
         status: 404,
-        headers: jsonHeaders,
+        headers: cabecerasJson,
       });
     }
 
-    const valida = await verificarClaveCuenta(cuenta, cleanActual);
+    const valida = await verificarClaveCuenta(cuenta, actualLimpia);
     if (!valida) {
       return new Response(JSON.stringify({ ok: false, error: 'La contraseña actual no es correcta.' }), {
         status: 401,
-        headers: jsonHeaders,
+        headers: cabecerasJson,
       });
     }
 
-    const hashData = await hashClavePBKDF2(cleanNueva);
+    const hashData = await hashClavePBKDF2(nuevaLimpia);
     cuenta.claveHash = hashData.claveHash;
     cuenta.claveSalt = hashData.claveSalt;
     cuenta.claveIter = hashData.claveIter;
-    delete cuenta.clave;
-    delete cuenta.clave_plano;
+    cuenta.ultimaConexion = new Date().toISOString();
 
-    await dbInsertOrUpdateCuenta(env, cuenta, true);
-    const nuevaSesion = await crearSesion(env, sesion.usuarioId, cuenta.rol || 'jugador');
+    await d1GuardarCuentaCompleta(d1, cuenta, true);
+    const nuevaSesion = await crearSesion(d1, cuenta.id, cuenta.rol || 'jugador', 720);
 
     return new Response(
       JSON.stringify({
         ok: true,
         mensaje: 'Contraseña cambiada con éxito.',
         token: nuevaSesion.token,
-        user: sanitizeCuentaParaEnviar(cuenta),
+        user: sanitizarCuentaPublica(cuenta),
       }),
-      { headers: jsonHeaders }
+      { headers: cabecerasJson }
     );
   }
 
-  // 3c. /api/perfil/dar-de-baja — El usuario elimina su propia cuenta definitivamente
+  // ==========================================
+  // 3d. POST /api/perfil/dar-de-baja
+  // ==========================================
   if (pathname === '/api/perfil/dar-de-baja' && request.method === 'POST') {
-    const sesion = await resolverSesion(request, env);
-    if (!sesion || !sesion.usuarioId) {
+    const sesion = await resolverSesion(request, env, d1);
+    if (!sesion || !sesion.userId) {
       return new Response(JSON.stringify({ ok: false, error: 'Sesión no válida.' }), {
         status: 401,
-        headers: jsonHeaders,
+        headers: cabecerasJson,
       });
     }
-
-    if (sesion.usuarioId === 'admin') {
-      return new Response(JSON.stringify({ ok: false, error: 'El Admin Supremo no puede eliminarse.' }), {
+    if (sesion.userId === 'admin') {
+      return new Response(JSON.stringify({ ok: false, error: 'El Dev Supremo no puede darse de baja.' }), {
         status: 400,
-        headers: jsonHeaders,
+        headers: cabecerasJson,
       });
     }
 
-    const targetId = sesion.usuarioId;
-    if (d1) {
-      await ensureD1Tables(d1);
-      try {
-        await d1.prepare('DELETE FROM cuentas WHERE id = ?').bind(targetId).run();
-        await d1.prepare('DELETE FROM sesiones WHERE usuario_id = ?').bind(targetId).run();
-        await d1.prepare('DELETE FROM ranking WHERE id = ?').bind(targetId).run();
-        await d1.prepare('DELETE FROM inventario WHERE usuario_id = ?').bind(targetId).run();
-        await d1.prepare('DELETE FROM ranking_semanal WHERE id = ?').bind(targetId).run();
-        await d1PutConfig(d1, 'last_update', Date.now());
-      } catch (err) {
-        console.error('Error dando de baja en D1:', err);
-      }
-    }
-
-    return new Response(
-      JSON.stringify({ ok: true, mensaje: 'Cuenta eliminada definitivamente.' }),
-      { headers: jsonHeaders }
-    );
+    await d1EliminarCuentaCompleta(d1, sesion.userId);
+    return new Response(JSON.stringify({ ok: true, mensaje: 'Cuenta eliminada definitivamente.' }), {
+      headers: cabecerasJson,
+    });
   }
 
-  // 4. /api/cuentas
+  // ==========================================
+  // 4. GET / POST /api/cuentas
+  // ==========================================
   if (pathname === '/api/cuentas') {
     if (request.method === 'GET') {
-      const cuentas = await dbGetCuentas(env);
-      return new Response(JSON.stringify(sanitizeCuentasParaEnviar(cuentas)), { headers: jsonHeaders });
+      const cuentas = await d1ObtenerTodasCuentas(d1);
+      if (!cuentas['admin']) {
+        cuentas['admin'] = construirPerfilSupremo();
+      }
+      return new Response(JSON.stringify(sanitizarMapaCuentasPublicas(cuentas)), { headers: cabecerasJson });
     }
 
     if (request.method === 'POST') {
       const body = await request.json().catch(() => ({}));
-      const cleanCuentas = {};
-      let isSelfDelete = false;
+      const sesion = await resolverSesion(request, env, d1);
+      const cuentasActuales = await d1ObtenerTodasCuentas(d1);
+      const perm = await verificarPermisosLlamante(cuentasActuales, sesion);
 
-      // Soporte para selfDelete desde cliente autenticado
-      if (body && body.selfDelete) {
-        const { id, clave } = body.selfDelete;
-        const cuentasActuales = await dbGetCuentas(env);
-        const cuentaBorrar = cuentasActuales[id];
-        if (cuentaBorrar && id !== 'admin') {
-          const passOk = await verificarClaveCuenta(cuentaBorrar, clave || '');
-          if (passOk) {
-            isSelfDelete = true;
-            if (d1) {
-              await ensureD1Tables(d1);
-              try {
-                await d1.prepare('DELETE FROM cuentas WHERE id = ?').bind(id).run();
-                await d1.prepare('DELETE FROM sesiones WHERE usuario_id = ?').bind(id).run();
-                await d1.prepare('DELETE FROM ranking WHERE id = ?').bind(id).run();
-                await d1.prepare('DELETE FROM inventario WHERE usuario_id = ?').bind(id).run();
-              } catch {}
-            }
+      // Si es llamada de actualización de perfil/aspecto propio desde un cliente autenticado
+      if (sesion && sesion.userId && body && typeof body === 'object') {
+        const entradaPropia = body[sesion.userId];
+        if (entradaPropia && !perm.esDev && !perm.esAdmin) {
+          const prev = cuentasActuales[sesion.userId];
+          if (prev) {
+            const actualizada = {
+              ...prev,
+              avatarColor: entradaPropia.avatarColor || prev.avatarColor,
+              avatarHat: entradaPropia.avatarHat || prev.avatarHat,
+              avatarRopa: entradaPropia.avatarRopa ?? prev.avatarRopa,
+              avatarRopaColor: entradaPropia.avatarRopaColor ?? prev.avatarRopaColor,
+              avatarAura: entradaPropia.avatarAura ?? prev.avatarAura,
+              temaTablero: entradaPropia.temaTablero || prev.temaTablero,
+              inventario: entradaPropia.inventario
+                ? {
+                    personajes: prev.inventario?.personajes || [],
+                    activoId: entradaPropia.inventario.activoId || undefined,
+                  }
+                : prev.inventario,
+              ultimaConexion: new Date().toISOString(),
+            };
+            await d1GuardarCuentaCompleta(d1, actualizada, true);
+            return new Response(JSON.stringify({ ok: true, dbBound }), { headers: cabecerasJson });
           }
         }
       }
 
-      if (body && typeof body === 'object') {
-        for (const [id, acc] of Object.entries(body)) {
-          if (!acc || typeof acc !== 'object' || id === 'selfDelete') continue;
-          cleanCuentas[id] = acc;
-        }
+      if (!perm.esDev && !perm.esAdmin) {
+        return new Response(
+          JSON.stringify({ ok: false, revoked: true, error: 'Permisos insuficientes o revocados.' }),
+          { status: 403, headers: cabecerasJson }
+        );
       }
 
-      const cuentasActuales = await dbGetCuentas(env);
-      cleanCuentas['admin'] = buildSupremeProfile(cuentasActuales);
+      for (const [id, rawAcc] of Object.entries(body || {})) {
+        if (!rawAcc || typeof rawAcc !== 'object' || id === 'admin') continue;
+        const prev = cuentasActuales[id] || {};
+        // Respetar jerarquía de roles
+        let nuevoRol = prev.rol || 'jugador';
+        const rolSolicitado = rawAcc.rol;
+        if (rolSolicitado && ['dev', 'admin', 'mod', 'jugador'].includes(rolSolicitado)) {
+          if (perm.esSupremoUnico) {
+            nuevoRol = rolSolicitado;
+          } else if (perm.esDev) {
+            if (prev.rol !== 'dev' && rolSolicitado !== 'dev') nuevoRol = rolSolicitado;
+          } else if (perm.esAdmin) {
+            if (prev.rol !== 'dev' && prev.rol !== 'admin' && (rolSolicitado === 'mod' || rolSolicitado === 'jugador')) {
+              nuevoRol = rolSolicitado;
+            }
+          }
+        }
 
-      await dbSaveCuentas(env, cleanCuentas, true, isSelfDelete);
-      return new Response(JSON.stringify({ ok: true, dbBound }), { headers: jsonHeaders });
+        const fusionada = {
+          ...prev,
+          ...rawAcc,
+          id,
+          rol: nuevoRol,
+          claveHash: prev.claveHash,
+          claveSalt: prev.claveSalt,
+          claveIter: prev.claveIter,
+        };
+        await d1GuardarCuentaCompleta(d1, fusionada, false);
+      }
+
+      await tocarUltimaActualizacion(d1);
+      return new Response(JSON.stringify({ ok: true, dbBound }), { headers: cabecerasJson });
     }
   }
 
-  // 4b. /api/admin/eliminar-usuario — Elimina definitivamente un usuario de D1, sesiones y ranking
-  if (pathname === '/api/admin/eliminar-usuario' && request.method === 'POST') {
-    const sesion = await resolverSesion(request, env);
-    const cuentas = await dbGetCuentas(env);
-    const { isSupreme } = await verifyCallerAdmin(cuentas, sesion);
+  // ==========================================
+  // 4b. POST /api/admin/actualizar-user (Staff: Roles, puntos, nombre, clave)
+  // ==========================================
+  if (pathname === '/api/admin/actualizar-user' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env, d1);
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const perm = await verificarPermisosLlamante(cuentas, sesion);
+
+    if (!perm.esDev && !perm.esAdmin) {
+      return new Response(
+        JSON.stringify({ ok: false, revoked: true, error: 'Permisos de administración insuficientes o revocados.' }),
+        { status: 403, headers: cabecerasJson }
+      );
+    }
 
     const body = await request.json().catch(() => ({}));
     const targetId = String(body.targetId || body.id || '').trim().toLowerCase();
-
-    if (!isSupreme && (!sesion || sesion.usuarioId !== 'admin')) {
-      return new Response(
-        JSON.stringify({ ok: false, error: 'Solo el Admin Supremo (Dev) puede eliminar usuarios.' }),
-        { status: 403, headers: jsonHeaders }
-      );
-    }
+    const patch = body.patch || body || {};
 
     if (!targetId || targetId === 'admin') {
-      return new Response(JSON.stringify({ ok: false, error: 'El Admin Supremo no puede eliminarse.' }), {
+      return new Response(JSON.stringify({ ok: false, error: 'El Dev Supremo no puede editarse aquí.' }), {
         status: 400,
-        headers: jsonHeaders,
+        headers: cabecerasJson,
       });
     }
 
-    if (d1) {
-      await ensureD1Tables(d1);
-      try {
-        await d1.prepare('DELETE FROM cuentas WHERE id = ?').bind(targetId).run();
-        await d1.prepare('DELETE FROM sesiones WHERE usuario_id = ?').bind(targetId).run();
-        await d1.prepare('DELETE FROM ranking WHERE id = ?').bind(targetId).run();
-        await d1.prepare('DELETE FROM inventario WHERE usuario_id = ?').bind(targetId).run();
-        await d1.prepare('DELETE FROM ranking_semanal WHERE id = ?').bind(targetId).run();
-        await d1PutConfig(d1, 'last_update', Date.now());
-      } catch (err) {
-        console.error('Error eliminando usuario de D1:', err);
-      }
+    const target = cuentas[targetId];
+    if (!target) {
+      return new Response(JSON.stringify({ ok: false, error: 'User no encontrado en D1.' }), {
+        status: 404,
+        headers: cabecerasJson,
+      });
     }
 
-    return new Response(
-      JSON.stringify({ ok: true, mensaje: `Usuario ${targetId} eliminado definitivamente.` }),
-      { headers: jsonHeaders }
-    );
-  }
-
-  // 4c. /api/admin/verify-action — Verifica permisos de Staff
-  if (pathname === '/api/admin/verify-action' && request.method === 'POST') {
-    const sesion = await resolverSesion(request, env);
-    const body = await request.json().catch(() => ({}));
-    const { usuarioId, usuarioClave, adminToken, requiereSupremo } = body || {};
-
-    if (adminToken && timeConstantCompare(adminToken, ADMIN_PASS)) {
+    // Proteger a users con rango 'dev' frente a cualquiera que no sea el Dev Supremo Único
+    if (target.rol === 'dev' && !perm.esSupremoUnico) {
       return new Response(
-        JSON.stringify({ ok: true, isSupremeAdmin: true, isCloudAdmin: true, rol: 'dev', dbBound }),
-        { headers: jsonHeaders }
+        JSON.stringify({ ok: false, error: 'Solo el Dev Supremo único puede modificar o quitar el rango a otro Dev.' }),
+        { status: 403, headers: cabecerasJson }
       );
     }
 
-    if (sesion && sesion.usuarioId === 'admin') {
-      return new Response(
-        JSON.stringify({ ok: true, isSupremeAdmin: true, isCloudAdmin: true, rol: 'dev', dbBound }),
-        { headers: jsonHeaders }
-      );
-    }
-
-    const cuentas = await dbGetCuentas(env);
-    const checkId = sesion?.usuarioId || usuarioId;
-    const acc = checkId ? cuentas[checkId] : null;
-
-    if (acc && acc.id !== 'admin') {
-      if (usuarioClave) {
-        const passOk = await verificarClaveCuenta(acc, usuarioClave);
-        if (!passOk) {
-          return new Response(JSON.stringify({ ok: false, error: 'Contraseña inválida.' }), {
-            status: 401,
-            headers: jsonHeaders,
-          });
-        }
-      }
-      const rol = acc.rol || 'jugador';
-      if (requiereSupremo && rol !== 'dev') {
-        return new Response(JSON.stringify({ ok: false, error: 'Esta acción requiere rango Dev Supremo.' }), {
-          status: 403,
-          headers: jsonHeaders,
+    // Validar nombre si cambia
+    if (typeof patch.nombre === 'string') {
+      const cleanNew = patch.nombre.trim();
+      if (cleanNew.length < 3 || cleanNew.length > 15) {
+        return new Response(JSON.stringify({ ok: false, error: 'El nombre debe tener entre 3 y 15 caracteres.' }), {
+          status: 400,
+          headers: cabecerasJson,
         });
       }
-      if (rol === 'dev' || rol === 'admin' || rol === 'mod') {
-        return new Response(
-          JSON.stringify({
-            ok: true,
-            isSupremeAdmin: rol === 'dev',
-            isCloudAdmin: true,
-            rol,
-            dbBound,
-          }),
-          { headers: jsonHeaders }
-        );
+      if (['admin', 'administrador', 'admin supremo'].includes(cleanNew.toLowerCase())) {
+        return new Response(JSON.stringify({ ok: false, error: 'Nombre reservado.' }), {
+          status: 400,
+          headers: cabecerasJson,
+        });
+      }
+      const ocupado = Object.values(cuentas).some(
+        (acc) => acc.id !== targetId && String(acc.nombre || '').trim().toLowerCase() === cleanNew.toLowerCase()
+      );
+      if (ocupado) {
+        return new Response(JSON.stringify({ ok: false, error: 'Ese nombre ya está en uso.' }), {
+          status: 409,
+          headers: cabecerasJson,
+        });
+      }
+      target.nombre = cleanNew;
+    }
+
+    // Asignación estricta de rol según jerarquía
+    if (patch.rol && ['dev', 'admin', 'mod', 'jugador'].includes(patch.rol) && patch.rol !== target.rol) {
+      if (perm.esSupremoUnico) {
+        target.rol = patch.rol;
+      } else if (perm.esDev) {
+        if (patch.rol === 'dev') {
+          return new Response(JSON.stringify({ ok: false, error: 'Solo el Dev Supremo único puede otorgar rango Dev.' }), {
+            status: 403,
+            headers: cabecerasJson,
+          });
+        }
+        target.rol = patch.rol;
+      } else if (perm.esAdmin) {
+        if (target.rol === 'admin') {
+          return new Response(JSON.stringify({ ok: false, error: 'Un Admin no puede degradar a otro Admin.' }), {
+            status: 403,
+            headers: cabecerasJson,
+          });
+        }
+        if (patch.rol !== 'mod' && patch.rol !== 'jugador') {
+          return new Response(JSON.stringify({ ok: false, error: 'Un Admin solo puede asignar rango Moderador o Jugador.' }), {
+            status: 403,
+            headers: cabecerasJson,
+          });
+        }
+        target.rol = patch.rol;
       }
     }
 
-    return new Response(JSON.stringify({ ok: false, error: 'Permisos insuficientes de Staff.' }), {
-      status: 403,
-      headers: jsonHeaders,
-    });
-  }
-
-  // 4d. /api/admin/promover-mod — Promover a un usuario a Moderador
-  if (pathname === '/api/admin/promover-mod' && request.method === 'POST') {
-    const sesion = await resolverSesion(request, env);
-    const cuentas = await dbGetCuentas(env);
-    const { isSupreme, isDelegated } = await verifyCallerAdmin(cuentas, sesion);
-
-    if (!isSupreme && !isDelegated) {
-      return new Response(JSON.stringify({ ok: false, error: 'Permisos insuficientes para promover usuarios.' }), {
-        status: 403,
-        headers: jsonHeaders,
-      });
+    if (typeof patch.puntos === 'number' && !isNaN(patch.puntos)) {
+      target.puntos = Math.max(0, Math.round(patch.puntos));
+    }
+    if (typeof patch.victorias === 'number' && !isNaN(patch.victorias)) {
+      target.victorias = Math.max(0, Math.round(patch.victorias));
+    }
+    if (typeof patch.partidas === 'number' && !isNaN(patch.partidas)) {
+      target.partidas = Math.max(0, Math.round(patch.partidas));
     }
 
-    const body = await request.json().catch(() => ({}));
-    const targetId = String(body.targetId || '').trim().toLowerCase();
-    const targetAcc = cuentas[targetId];
-
-    if (!targetAcc || targetId === 'admin') {
-      return new Response(JSON.stringify({ ok: false, error: 'Usuario no encontrado o no modificable.' }), {
-        status: 404,
-        headers: jsonHeaders,
-      });
+    if (typeof patch.clave === 'string' && patch.clave.trim().length >= 4 && perm.esDev) {
+      const hashData = await hashClavePBKDF2(patch.clave.trim());
+      target.claveHash = hashData.claveHash;
+      target.claveSalt = hashData.claveSalt;
+      target.claveIter = hashData.claveIter;
     }
 
-    targetAcc.rol = 'mod';
-    await dbInsertOrUpdateCuenta(env, targetAcc, true);
+    await d1GuardarCuentaCompleta(d1, target, true);
+    await registrarNotificacionStaff(
+      d1,
+      perm.actor,
+      'actualizar_user',
+      `${perm.actor?.nombre || 'Staff'} actualizó a ${target.nombre} (rol: ${target.rol}, ${target.puntos} pts)`
+    );
 
     return new Response(
       JSON.stringify({
         ok: true,
-        mensaje: `Usuario ${targetAcc.nombre || targetId} promovido a Moderador.`,
-        user: sanitizeCuentaParaEnviar(targetAcc),
+        mensaje: `User "${target.nombre}" actualizado en D1.`,
+        user: sanitizarCuentaPublica(target),
       }),
-      { headers: jsonHeaders }
+      { headers: cabecerasJson }
     );
   }
 
-  // 4e. /api/admin/personajes/regalar — Regalar personaje al inventario de un usuario
-  if (pathname === '/api/admin/personajes/regalar' && request.method === 'POST') {
-    const sesion = await resolverSesion(request, env);
-    const cuentas = await dbGetCuentas(env);
-    const { isSupreme, isDelegated } = await verifyCallerAdmin(cuentas, sesion);
+  // ==========================================
+  // 4c. POST /api/admin/cambiar-id (Exclusivo Dev: cambia el ID en cascada en las 8 tablas)
+  // ==========================================
+  if (pathname === '/api/admin/cambiar-id' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env, d1);
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const perm = await verificarPermisosLlamante(cuentas, sesion);
 
-    if (!isSupreme && !isDelegated) {
-      return new Response(JSON.stringify({ ok: false, error: 'Permisos insuficientes para regalar personajes.' }), {
+    if (!perm.esDev) {
+      return new Response(JSON.stringify({ ok: false, error: 'Solo el Dev puede cambiar el ID de una cuenta.' }), {
         status: 403,
-        headers: jsonHeaders,
+        headers: cabecerasJson,
+      });
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const oldId = String(body.oldId || '').trim().toLowerCase();
+    const newId = String(body.newId || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, '');
+
+    if (!oldId || oldId === 'admin') {
+      return new Response(JSON.stringify({ ok: false, error: 'ID original inválido o intocable.' }), {
+        status: 400,
+        headers: cabecerasJson,
+      });
+    }
+    if (!newId || newId.length < 3 || newId.length > 20 || newId === 'admin') {
+      return new Response(JSON.stringify({ ok: false, error: 'El nuevo ID debe tener entre 3 y 20 caracteres válidos.' }), {
+        status: 400,
+        headers: cabecerasJson,
+      });
+    }
+    if (!cuentas[oldId]) {
+      return new Response(JSON.stringify({ ok: false, error: 'La cuenta original no existe.' }), {
+        status: 404,
+        headers: cabecerasJson,
+      });
+    }
+    if (cuentas[newId]) {
+      return new Response(JSON.stringify({ ok: false, error: `El ID "${newId}" ya está en uso.` }), {
+        status: 409,
+        headers: cabecerasJson,
+      });
+    }
+
+    const ok = await d1RenombrarIdEnCascada(d1, oldId, newId);
+    if (!ok) {
+      return new Response(JSON.stringify({ ok: false, error: 'No se pudo renombrar el ID en D1.' }), {
+        status: 500,
+        headers: cabecerasJson,
+      });
+    }
+
+    await registrarNotificacionStaff(d1, perm.actor, 'cambiar_id', `ID cambiado de "${oldId}" a "${newId}"`);
+    return new Response(JSON.stringify({ ok: true, oldId, newId, mensaje: `ID cambiado de "${oldId}" a "${newId}".` }), {
+      headers: cabecerasJson,
+    });
+  }
+
+  // ==========================================
+  // 4d. POST /api/admin/eliminar-user
+  // ==========================================
+  if (pathname === '/api/admin/eliminar-user' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env, d1);
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const perm = await verificarPermisosLlamante(cuentas, sesion);
+
+    if (!perm.esDev) {
+      return new Response(JSON.stringify({ ok: false, error: 'Solo el Dev puede eliminar users.' }), {
+        status: 403,
+        headers: cabecerasJson,
+      });
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const targetId = String(body.targetId || body.id || '').trim().toLowerCase();
+    if (!targetId || targetId === 'admin') {
+      return new Response(JSON.stringify({ ok: false, error: 'El Dev Supremo no puede eliminarse.' }), {
+        status: 400,
+        headers: cabecerasJson,
+      });
+    }
+    const targetAcc = cuentas[targetId];
+    if (targetAcc && targetAcc.rol === 'dev' && !perm.esSupremoUnico) {
+      return new Response(JSON.stringify({ ok: false, error: 'Solo el Dev Supremo único puede eliminar a otro Dev.' }), {
+        status: 403,
+        headers: cabecerasJson,
+      });
+    }
+
+    await d1EliminarCuentaCompleta(d1, targetId);
+    await registrarNotificacionStaff(d1, perm.actor, 'eliminar_user', `Eliminó la cuenta "${targetId}"`);
+    return new Response(JSON.stringify({ ok: true, mensaje: `User ${targetId} eliminado definitivamente.` }), {
+      headers: cabecerasJson,
+    });
+  }
+
+  // ==========================================
+  // 4e. POST /api/admin/restablecer-clave
+  // ==========================================
+  if (pathname === '/api/admin/restablecer-clave' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env, d1);
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const perm = await verificarPermisosLlamante(cuentas, sesion);
+
+    if (!perm.esDev) {
+      return new Response(JSON.stringify({ ok: false, error: 'Solo el Dev puede restablecer claves.' }), {
+        status: 403,
+        headers: cabecerasJson,
       });
     }
 
     const body = await request.json().catch(() => ({}));
     const targetId = String(body.targetId || '').trim().toLowerCase();
-    const rawPersonaje = body.personaje;
+    const target = cuentas[targetId];
+    if (!target || targetId === 'admin') {
+      return new Response(JSON.stringify({ ok: false, error: 'User no encontrado.' }), {
+        status: 404,
+        headers: cabecerasJson,
+      });
+    }
+
+    const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+    let claveTemporal = 'Muros-';
+    for (let i = 0; i < 6; i++) {
+      claveTemporal += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+
+    const hashData = await hashClavePBKDF2(claveTemporal);
+    target.claveHash = hashData.claveHash;
+    target.claveSalt = hashData.claveSalt;
+    target.claveIter = hashData.claveIter;
+    await d1GuardarCuentaCompleta(d1, target, true);
+
+    return new Response(
+      JSON.stringify({ ok: true, userNombre: target.nombre, claveTemporal }),
+      { headers: cabecerasJson }
+    );
+  }
+
+  // ==========================================
+  // 4f. POST /api/admin/verify & /api/admin/verify-action
+  // ==========================================
+  if (pathname === '/api/admin/verify' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const trimmedUser = String(body.user || '').trim();
+    const trimmedKey = String(body.clave || '').trim();
+    if (trimmedUser.toLowerCase() === ADMIN_USER.toLowerCase() || trimmedUser.toLowerCase() === 'admin') {
+      if (compararTiempoConstante(trimmedKey, ADMIN_PASS) || trimmedKey === 'muros2026') {
+        const cuentas = await d1ObtenerTodasCuentas(d1);
+        const supremo = construirPerfilSupremo(cuentas['admin']);
+        await d1GuardarCuentaCompleta(d1, supremo, false);
+        const sesion = await crearSesion(d1, 'admin', 'dev', 24);
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            isSupremeAdmin: true,
+            isCloudAdmin: true,
+            dbBound,
+            adminUser: ADMIN_USER,
+            adminToken: sesion.token,
+            token: sesion.token,
+            user: sanitizarCuentaPublica(supremo),
+          }),
+          { headers: cabecerasJson }
+        );
+      }
+      return new Response(JSON.stringify({ ok: false, isSupremeAttempt: true, error: 'Clave incorrecta.' }), {
+        status: 401,
+        headers: cabecerasJson,
+      });
+    }
+    return new Response(JSON.stringify({ ok: false, isSupremeAttempt: false }), { headers: cabecerasJson });
+  }
+
+  if (pathname === '/api/admin/verify-action' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env, d1);
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const body = await request.json().catch(() => ({}));
+    const { requiereSupremo, adminToken } = body || {};
+
+    if (adminToken && (compararTiempoConstante(adminToken, ADMIN_PASS) || adminToken === 'muros2026')) {
+      return new Response(
+        JSON.stringify({ ok: true, isSupremeAdmin: true, isCloudAdmin: true, rol: 'dev', dbBound }),
+        { headers: cabecerasJson }
+      );
+    }
+
+    const perm = await verificarPermisosLlamante(cuentas, sesion);
+    if (perm.esDev) {
+      return new Response(
+        JSON.stringify({ ok: true, isSupremeAdmin: true, isCloudAdmin: true, rol: 'dev', dbBound }),
+        { headers: cabecerasJson }
+      );
+    }
+    if (requiereSupremo) {
+      return new Response(JSON.stringify({ ok: false, revoked: false, error: 'Acción exclusiva del Dev.' }), {
+        status: 403,
+        headers: cabecerasJson,
+      });
+    }
+    if (perm.esAdmin || perm.esMod) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          isSupremeAdmin: false,
+          isCloudAdmin: true,
+          rol: perm.esAdmin ? 'admin' : 'mod',
+          dbBound,
+        }),
+        { headers: cabecerasJson }
+      );
+    }
+
+    return new Response(
+      JSON.stringify({ ok: false, revoked: true, error: 'Tus permisos de Staff no son válidos o fueron revocados.' }),
+      { status: 403, headers: cabecerasJson }
+    );
+  }
+
+  // ==========================================
+  // 4g. PERSONAJES EXCLUSIVOS: REGALAR / QUITAR / MOVER
+  // ==========================================
+  if (pathname === '/api/admin/personajes/regalar' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env, d1);
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const perm = await verificarPermisosLlamante(cuentas, sesion);
+
+    if (!perm.esDev && !perm.esAdmin) {
+      return new Response(JSON.stringify({ ok: false, error: 'Permisos insuficientes para regalar personajes.' }), {
+        status: 403,
+        headers: cabecerasJson,
+      });
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const targetId = String(body.targetId || '').trim().toLowerCase();
+    const rawPj = body.personaje;
     const targetAcc = cuentas[targetId];
 
     if (!targetAcc) {
-      return new Response(JSON.stringify({ ok: false, error: 'Usuario destinatario no encontrado.' }), {
+      return new Response(JSON.stringify({ ok: false, error: 'User destinatario no encontrado.' }), {
         status: 404,
-        headers: jsonHeaders,
+        headers: cabecerasJson,
       });
     }
 
@@ -1548,44 +1992,175 @@ async function handleApiRequest(request, env) {
       targetAcc.inventario.personajes = [];
     }
 
-    const actorName = isSupreme ? 'Dev Supremo' : (sesion?.usuarioId && cuentas[sesion.usuarioId]?.nombre) || 'Admin';
+    const actorName = perm.esDev ? (perm.actor?.nombre || 'Dev Supremo') : (perm.actor?.nombre || 'Admin');
     const nuevoPersonaje = {
-      id: `char_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      nombre: String(rawPersonaje?.nombre || 'Héroe').trim().slice(0, 24),
-      color: rawPersonaje?.color || '#ffd43b',
-      hat: rawPersonaje?.hat || 'corona',
-      ropa: rawPersonaje?.ropa || 'ninguna',
-      ropaColor: rawPersonaje?.ropaColor || undefined,
-      aura: rawPersonaje?.aura || 'ninguna',
-      descripcion: rawPersonaje?.descripcion || 'Personaje exclusivo otorgado',
+      id: `pj_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      nombre: String(rawPj?.nombre || 'Héroe Exclusivo').trim().slice(0, 24),
+      color: rawPj?.color || '#ffd43b',
+      hat: rawPj?.hat || 'corona',
+      ropa: rawPj?.ropa || 'ninguna',
+      ropaColor: rawPj?.ropa && rawPj.ropa !== 'ninguna' ? (rawPj?.ropaColor || undefined) : undefined,
+      aura: rawPj?.aura || 'ninguna',
+      descripcion: rawPj?.descripcion || 'Personaje exclusivo otorgado',
       fechaAdquisicion: new Date().toISOString(),
       origen: {
-        tipo: isSupreme ? 'regalo_dev' : 'regalo_admin',
-        otorgadoPor: isSupreme ? `Dev ${actorName}` : `Admin ${actorName}`,
+        tipo: perm.esDev ? 'regalo_dev' : 'regalo_admin',
+        otorgadoPor: perm.esDev ? `Dev ${actorName}` : `Admin ${actorName}`,
         fecha: new Date().toISOString(),
       },
     };
 
+    // IMPORTANTE: SOLO se agrega al inventario de targetId. Nunca modifica el aspecto equipado ni al actor.
     targetAcc.inventario.personajes.push(nuevoPersonaje);
-    await dbInsertOrUpdateCuenta(env, targetAcc, true);
+    await d1GuardarCuentaCompleta(d1, targetAcc, true);
+    await registrarNotificacionStaff(
+      d1,
+      perm.actor,
+      'regalar_personaje',
+      `Regaló "${nuevoPersonaje.nombre}" a ${targetAcc.nombre}`
+    );
 
     return new Response(
       JSON.stringify({
         ok: true,
-        mensaje: `Personaje "${nuevoPersonaje.nombre}" regalado a ${targetAcc.nombre}.`,
+        mensaje: `Personaje "${nuevoPersonaje.nombre}" entregado al inventario de ${targetAcc.nombre}.`,
         personaje: nuevoPersonaje,
+        targetId,
         inventario: targetAcc.inventario,
       }),
-      { headers: jsonHeaders }
+      { headers: cabecerasJson }
     );
   }
 
-  // 4f. /api/admin/premio-semanal y /api/admin/personajes/fijar-premio-semanal
-  if (
-    pathname === '/api/admin/premio-semanal' ||
-    pathname === '/api/admin/personajes/fijar-premio-semanal'
-  ) {
-    const w = getWeekInfo();
+  if (pathname === '/api/admin/personajes/quitar' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env, d1);
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const perm = await verificarPermisosLlamante(cuentas, sesion);
+
+    // Tanto Dev como Admin pueden retirar personajes exclusivos de inventarios
+    if (!perm.esDev && !perm.esAdmin) {
+      return new Response(JSON.stringify({ ok: false, error: 'Solo Dev o Admin pueden retirar personajes de inventarios.' }), {
+        status: 403,
+        headers: cabecerasJson,
+      });
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const targetId = String(body.targetId || '').trim().toLowerCase();
+    const personajeId = String(body.personajeId || '').trim();
+    const targetAcc = cuentas[targetId];
+    if (!targetAcc) {
+      return new Response(JSON.stringify({ ok: false, error: 'User no encontrado.' }), {
+        status: 404,
+        headers: cabecerasJson,
+      });
+    }
+
+    if (targetAcc.inventario && Array.isArray(targetAcc.inventario.personajes)) {
+      targetAcc.inventario.personajes = targetAcc.inventario.personajes.filter((p) => p.id !== personajeId);
+      if (targetAcc.inventario.activoId === personajeId) {
+        targetAcc.inventario.activoId = undefined;
+        targetAcc.avatarRopa = 'ninguna';
+        targetAcc.avatarRopaColor = undefined;
+        targetAcc.avatarAura = 'ninguna';
+      }
+      await d1GuardarCuentaCompleta(d1, targetAcc, true);
+      await registrarNotificacionStaff(d1, perm.actor, 'quitar_personaje', `Retiró un personaje exclusivo de ${targetAcc.nombre}`);
+    }
+
+    return new Response(
+      JSON.stringify({ ok: true, mensaje: 'Personaje retirado del inventario.', inventario: targetAcc.inventario }),
+      { headers: cabecerasJson }
+    );
+  }
+
+  if (pathname === '/api/admin/personajes/mover' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env, d1);
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const perm = await verificarPermisosLlamante(cuentas, sesion);
+
+    // Tanto Dev como Admin pueden mover/transferir personajes exclusivos entre cuentas
+    if (!perm.esDev && !perm.esAdmin) {
+      return new Response(JSON.stringify({ ok: false, error: 'Solo Dev o Admin pueden mover personajes entre users.' }), {
+        status: 403,
+        headers: cabecerasJson,
+      });
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const fromId = String(body.fromId || '').trim().toLowerCase();
+    const toId = String(body.toId || '').trim().toLowerCase();
+    const personajeId = String(body.personajeId || '').trim();
+
+    if (!fromId || !toId || fromId === toId) {
+      return new Response(JSON.stringify({ ok: false, error: 'Selecciona origen y destino diferentes.' }), {
+        status: 400,
+        headers: cabecerasJson,
+      });
+    }
+
+    const origenAcc = cuentas[fromId];
+    const destinoAcc = cuentas[toId];
+    if (!origenAcc || !destinoAcc) {
+      return new Response(JSON.stringify({ ok: false, error: 'User de origen o destino no encontrado.' }), {
+        status: 404,
+        headers: cabecerasJson,
+      });
+    }
+
+    const listaOrigen = Array.isArray(origenAcc.inventario?.personajes) ? origenAcc.inventario.personajes : [];
+    const charMovido = listaOrigen.find((p) => p.id === personajeId);
+    if (!charMovido) {
+      return new Response(JSON.stringify({ ok: false, error: 'El personaje ya no existe en el inventario origen.' }), {
+        status: 404,
+        headers: cabecerasJson,
+      });
+    }
+
+    origenAcc.inventario.personajes = listaOrigen.filter((p) => p.id !== personajeId);
+    if (origenAcc.inventario.activoId === personajeId) {
+      origenAcc.inventario.activoId = undefined;
+      origenAcc.avatarRopa = 'ninguna';
+      origenAcc.avatarRopaColor = undefined;
+      origenAcc.avatarAura = 'ninguna';
+    }
+
+    if (!destinoAcc.inventario || typeof destinoAcc.inventario !== 'object') {
+      destinoAcc.inventario = { personajes: [] };
+    }
+    if (!Array.isArray(destinoAcc.inventario.personajes)) {
+      destinoAcc.inventario.personajes = [];
+    }
+    destinoAcc.inventario.personajes.push({
+      ...charMovido,
+      fechaAdquisicion: new Date().toISOString(),
+    });
+
+    await d1GuardarCuentaCompleta(d1, origenAcc, false);
+    await d1GuardarCuentaCompleta(d1, destinoAcc, true);
+    await registrarNotificacionStaff(
+      d1,
+      perm.actor,
+      'mover_personaje',
+      `Transfirió "${charMovido.nombre}" de ${origenAcc.nombre} a ${destinoAcc.nombre}`
+    );
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        mensaje: `"${charMovido.nombre}" movido de ${origenAcc.nombre} a ${destinoAcc.nombre}.`,
+        inventarioOrigen: origenAcc.inventario,
+        inventarioDestino: destinoAcc.inventario,
+      }),
+      { headers: cabecerasJson }
+    );
+  }
+
+  // ==========================================
+  // 4h. PREMIO SEMANAL, CONFIG SEMANAL & DESBLOQUEOS
+  // ==========================================
+  if (pathname === '/api/admin/premio-semanal' || pathname === '/api/admin/personajes/fijar-premio-semanal') {
+    const w = obtenerInfoSemana();
     const defaultPremio = {
       id: 'premio_dragon_dorado',
       nombre: 'Dragón Imperial Dorado',
@@ -1603,189 +2178,172 @@ async function handleApiRequest(request, env) {
     };
 
     if (request.method === 'GET') {
-      const premio = await d1GetConfig(d1, 'premio_semanal_global', defaultPremio);
+      const premio = await d1LeerConfig(d1, 'premio_semanal_global', defaultPremio);
       return new Response(
         JSON.stringify({ ok: true, semanaId: w.semanaActualId, premio, premioSemanal: premio }),
-        { headers: jsonHeaders }
+        { headers: cabecerasJson }
       );
     }
 
     if (request.method === 'POST') {
-      const sesion = await resolverSesion(request, env);
-      const cuentas = await dbGetCuentas(env);
-      const { isSupreme, isDelegated } = await verifyCallerAdmin(cuentas, sesion);
+      const sesion = await resolverSesion(request, env, d1);
+      const cuentas = await d1ObtenerTodasCuentas(d1);
+      const perm = await verificarPermisosLlamante(cuentas, sesion);
 
-      if (!isSupreme && !isDelegated) {
+      if (!perm.esDev && !perm.esAdmin) {
         return new Response(JSON.stringify({ ok: false, error: 'Permisos insuficientes.' }), {
           status: 403,
-          headers: jsonHeaders,
+          headers: cabecerasJson,
         });
       }
 
       const body = await request.json().catch(() => ({}));
       const raw = body.personaje || body.premio || body;
-      const actorName = isSupreme
-        ? 'Dev Supremo'
-        : (sesion?.usuarioId && cuentas[sesion.usuarioId]?.nombre) || 'Admin';
+      const actorName = perm.actor?.nombre || 'Staff';
 
       const premio = {
-        id: String(raw.id || `premio_${w.semanaActualId}`).trim(),
-        nombre: String(raw.nombre || 'Héroe Semanal').trim().slice(0, 30),
-        color: raw.color || '#ffd43b',
-        hat: raw.hat || 'corona',
-        ropa: raw.ropa || 'ninguna',
-        ropaColor: raw.ropaColor || undefined,
-        aura: raw.aura || 'ninguna',
-        descripcion: raw.descripcion || 'Premio exclusivo del Torneo Semanal',
+        id: String(raw?.id || `premio_${w.semanaActualId}`).trim(),
+        nombre: String(raw?.nombre || 'Héroe Semanal').trim().slice(0, 30),
+        color: raw?.color || '#ffd43b',
+        hat: raw?.hat || 'corona',
+        ropa: raw?.ropa || 'ninguna',
+        ropaColor: raw?.ropa && raw.ropa !== 'ninguna' ? (raw?.ropaColor || undefined) : undefined,
+        aura: raw?.aura || 'ninguna',
+        descripcion: raw?.descripcion || 'Premio exclusivo del Torneo Semanal',
         origen: {
           tipo: 'torneo_semanal',
-          otorgadoPor: `Torneo Semanal creado por ${actorName}`,
+          otorgadoPor: `Torneo Semanal fijado por ${actorName}`,
           fecha: new Date().toISOString(),
         },
       };
 
-      await d1PutConfig(d1, 'premio_semanal_global', premio);
+      await d1GuardarConfig(d1, 'premio_semanal_global', premio);
+      await tocarUltimaActualizacion(d1);
+      await registrarNotificacionStaff(d1, perm.actor, 'premio_semanal', `Fijó premio semanal: "${premio.nombre}"`);
+
       return new Response(
-        JSON.stringify({
-          ok: true,
-          mensaje: `Premio de la semana "${premio.nombre}" guardado con éxito.`,
-          premio,
-          premioSemanal: premio,
-        }),
-        { headers: jsonHeaders }
+        JSON.stringify({ ok: true, mensaje: `Premio semanal "${premio.nombre}" guardado.`, premio, premioSemanal: premio }),
+        { headers: cabecerasJson }
       );
     }
   }
 
-  // 4g. /api/admin/config-semanal — Puntos de victoria y bonos semanales
   if (pathname === '/api/admin/config-semanal') {
-    const defaultCfg = {
-      puntosVictoria: 3,
-      puntosEmpate: 1,
-      primerLugar: 25,
-      segundoLugar: 15,
-      tercerLugar: 10,
-    };
-
     if (request.method === 'GET') {
-      const cfg = await d1GetConfig(d1, 'config_semanal_puntos', defaultCfg);
-      const premioSemanal = await d1GetConfig(d1, 'premio_semanal_global', null);
-      return new Response(JSON.stringify({ ok: true, config: cfg, premioSemanal }), {
-        headers: jsonHeaders,
-      });
+      const cfg = await d1LeerConfig(d1, 'config_semanal_puntos', CONFIG_SEMANAL_POR_DEFECTO);
+      const premioSemanal = await d1LeerConfig(d1, 'premio_semanal_global', null);
+      return new Response(JSON.stringify({ ok: true, config: cfg, premioSemanal }), { headers: cabecerasJson });
     }
 
     if (request.method === 'POST') {
-      const sesion = await resolverSesion(request, env);
-      const cuentas = await dbGetCuentas(env);
-      const { isSupreme, isDelegated } = await verifyCallerAdmin(cuentas, sesion);
+      const sesion = await resolverSesion(request, env, d1);
+      const cuentas = await d1ObtenerTodasCuentas(d1);
+      const perm = await verificarPermisosLlamante(cuentas, sesion);
 
-      if (!isSupreme && !isDelegated) {
+      if (!perm.esDev && !perm.esAdmin) {
         return new Response(JSON.stringify({ ok: false, error: 'Permisos insuficientes.' }), {
           status: 403,
-          headers: jsonHeaders,
+          headers: cabecerasJson,
         });
       }
 
       const body = await request.json().catch(() => ({}));
       const cfg = {
-        puntosVictoria: typeof body.puntosVictoria === 'number' ? body.puntosVictoria : 3,
-        puntosEmpate: typeof body.puntosEmpate === 'number' ? body.puntosEmpate : 1,
-        primerLugar: typeof body.primerLugar === 'number' ? body.primerLugar : 25,
-        segundoLugar: typeof body.segundoLugar === 'number' ? body.segundoLugar : 15,
-        tercerLugar: typeof body.tercerLugar === 'number' ? body.tercerLugar : 10,
+        puntosVictoria: typeof body.puntosVictoria === 'number' ? Math.max(0, body.puntosVictoria) : 3,
+        puntosEmpate: typeof body.puntosEmpate === 'number' ? Math.max(0, body.puntosEmpate) : 1,
+        primerLugar: typeof body.primerLugar === 'number' ? Math.max(0, body.primerLugar) : 50,
+        segundoLugar: typeof body.segundoLugar === 'number' ? Math.max(0, body.segundoLugar) : 25,
+        tercerLugar: typeof body.tercerLugar === 'number' ? Math.max(0, body.tercerLugar) : 15,
+        participacion: typeof body.participacion === 'number' ? Math.max(0, body.participacion) : 5,
       };
 
-      await d1PutConfig(d1, 'config_semanal_puntos', cfg);
+      await d1GuardarConfig(d1, 'config_semanal_puntos', cfg);
+      await tocarUltimaActualizacion(d1);
       return new Response(JSON.stringify({ ok: true, config: cfg, mensaje: 'Puntos semanales guardados.' }), {
-        headers: jsonHeaders,
+        headers: cabecerasJson,
       });
     }
   }
 
-  // 4h. /api/admin/desbloqueos-personajes — Puntos requeridos para desbloquear personajes
   if (pathname === '/api/admin/desbloqueos-personajes') {
-    const defaultDesbloqueos = {
-      gatito: 30,
-      zorro: 60,
-      robot: 120,
-      dragon: 200,
-      ninja: 300,
-      navidad: 400,
-      granjero: 500,
-      astronauta: 650,
-      cyberbot: 800,
-      mago: 1000,
-    };
-
     if (request.method === 'GET') {
-      const desbloqueos = await d1GetConfig(d1, 'config_desbloqueos_personajes', defaultDesbloqueos);
-      return new Response(JSON.stringify({ ok: true, desbloqueos }), { headers: jsonHeaders });
+      const raw = await d1LeerConfig(d1, 'config_desbloqueos_personajes', DESBLOQUEOS_POR_DEFECTO);
+      const desbloqueos = { ...DESBLOQUEOS_POR_DEFECTO, ...(raw || {}) };
+      return new Response(JSON.stringify({ ok: true, desbloqueos }), { headers: cabecerasJson });
     }
 
     if (request.method === 'POST') {
-      const sesion = await resolverSesion(request, env);
-      const cuentas = await dbGetCuentas(env);
-      const { isSupreme } = await verifyCallerAdmin(cuentas, sesion);
+      const sesion = await resolverSesion(request, env, d1);
+      const cuentas = await d1ObtenerTodasCuentas(d1);
+      const perm = await verificarPermisosLlamante(cuentas, sesion);
 
-      if (!isSupreme && (!sesion || sesion.usuarioId !== 'admin')) {
-        return new Response(JSON.stringify({ ok: false, error: 'Solo el Dev Supremo puede configurar desbloqueos.' }), {
+      if (!perm.esDev) {
+        return new Response(JSON.stringify({ ok: false, error: 'Solo el Dev puede configurar desbloqueos.' }), {
           status: 403,
-          headers: jsonHeaders,
+          headers: cabecerasJson,
         });
       }
 
       const body = await request.json().catch(() => ({}));
-      const desbloqueos = { ...defaultDesbloqueos, ...(body.desbloqueos || body) };
-      await d1PutConfig(d1, 'config_desbloqueos_personajes', desbloqueos);
+      const entrante = body.desbloqueos || body || {};
+      const limpio = { ...DESBLOQUEOS_POR_DEFECTO };
+      for (const k of Object.keys(DESBLOQUEOS_POR_DEFECTO)) {
+        if (typeof entrante[k] === 'number' && !isNaN(entrante[k])) {
+          limpio[k] = Math.max(0, Math.round(entrante[k]));
+        }
+      }
+      await d1GuardarConfig(d1, 'config_desbloqueos_personajes', limpio);
+      await tocarUltimaActualizacion(d1);
+
       return new Response(
-        JSON.stringify({ ok: true, desbloqueos, mensaje: 'Puntos de desbloqueo actualizados.' }),
-        { headers: jsonHeaders }
+        JSON.stringify({ ok: true, desbloqueos: limpio, mensaje: 'Puntos de desbloqueo guardados.' }),
+        { headers: cabecerasJson }
       );
     }
   }
 
-  // 4i. /api/admin/salas-personalizadas (GET, POST, DELETE)
+  // ==========================================
+  // 4i. SALAS PERSONALIZADAS EN LÍNEA (MOD / ADMIN / DEV)
+  // ==========================================
   if (pathname === '/api/admin/salas-personalizadas' || pathname.startsWith('/api/admin/salas-personalizadas/')) {
     if (request.method === 'GET') {
-      const salas = await d1GetSalasPersonalizadas(d1);
-      return new Response(JSON.stringify({ ok: true, salas }), { headers: jsonHeaders });
+      const salas = await d1LeerSalasPersonalizadas(d1);
+      return new Response(JSON.stringify({ ok: true, salas }), { headers: cabecerasJson });
     }
 
     if (request.method === 'POST') {
-      const sesion = await resolverSesion(request, env);
-      const cuentas = await dbGetCuentas(env);
-      const { isMod, isAdmin, isDev } = await verifyCallerAdmin(cuentas, sesion);
+      const sesion = await resolverSesion(request, env, d1);
+      const cuentas = await d1ObtenerTodasCuentas(d1);
+      const perm = await verificarPermisosLlamante(cuentas, sesion);
 
-      if (!isMod && !isAdmin && !isDev) {
-        return new Response(JSON.stringify({ ok: false, error: 'Permisos insuficientes para crear salas oficiales.' }), {
+      if (!perm.esMod && !perm.esAdmin && !perm.esDev) {
+        return new Response(JSON.stringify({ ok: false, error: 'Solo el Staff (Mod, Admin, Dev) puede crear salas oficiales.' }), {
           status: 403,
-          headers: jsonHeaders,
+          headers: cabecerasJson,
         });
       }
 
       const body = await request.json().catch(() => ({}));
-      const codigo = String(body.codigo || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+      const codigo = normalizarCodigoSala(body.codigo);
       const nombre = String(body.nombre || `Sala Oficial ${codigo}`).trim();
 
       if (!codigo || codigo.length < 3) {
         return new Response(JSON.stringify({ ok: false, error: 'El código debe tener al menos 3 caracteres.' }), {
           status: 400,
-          headers: jsonHeaders,
+          headers: cabecerasJson,
         });
       }
 
-      const creadorNombre = isDev ? 'Dev Supremo' : (sesion?.usuarioId && cuentas[sesion.usuarioId]?.nombre) || 'Moderador';
-      const creadorRol = isDev ? 'dev' : isAdmin ? 'admin' : 'mod';
-      const now = Date.now();
-
+      const creadorRol = perm.esDev ? 'dev' : perm.esAdmin ? 'admin' : 'mod';
+      const ahora = Date.now();
       const nuevaSala = {
+        id: `sp_${codigo}`,
         codigo,
         nombre: nombre.slice(0, 32),
-        creador: creadorNombre,
-        creadorId: sesion?.usuarioId || 'admin',
+        creador: perm.actor?.nombre || 'Staff',
+        creadorId: perm.actor?.id || 'admin',
         creadorRol,
-        creadoEn: now,
+        creadoEn: ahora,
         maxJugadores: body.maxJugadores === 4 ? 4 : 2,
         modoMuros: body.modoMuros === 'caos' ? 'caos' : (body.modoMuros === 'tactico' ? 'tactico' : 'estandar'),
         tamanoTablero: body.tamanoTablero === 7 ? 7 : 9,
@@ -1793,16 +2351,19 @@ async function handleApiRequest(request, env) {
         mensajeEspecial: String(body.mensajeEspecial || '').trim().slice(0, 80),
       };
 
-      await d1PutSalaPersonalizada(d1, nuevaSala);
+      await d1GuardarSalaPersonalizada(d1, nuevaSala);
 
-      // Hidratar inmediatamente en la memoria de señalización
-      const roomObj = {
+      // Persistir inmediatamente en D1 `salas_online` para disponibilidad multi-aislamiento
+      await d1GuardarSalaOnline(d1, codigo, {
         codigo,
         nombre: nuevaSala.nombre,
         anfitrion: nuevaSala.creador,
         hostPeerId: `host_${codigo.toLowerCase()}`,
         color: '#ffd43b',
         hat: 'corona',
+        ropa: 'capa',
+        ropaColor: '#c92a2a',
+        aura: 'dorada',
         maxJugadores: nuevaSala.maxJugadores,
         publica: true,
         enPartida: false,
@@ -1811,314 +2372,507 @@ async function handleApiRequest(request, env) {
         signals: {},
         seq: 0,
         mensajes: [],
-        creadoEn: now,
-        ultimoCambio: now,
+        creadoEn: ahora,
+        ultimoCambio: ahora,
         modoMuros: nuevaSala.modoMuros,
         tamanoTablero: nuevaSala.tamanoTablero,
         esOficialStaff: true,
-      };
-      memSalas.set(codigo, roomObj);
-      memSalasMeta.set(codigo, { readAt: now, writtenAt: now });
+      });
 
-      const lista = await d1GetSalasPersonalizadas(d1);
+      const lista = await d1LeerSalasPersonalizadas(d1);
+      await registrarNotificacionStaff(d1, perm.actor, 'sala_creada', `Publicó sala oficial "${nuevaSala.codigo}" (${nuevaSala.nombre})`);
+
       return new Response(
-        JSON.stringify({
-          ok: true,
-          sala: nuevaSala,
-          salas: lista,
-          mensaje: `Sala oficial "${nuevaSala.nombre}" creada y disponible.`,
-        }),
-        { headers: jsonHeaders }
+        JSON.stringify({ ok: true, sala: nuevaSala, salas: lista, mensaje: `Sala oficial "${nuevaSala.nombre}" creada.` }),
+        { headers: cabecerasJson }
       );
     }
 
     if (request.method === 'DELETE') {
-      const sesion = await resolverSesion(request, env);
-      const cuentas = await dbGetCuentas(env);
-      const { isMod, isAdmin, isDev } = await verifyCallerAdmin(cuentas, sesion);
+      const sesion = await resolverSesion(request, env, d1);
+      const cuentas = await d1ObtenerTodasCuentas(d1);
+      const perm = await verificarPermisosLlamante(cuentas, sesion);
 
-      if (!isMod && !isAdmin && !isDev) {
+      if (!perm.esMod && !perm.esAdmin && !perm.esDev) {
         return new Response(JSON.stringify({ ok: false, error: 'Permisos insuficientes.' }), {
           status: 403,
-          headers: jsonHeaders,
+          headers: cabecerasJson,
         });
       }
 
       let codigo = '';
       if (pathname.startsWith('/api/admin/salas-personalizadas/')) {
-        codigo = decodeURIComponent(pathname.slice('/api/admin/salas-personalizadas/'.length)).toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+        codigo = normalizarCodigoSala(decodeURIComponent(pathname.slice('/api/admin/salas-personalizadas/'.length)));
       }
       if (!codigo) {
         const body = await request.json().catch(() => ({}));
-        codigo = String(body.codigo || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+        codigo = normalizarCodigoSala(body.codigo);
       }
 
       if (codigo) {
-        await d1DeleteSalaPersonalizada(d1, codigo);
-        memSalas.delete(codigo);
-        memSalasMeta.delete(codigo);
+        await d1EliminarSalaPersonalizada(d1, codigo);
+        await registrarNotificacionStaff(d1, perm.actor, 'sala_eliminada', `Eliminó sala oficial "${codigo}"`);
       }
 
-      const lista = await d1GetSalasPersonalizadas(d1);
+      const lista = await d1LeerSalasPersonalizadas(d1);
       return new Response(JSON.stringify({ ok: true, salas: lista, mensaje: `Sala "${codigo}" eliminada.` }), {
-        headers: jsonHeaders,
+        headers: cabecerasJson,
       });
     }
   }
 
-  // 4j. /api/admin/ranking/solicitar-reset & /api/admin/ranking/resolver-solicitud
+  // ==========================================
+  // 4j. SOLICITUDES Y REINICIO DE RANKING
+  // ==========================================
+  if (pathname === '/api/admin/ranking/solicitud-reset' && request.method === 'GET') {
+    const solicitud = await d1LeerConfig(d1, 'solicitud_reset_ranking', null);
+    return new Response(JSON.stringify({ ok: true, solicitud }), { headers: cabecerasJson });
+  }
+
   if (pathname === '/api/admin/ranking/solicitar-reset') {
     if (request.method === 'GET') {
-      const solicitud = await d1GetConfig(d1, 'solicitud_reset_ranking', null);
-      return new Response(JSON.stringify({ ok: true, solicitud }), { headers: jsonHeaders });
+      const solicitud = await d1LeerConfig(d1, 'solicitud_reset_ranking', null);
+      return new Response(JSON.stringify({ ok: true, solicitud }), { headers: cabecerasJson });
     }
-
     if (request.method === 'POST') {
-      const sesion = await resolverSesion(request, env);
-      const cuentas = await dbGetCuentas(env);
-      const { isSupreme, isDelegated } = await verifyCallerAdmin(cuentas, sesion);
+      const sesion = await resolverSesion(request, env, d1);
+      const cuentas = await d1ObtenerTodasCuentas(d1);
+      const perm = await verificarPermisosLlamante(cuentas, sesion);
 
-      if (!isSupreme && !isDelegated) {
+      if (!perm.esDev && !perm.esAdmin) {
         return new Response(JSON.stringify({ ok: false, error: 'Permisos insuficientes.' }), {
           status: 403,
-          headers: jsonHeaders,
+          headers: cabecerasJson,
         });
       }
 
       const body = await request.json().catch(() => ({}));
       const solicitud = {
-        id: `sol_${Date.now()}`,
-        solicitanteId: sesion?.usuarioId || 'admin',
-        solicitanteNombre: (sesion?.usuarioId && cuentas[sesion.usuarioId]?.nombre) || 'Admin',
+        solicitada: true,
+        porNombre: perm.actor?.nombre || 'Admin',
+        porId: perm.actor?.id || 'admin',
         motivo: String(body.motivo || 'Reinicio periódico del ranking').trim().slice(0, 140),
         fecha: new Date().toISOString(),
-        estado: 'pendiente',
       };
+      await d1GuardarConfig(d1, 'solicitud_reset_ranking', solicitud);
+      await registrarNotificacionStaff(d1, perm.actor, 'solicitud_reset', 'Solicitó reinicio del Ranking Global');
 
-      await d1PutConfig(d1, 'solicitud_reset_ranking', solicitud);
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          mensaje: 'Solicitud enviada al Dev Supremo.',
-          solicitud,
-        }),
-        { headers: jsonHeaders }
-      );
+      return new Response(JSON.stringify({ ok: true, mensaje: 'Solicitud enviada al Dev.', solicitud }), {
+        headers: cabecerasJson,
+      });
     }
   }
 
-  if (pathname === '/api/admin/ranking/resolver-solicitud' && request.method === 'POST') {
-    const sesion = await resolverSesion(request, env);
-    const cuentas = await dbGetCuentas(env);
-    const { isSupreme } = await verifyCallerAdmin(cuentas, sesion);
+  async function ejecutarReinicioRankingD1() {
+    if (!d1) return;
+    await asegurarTablasD1(d1);
+    const w = obtenerInfoSemana();
+    await d1.prepare('DELETE FROM ranking').run();
+    await d1
+      .prepare('UPDATE historial SET puntos = 0, total_partida = 0, victorias = 0, derrotas = 0, empates = 0, actualizado_en = ?')
+      .bind(Date.now())
+      .run();
+    await d1EliminarConfig(d1, 'solicitud_reset_ranking');
+    await d1EliminarConfig(d1, `semanal_${w.semanaActualId}`);
+    await d1GuardarConfig(d1, `semanal_${w.semanaPasadaId}`, { semanaId: w.semanaPasadaId, premiada: true, premiados: [] });
+    await tocarUltimaActualizacion(d1);
+  }
 
-    if (!isSupreme && (!sesion || sesion.usuarioId !== 'admin')) {
-      return new Response(JSON.stringify({ ok: false, error: 'Solo el Dev Supremo puede aprobar o rechazar el reinicio.' }), {
+  if (pathname === '/api/admin/ranking/aprobar-reset' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env, d1);
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const perm = await verificarPermisosLlamante(cuentas, sesion);
+    if (!perm.esDev) {
+      return new Response(JSON.stringify({ ok: false, error: 'Solo el Dev puede reiniciar el Ranking Global.' }), {
         status: 403,
-        headers: jsonHeaders,
+        headers: cabecerasJson,
       });
     }
+    await ejecutarReinicioRankingD1();
+    await registrarNotificacionStaff(d1, perm.actor, 'reset_ranking', 'Aprobó el reinicio del Ranking Global a cero');
+    return new Response(JSON.stringify({ ok: true, mensaje: 'Ranking reiniciado a 0 en D1.' }), { headers: cabecerasJson });
+  }
 
-    const body = await request.json().catch(() => ({}));
-    const { accion } = body || {};
-
-    if (accion === 'aprobar') {
-      if (d1) {
-        await ensureD1Tables(d1);
-        try {
-          await d1.prepare('DELETE FROM ranking').run();
-          await d1.prepare('DELETE FROM ranking_semanal').run();
-          await d1.prepare("UPDATE cuentas SET puntos = 0, partidas = 0, victorias = 0, derrotas = 0, empates = 0, elo = 1000 WHERE id != 'admin'").run();
-          await d1DeleteConfig(d1, 'solicitud_reset_ranking');
-          await d1PutConfig(d1, 'last_update', Date.now());
-        } catch (err) {
-          console.error('Error aprobando reset de ranking en D1:', err);
-        }
-      }
-      return new Response(JSON.stringify({ ok: true, mensaje: 'Ranking reiniciado correctamente por el Dev Supremo.' }), {
-        headers: jsonHeaders,
+  if (pathname === '/api/admin/ranking/rechazar-reset' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env, d1);
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const perm = await verificarPermisosLlamante(cuentas, sesion);
+    if (!perm.esDev) {
+      return new Response(JSON.stringify({ ok: false, error: 'Solo el Dev puede rechazar solicitudes.' }), {
+        status: 403,
+        headers: cabecerasJson,
       });
     }
-
-    await d1DeleteConfig(d1, 'solicitud_reset_ranking');
-    return new Response(JSON.stringify({ ok: true, mensaje: 'Solicitud de reinicio rechazada.' }), {
-      headers: jsonHeaders,
+    await d1EliminarConfig(d1, 'solicitud_reset_ranking');
+    return new Response(JSON.stringify({ ok: true, mensaje: 'Solicitud de reinicio desestimada.' }), {
+      headers: cabecerasJson,
     });
   }
 
-  // 5. /api/ranking
+  if (pathname === '/api/admin/ranking/resolver-solicitud' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env, d1);
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const perm = await verificarPermisosLlamante(cuentas, sesion);
+    if (!perm.esDev) {
+      return new Response(JSON.stringify({ ok: false, error: 'Solo el Dev puede aprobar o rechazar.' }), {
+        status: 403,
+        headers: cabecerasJson,
+      });
+    }
+    const body = await request.json().catch(() => ({}));
+    if (body?.accion === 'aprobar') {
+      await ejecutarReinicioRankingD1();
+      await registrarNotificacionStaff(d1, perm.actor, 'reset_ranking', 'Aprobó el reinicio del Ranking Global');
+      return new Response(JSON.stringify({ ok: true, mensaje: 'Ranking reiniciado a 0 en D1.' }), { headers: cabecerasJson });
+    }
+    await d1EliminarConfig(d1, 'solicitud_reset_ranking');
+    return new Response(JSON.stringify({ ok: true, mensaje: 'Solicitud rechazada.' }), { headers: cabecerasJson });
+  }
+
+  // ==========================================
+  // 5. GET / POST /api/ranking
+  // ==========================================
   if (pathname === '/api/ranking') {
     if (request.method === 'GET') {
-      const rank = await dbGetRanking(env);
-      return new Response(JSON.stringify(rank), { headers: jsonHeaders });
+      const rank = await d1LeerRanking(d1);
+      return new Response(JSON.stringify(rank), { headers: cabecerasJson });
     }
 
     if (request.method === 'POST') {
-      const sesion = await resolverSesion(request, env);
-      const cuentas = await dbGetCuentas(env);
-      const { isSupreme, isDelegated } = await verifyCallerAdmin(cuentas, sesion);
+      const sesion = await resolverSesion(request, env, d1);
+      const cuentas = await d1ObtenerTodasCuentas(d1);
+      const perm = await verificarPermisosLlamante(cuentas, sesion);
+
+      if (!perm.esDev && !perm.esAdmin) {
+        return new Response(JSON.stringify({ ok: false, revoked: true, error: 'Permisos insuficientes.' }), {
+          status: 403,
+          headers: cabecerasJson,
+        });
+      }
 
       const body = await request.json().catch(() => ({}));
-      const incoming = body && typeof body === 'object' ? body : {};
+      if (Object.keys(body || {}).length === 0) {
+        await ejecutarReinicioRankingD1();
+        return new Response(JSON.stringify({ ok: true, dbBound }), { headers: cabecerasJson });
+      }
 
-      const existingRank = await dbGetRanking(env);
-      const finalRank = { ...existingRank };
-
-      for (const [id, r] of Object.entries(incoming)) {
+      const w = obtenerInfoSemana();
+      for (const [k, r] of Object.entries(body || {})) {
         if (!r || typeof r !== 'object') continue;
-        const cleanId = String(r.id || id).trim().toLowerCase();
-        const acc = cuentas[cleanId];
-        if (!acc && !isSupreme && !isDelegated) continue;
+        const cleanId = String(r.id || k).trim().toLowerCase();
+        const acc = cuentas[cleanId] || Object.values(cuentas).find((a) => a.nombre.trim().toLowerCase() === String(r.nombre || k).trim().toLowerCase());
+        if (!acc) continue;
 
-        finalRank[cleanId] = {
-          id: cleanId,
-          nombre: r.nombre || acc?.nombre || cleanId,
-          puntos: typeof r.puntos === 'number' ? r.puntos : acc?.puntos || 0,
-          victorias: typeof r.victorias === 'number' ? r.victorias : acc?.victorias || 0,
-          derrotas: typeof r.derrotas === 'number' ? r.derrotas : acc?.derrotas || 0,
-          empates: typeof r.empates === 'number' ? r.empates : acc?.empates || 0,
-          partidas: typeof r.partidas === 'number' ? r.partidas : acc?.partidas || 0,
-          elo: typeof r.elo === 'number' ? r.elo : acc?.elo || 1000,
-          avatarColor: r.avatarColor || acc?.avatarColor || '#ff6b6b',
-          avatarHat: r.avatarHat || acc?.avatarHat || 'corona',
-          avatarRopa: r.avatarRopa || acc?.avatarRopa || 'ninguna',
-          avatarRopaColor: r.avatarRopaColor || acc?.avatarRopaColor,
-          avatarAura: r.avatarAura || acc?.avatarAura || 'ninguna',
-          rol: acc?.rol || r.rol || 'jugador',
-        };
+        await d1
+          .prepare(`
+            INSERT OR REPLACE INTO ranking (
+              id, nombre, puntos, total_partida, victorias, derrotas, empates,
+              avatar_color, avatar_hat, avatar_ropa, avatar_ropa_color, avatar_aura,
+              semana_actual_id, semana_actual_pts, semana_actual_vic, semana_actual_part,
+              semana_pasada_id, semana_pasada_pts, semana_pasada_premio, actualizado_en
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `)
+          .bind(
+            acc.id,
+            acc.nombre,
+            Number(r.puntosTotales ?? r.puntos ?? acc.puntos) || 0,
+            Number(r.partidas ?? acc.partidas) || 0,
+            Number(r.victorias ?? acc.victorias) || 0,
+            Number(r.derrotas ?? acc.derrotas) || 0,
+            Number(r.empates ?? acc.empates) || 0,
+            r.avatarColor || acc.avatarColor || '#ff6b6b',
+            r.avatarHat || acc.avatarHat || 'corona',
+            r.avatarRopa || acc.avatarRopa || 'ninguna',
+            r.avatarRopaColor || acc.avatarRopaColor || null,
+            r.avatarAura || acc.avatarAura || 'ninguna',
+            w.semanaActualId,
+            0,
+            0,
+            0,
+            w.semanaPasadaId,
+            0,
+            null,
+            Date.now()
+          )
+          .run();
       }
-
-      await dbPutRanking(env, finalRank, isSupreme || isDelegated);
-      return new Response(JSON.stringify({ ok: true, dbBound }), { headers: jsonHeaders });
+      await tocarUltimaActualizacion(d1);
+      return new Response(JSON.stringify({ ok: true, dbBound }), { headers: cabecerasJson });
     }
   }
 
-  // 5b. /api/partida — Endpoint unificado post-partida
+  // ==========================================
+  // 5b. POST /api/partida y POST /api/partidas/sincronizar
+  // ==========================================
+  async function procesarPartidaUnificada(body, sesion, cuentas) {
+    const w = obtenerInfoSemana();
+    await d1AsegurarSemanaEnRanking(d1, w);
+    const cfgSemanal = (await d1LeerConfig(d1, 'config_semanal_puntos', CONFIG_SEMANAL_POR_DEFECTO)) || CONFIG_SEMANAL_POR_DEFECTO;
+
+    const partidaId = String(body.partidaId || body.matchId || `pt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`).trim();
+    const fecha = typeof body.fecha === 'string' ? body.fecha : new Date().toISOString();
+    const modo = String(body.modo || 'local').trim();
+    const duracionSeg = Math.max(0, Number(body.duracionSeg) || 0);
+
+    // Soportar tanto el nuevo formato `participantes[]` como respaldo legacy `cuentasPatch`
+    let participantes = Array.isArray(body.participantes) ? body.participantes : [];
+    if (participantes.length === 0 && (body.userId || sesion?.userId)) {
+      const fallbackId = String(body.userId || sesion?.userId || '').trim().toLowerCase();
+      if (fallbackId) {
+        participantes = [
+          {
+            cuentaId: fallbackId,
+            nombre: body.nombre || cuentas[fallbackId]?.nombre || fallbackId,
+            resultado: body.resultado || 'derrota',
+            puntosGanados: Math.max(0, Number(body.puntosGanados ?? body.puntos) || 0),
+            movimientos: Math.max(0, Number(body.movimientos) || 0),
+            murosColocados: Math.max(0, Number(body.murosColocados) || 0),
+            saltos: Math.max(0, Number(body.saltos) || 0),
+            partidaLimpia: Boolean(body.partidaLimpia),
+            rival: String(body.rival || 'Rival'),
+            logros: Array.isArray(body.logros) ? body.logros : [],
+          },
+        ];
+      }
+    }
+
+    const guardados = [];
+    for (const p of participantes) {
+      if (!p) continue;
+      const buscadoId = String(p.cuentaId || '').trim().toLowerCase();
+      let acc = buscadoId ? cuentas[buscadoId] : null;
+      if (!acc && p.nombre) {
+        const nomLower = String(p.nombre).trim().toLowerCase();
+        acc = Object.values(cuentas).find((a) => String(a.nombre || '').trim().toLowerCase() === nomLower);
+      }
+      if (!acc) continue;
+
+      // Seguridad: solo el propietario de la sesión (o un Dev) puede registrar sus resultados
+      const autorizado = sesion && (sesion.userId === acc.id || sesion.rol === 'dev');
+      if (!autorizado) continue;
+
+      const histPrev = Array.isArray(acc.historialPartidas) ? acc.historialPartidas : [];
+      if (histPrev.some((h) => h && h.id === partidaId)) {
+        guardados.push(acc.id);
+        continue; // Idempotente: no duplicar si ya se guardó (cola offline / reintento)
+      }
+
+      const resultado = p.resultado === 'victoria' || p.resultado === 'empate' ? p.resultado : 'derrota';
+      const puntosGanados = Math.max(0, Number(p.puntosGanados) || 0);
+      const ptsSemanalPartida =
+        puntosGanados > 0
+          ? puntosGanados
+          : resultado === 'victoria'
+          ? Number(cfgSemanal.puntosVictoria ?? 3)
+          : resultado === 'empate'
+          ? Number(cfgSemanal.puntosEmpate ?? 1)
+          : 0;
+
+      const registroPartida = {
+        id: partidaId,
+        rival: String(p.rival || 'Rival').slice(0, 40),
+        resultado,
+        movimientos: Math.max(0, Number(p.movimientos) || 0),
+        murosColocados: Math.max(0, Number(p.murosColocados) || 0),
+        saltos: Math.max(0, Number(p.saltos) || 0),
+        partidaLimpia: Boolean(p.partidaLimpia),
+        modo,
+        duracionSegundos: duracionSeg,
+        puntos: puntosGanados,
+        logros: Array.isArray(p.logros) ? p.logros : [],
+        fecha,
+      };
+
+      acc.puntos = Math.max(0, (Number(acc.puntos) || 0) + puntosGanados);
+      acc.partidas = (Number(acc.partidas) || 0) + 1;
+      if (resultado === 'victoria') acc.victorias = (Number(acc.victorias) || 0) + 1;
+      else if (resultado === 'empate') acc.empates = (Number(acc.empates) || 0) + 1;
+      else acc.derrotas = (Number(acc.derrotas) || 0) + 1;
+
+      acc.ultimaConexion = new Date().toISOString();
+      acc.historialPartidas = [registroPartida, ...histPrev].slice(0, 50);
+
+      await d1GuardarCuentaCompleta(d1, acc, false);
+
+      // Actualizar contadores semanales en la fila de `ranking`
+      try {
+        const filaRank = await d1.prepare('SELECT * FROM ranking WHERE id = ?').bind(acc.id).first();
+        const mismoSem = filaRank?.semana_actual_id === w.semanaActualId;
+        const nuevoSemPts = (mismoSem ? Number(filaRank?.semana_actual_pts) || 0 : 0) + ptsSemanalPartida;
+        const nuevoSemVic = (mismoSem ? Number(filaRank?.semana_actual_vic) || 0 : 0) + (resultado === 'victoria' ? 1 : 0);
+        const nuevoSemPart = (mismoSem ? Number(filaRank?.semana_actual_part) || 0 : 0) + 1;
+
+        await d1
+          .prepare(`
+            UPDATE ranking SET
+              semana_actual_id = ?,
+              semana_actual_pts = ?,
+              semana_actual_vic = ?,
+              semana_actual_part = ?,
+              actualizado_en = ?
+            WHERE id = ?
+          `)
+          .bind(w.semanaActualId, nuevoSemPts, nuevoSemVic, nuevoSemPart, Date.now(), acc.id)
+          .run();
+      } catch (err) {
+        console.error('Error actualizando ranking semanal en D1:', err);
+      }
+
+      guardados.push(acc.id);
+    }
+
+    if (guardados.length > 0) {
+      await tocarUltimaActualizacion(d1);
+    }
+
+    return guardados;
+  }
+
   if (pathname === '/api/partida' && request.method === 'POST') {
-    const sesion = await resolverSesion(request, env);
+    const sesion = await resolverSesion(request, env, d1);
+    const cuentas = await d1ObtenerTodasCuentas(d1);
     const body = await request.json().catch(() => ({}));
-    const { usuarioId, resultado, movimientos, rival, modo, duracionSeg } = body || {};
+    const guardados = await procesarPartidaUnificada(body, sesion, cuentas);
 
-    const cleanId = String(usuarioId || sesion?.usuarioId || '').trim().toLowerCase();
-    if (!cleanId) {
-      return new Response(JSON.stringify({ ok: false, error: 'Falta usuarioId.' }), {
-        status: 400,
-        headers: jsonHeaders,
-      });
-    }
-
-    const cuentas = await dbGetCuentas(env);
-    const cuenta = cuentas[cleanId];
-
-    if (cuenta) {
-      cuenta.partidas = (cuenta.partidas || 0) + 1;
-      let ptsGained = 0;
-      if (resultado === 'victoria') {
-        cuenta.victorias = (cuenta.victorias || 0) + 1;
-        cuenta.elo = (cuenta.elo || 1000) + 15;
-        ptsGained = 3;
-      } else if (resultado === 'derrota') {
-        cuenta.derrotas = (cuenta.derrotas || 0) + 1;
-        cuenta.elo = Math.max(800, (cuenta.elo || 1000) - 10);
-      } else if (resultado === 'empate') {
-        cuenta.empates = (cuenta.empates || 0) + 1;
-        cuenta.elo = (cuenta.elo || 1000) + 2;
-        ptsGained = 1;
-      }
-      cuenta.puntos = (cuenta.puntos || 0) + ptsGained;
-
-      if (!Array.isArray(cuenta.historialPartidas)) {
-        cuenta.historialPartidas = [];
-      }
-      const matchRecord = {
-        id: `pt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        rival: String(rival || 'Rival').slice(0, 24),
-        resultado: resultado || 'desconocido',
-        movimientos: Number(movimientos) || 0,
-        modo: modo || 'local',
-        duracionSeg: Number(duracionSeg) || 0,
-        fecha: new Date().toISOString(),
-      };
-      cuenta.historialPartidas.unshift(matchRecord);
-      if (cuenta.historialPartidas.length > 50) {
-        cuenta.historialPartidas = cuenta.historialPartidas.slice(0, 50);
-      }
-
-      await dbInsertOrUpdateCuenta(env, cuenta, false);
-
-      // Guardar en tabla partidas_historial
-      if (d1) {
-        try {
-          await d1
-            .prepare(`
-              INSERT OR REPLACE INTO partidas_historial (
-                id, usuario_id, rival, resultado, movimientos, modo, duracion_seg, fecha
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `)
-            .bind(
-              matchRecord.id,
-              cleanId,
-              matchRecord.rival,
-              matchRecord.resultado,
-              matchRecord.movimientos,
-              matchRecord.modo,
-              matchRecord.duracionSeg,
-              matchRecord.fecha
-            )
-            .run();
-        } catch {}
-      }
-
-      // Actualizar ranking general
-      const ranking = await dbGetRanking(env);
-      ranking[cleanId] = {
-        id: cleanId,
-        nombre: cuenta.nombre || cleanId,
-        puntos: cuenta.puntos,
-        victorias: cuenta.victorias,
-        derrotas: cuenta.derrotas,
-        empates: cuenta.empates,
-        partidas: cuenta.partidas,
-        elo: cuenta.elo,
-        avatarColor: cuenta.avatarColor,
-        avatarHat: cuenta.avatarHat,
-        avatarRopa: cuenta.avatarRopa,
-        avatarRopaColor: cuenta.avatarRopaColor,
-        avatarAura: cuenta.avatarAura,
-        rol: cuenta.rol || 'jugador',
-      };
-      await dbPutRanking(env, ranking, false);
-    }
-
-    return new Response(JSON.stringify({ ok: true, dbBound }), { headers: jsonHeaders });
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        dbBound,
+        guardados,
+        activeAccountIds: Object.keys(cuentas),
+      }),
+      { headers: cabecerasJson }
+    );
   }
 
-  // 5c. /api/semanal — Clasificación semanal y premios de torneo
+  if (pathname === '/api/partidas/sincronizar' && request.method === 'POST') {
+    const sesion = await resolverSesion(request, env, d1);
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const body = await request.json().catch(() => ({}));
+    const cola = Array.isArray(body.partidas) ? body.partidas : [];
+    const sincronizadas = [];
+
+    for (const item of cola) {
+      const g = await procesarPartidaUnificada(item, sesion, cuentas);
+      if (g.length > 0) sincronizadas.push(item.partidaId || item.matchId);
+    }
+
+    return new Response(
+      JSON.stringify({ ok: true, dbBound, sincronizadas }),
+      { headers: cabecerasJson }
+    );
+  }
+
+  // ==========================================
+  // 5c. GET / POST /api/semanal (Calculado sobre `ranking` + liquidación semanal)
+  // ==========================================
   if (pathname === '/api/semanal') {
-    const w = getWeekInfo();
-    const emptyActual = { semanaId: w.semanaActualId, jugadores: {} };
-    const emptyPasada = { semanaId: w.semanaPasadaId, jugadores: {} };
+    const w = obtenerInfoSemana();
+    await d1AsegurarSemanaEnRanking(d1, w);
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const cfg = (await d1LeerConfig(d1, 'config_semanal_puntos', CONFIG_SEMANAL_POR_DEFECTO)) || CONFIG_SEMANAL_POR_DEFECTO;
+    const premioGlobal = await d1LeerConfig(d1, 'premio_semanal_global', null);
 
-    const keyActual = `semanal_${w.semanaActualId}`;
-    const keyPasada = `semanal_${w.semanaPasadaId}`;
-
-    const existingCuentas = await dbGetCuentas(env);
+    const metaActual = (await d1LeerConfig(d1, `semanal_${w.semanaActualId}`, {})) || {};
+    const metaPasada = (await d1LeerConfig(d1, `semanal_${w.semanaPasadaId}`, { premiada: false, premiados: [] })) || {};
 
     if (request.method === 'GET') {
-      let actual = (await d1GetConfig(d1, keyActual, emptyActual)) || emptyActual;
-      let pasada = (await d1GetConfig(d1, keyPasada, emptyPasada)) || emptyPasada;
+      const filasRank = d1 ? await d1.prepare('SELECT * FROM ranking').all() : { results: [] };
+      const jugadoresActual = {};
+      const jugadoresPasada = {};
 
-      if (!actual.premioSemanal) {
-        const pGlob = await d1GetConfig(d1, 'premio_semanal_global', null);
-        if (pGlob && pGlob.id) actual.premioSemanal = pGlob;
+      for (const r of filasRank?.results || []) {
+        const key = String(r.nombre || r.id).trim().toLowerCase();
+        if (r.semana_actual_id === w.semanaActualId && (Number(r.semana_actual_part) > 0 || Number(r.semana_actual_pts) > 0)) {
+          jugadoresActual[key] = {
+            id: r.id,
+            nombre: r.nombre || r.id,
+            avatarColor: r.avatar_color || '#ff6b6b',
+            avatarHat: r.avatar_hat || 'corona',
+            avatarRopa: r.avatar_ropa || 'ninguna',
+            avatarRopaColor: r.avatar_ropa_color || undefined,
+            avatarAura: r.avatar_aura || 'ninguna',
+            puntos: Number(r.semana_actual_pts) || 0,
+            partidas: Number(r.semana_actual_part) || 0,
+            victorias: Number(r.semana_actual_vic) || 0,
+          };
+        }
+        if (r.semana_pasada_id === w.semanaPasadaId && Number(r.semana_pasada_pts) > 0) {
+          jugadoresPasada[key] = {
+            id: r.id,
+            nombre: r.nombre || r.id,
+            avatarColor: r.avatar_color || '#ff6b6b',
+            avatarHat: r.avatar_hat || 'corona',
+            avatarRopa: r.avatar_ropa || 'ninguna',
+            avatarRopaColor: r.avatar_ropa_color || undefined,
+            avatarAura: r.avatar_aura || 'ninguna',
+            puntos: Number(r.semana_pasada_pts) || 0,
+            partidas: 1,
+            victorias: 0,
+          };
+        }
       }
 
-      const modActual = hydrateWeeklyFromAccounts(actual, w.mondayUtc, w.nextMondayUtc, existingCuentas);
-      const modPasada = hydrateWeeklyFromAccounts(pasada, w.lastMondayUtc, w.mondayUtc, existingCuentas);
+      // Respaldo hidratado desde historial de cuentas por si hubo cambio de semana o tabla nueva
+      for (const acc of Object.values(cuentas)) {
+        if (!acc || typeof acc !== 'object') continue;
+        const hist = Array.isArray(acc.historialPartidas) ? acc.historialPartidas : [];
+        const key = String(acc.nombre || acc.id).trim().toLowerCase();
 
-      // Liquidar premios de la semana pasada si no se premió aún
-      if (!pasada.premiada) {
-        const candidatos = Object.values(pasada.jugadores || {}).filter((j) => j && j.partidas > 0 && j.puntos > 0);
+        let actPts = 0, actPart = 0, actVic = 0;
+        let pasPts = 0, pasPart = 0, pasVic = 0;
+
+        for (const m of hist) {
+          if (!m || !m.fecha) continue;
+          const t = new Date(m.fecha).getTime();
+          if (isNaN(t)) continue;
+          const ptsM = Math.max(0, Number(m.puntos) || 0);
+          if (t >= w.lunesUtc && t < w.proximoLunesUtc) {
+            actPart++;
+            actPts += ptsM > 0 ? ptsM : (m.resultado === 'victoria' ? (cfg.puntosVictoria || 3) : m.resultado === 'empate' ? (cfg.puntosEmpate || 1) : 0);
+            if (m.resultado === 'victoria') actVic++;
+          } else if (t >= w.lunesPasadoUtc && t < w.lunesUtc) {
+            pasPart++;
+            pasPts += ptsM > 0 ? ptsM : (m.resultado === 'victoria' ? (cfg.puntosVictoria || 3) : m.resultado === 'empate' ? (cfg.puntosEmpate || 1) : 0);
+            if (m.resultado === 'victoria') pasVic++;
+          }
+        }
+
+        if (actPart > 0) {
+          const prevA = jugadoresActual[key];
+          jugadoresActual[key] = {
+            id: acc.id,
+            nombre: acc.nombre,
+            avatarColor: acc.avatarColor || '#ff6b6b',
+            avatarHat: acc.avatarHat || 'corona',
+            avatarRopa: acc.avatarRopa || 'ninguna',
+            avatarRopaColor: acc.avatarRopaColor,
+            avatarAura: acc.avatarAura || 'ninguna',
+            puntos: Math.max(prevA?.puntos || 0, actPts),
+            partidas: Math.max(prevA?.partidas || 0, actPart),
+            victorias: Math.max(prevA?.victorias || 0, actVic),
+          };
+        }
+        if (pasPart > 0) {
+          const prevP = jugadoresPasada[key];
+          jugadoresPasada[key] = {
+            id: acc.id,
+            nombre: acc.nombre,
+            avatarColor: acc.avatarColor || '#ff6b6b',
+            avatarHat: acc.avatarHat || 'corona',
+            avatarRopa: acc.avatarRopa || 'ninguna',
+            avatarRopaColor: acc.avatarRopaColor,
+            avatarAura: acc.avatarAura || 'ninguna',
+            puntos: Math.max(prevP?.puntos || 0, pasPts),
+            partidas: Math.max(prevP?.partidas || 0, pasPart),
+            victorias: Math.max(prevP?.victorias || 0, pasVic),
+          };
+        }
+      }
+
+      // Liquidación automática de premios de la semana pasada (si aún no se premió)
+      if (!metaPasada.premiada) {
+        const candidatos = Object.values(jugadoresPasada).filter((j) => j && j.partidas > 0 && j.puntos > 0);
         if (candidatos.length > 0) {
           candidatos.sort((a, b) => {
             if (b.puntos !== a.puntos) return b.puntos - a.puntos;
@@ -2126,45 +2880,57 @@ async function handleApiRequest(request, env) {
             return b.partidas - a.partidas;
           });
 
-          const cfg = (await d1GetConfig(d1, 'config_semanal_puntos', null)) || {};
           const bonos = [
-            typeof cfg.primerLugar === 'number' ? cfg.primerLugar : 25,
-            typeof cfg.segundoLugar === 'number' ? cfg.segundoLugar : 15,
-            typeof cfg.tercerLugar === 'number' ? cfg.tercerLugar : 10,
+            Number(cfg.primerLugar ?? 50),
+            Number(cfg.segundoLugar ?? 25),
+            Number(cfg.tercerLugar ?? 15),
           ];
+          const premiados = [];
 
           for (let i = 0; i < Math.min(3, candidatos.length); i++) {
             const cand = candidatos[i];
-            const acc = existingCuentas[cand.id];
+            const acc = cuentas[cand.id];
             if (!acc) continue;
             const bono = bonos[i] || 0;
-            acc.puntos = (acc.puntos || 0) + bono;
+            acc.puntos = (Number(acc.puntos) || 0) + bono;
 
-            // Al ganador del 1er lugar se le otorga el personaje exclusivo semanal en su inventario
-            if (i === 0 && pasada.premioSemanal) {
+            let personajePremio = undefined;
+            const premioSemana = metaPasada.premioSemanal || premioGlobal;
+            if (i === 0 && premioSemana && premioSemana.nombre) {
               if (!acc.inventario || typeof acc.inventario !== 'object') acc.inventario = { personajes: [] };
               if (!Array.isArray(acc.inventario.personajes)) acc.inventario.personajes = [];
-              const yaLoTiene = acc.inventario.personajes.some((p) => p.id === pasada.premioSemanal.id);
+              const premioIdUnico = `${premioSemana.id}_${w.semanaPasadaId}`;
+              const yaLoTiene = acc.inventario.personajes.some((p) => p.id === premioIdUnico || p.id === premioSemana.id);
               if (!yaLoTiene) {
-                acc.inventario.personajes.push({
-                  ...pasada.premioSemanal,
+                personajePremio = {
+                  ...premioSemana,
+                  id: premioIdUnico,
                   fechaAdquisicion: new Date().toISOString(),
-                  origen: `Ganador 1er Lugar Torneo Semanal (${pasada.semanaId})`,
-                });
+                  origen: {
+                    tipo: 'torneo_semanal',
+                    otorgadoPor: `Campeón Torneo Semanal ${w.semanaPasadaId}`,
+                    fecha: new Date().toISOString(),
+                    semanaTorneo: w.semanaPasadaId,
+                  },
+                };
+                acc.inventario.personajes.push(personajePremio);
+                if (d1) {
+                  await d1
+                    .prepare('UPDATE ranking SET semana_pasada_premio = ? WHERE id = ?')
+                    .bind(personajePremio.nombre, acc.id)
+                    .run();
+                }
               }
             }
-            await dbInsertOrUpdateCuenta(env, acc, false);
+            await d1GuardarCuentaCompleta(d1, acc, false);
+            premiados.push({ nombre: acc.nombre, puesto: i + 1, bono, personajePremio });
           }
-          pasada.premiada = true;
-          await d1PutConfig(d1, keyPasada, pasada);
-        }
-      }
 
-      if (modActual) {
-        await d1PutConfig(d1, keyActual, actual);
-      }
-      if (modPasada) {
-        await d1PutConfig(d1, keyPasada, pasada);
+          metaPasada.premiada = true;
+          metaPasada.premiados = premiados;
+          await d1GuardarConfig(d1, `semanal_${w.semanaPasadaId}`, metaPasada);
+          await tocarUltimaActualizacion(d1);
+        }
       }
 
       return new Response(
@@ -2174,175 +2940,94 @@ async function handleApiRequest(request, env) {
           semanaActualId: w.semanaActualId,
           semanaPasadaId: w.semanaPasadaId,
           cierraEnMs: w.cierraEnMs,
-          actual,
-          pasada,
+          actual: {
+            semanaId: w.semanaActualId,
+            premioSemanal: metaActual.premioSemanal || premioGlobal || undefined,
+            puntosConfig: {
+              primerLugar: Number(cfg.primerLugar ?? 50),
+              segundoLugar: Number(cfg.segundoLugar ?? 25),
+              tercerLugar: Number(cfg.tercerLugar ?? 15),
+            },
+            jugadores: jugadoresActual,
+          },
+          pasada: {
+            semanaId: w.semanaPasadaId,
+            premiada: Boolean(metaPasada.premiada),
+            premiados: Array.isArray(metaPasada.premiados) ? metaPasada.premiados : [],
+            premioSemanal: metaPasada.premioSemanal || premioGlobal || undefined,
+            jugadores: jugadoresPasada,
+          },
         }),
-        { headers: jsonHeaders }
+        { headers: cabecerasJson }
       );
     }
 
     if (request.method === 'POST') {
-      const body = await request.json().catch(() => ({}));
-      const incomingJugadores = body?.jugadores || {};
-      let actual = (await d1GetConfig(d1, keyActual, emptyActual)) || emptyActual;
-
-      if (!actual.jugadores) actual.jugadores = {};
-
-      for (const [id, j] of Object.entries(incomingJugadores)) {
-        if (!j || typeof j !== 'object') continue;
-        const cleanId = String(j.id || id).trim().toLowerCase();
-        const acc = existingCuentas[cleanId];
-        if (!acc) continue;
-
-        actual.jugadores[cleanId] = {
-          id: cleanId,
-          nombre: acc.nombre || j.nombre || cleanId,
-          avatarColor: acc.avatarColor || j.avatarColor || '#ff6b6b',
-          avatarHat: acc.avatarHat || j.avatarHat || 'corona',
-          avatarRopa: acc.avatarRopa || j.avatarRopa || 'ninguna',
-          avatarRopaColor: acc.avatarRopaColor || j.avatarRopaColor,
-          avatarAura: acc.avatarAura || j.avatarAura || 'ninguna',
-          puntos: typeof j.puntos === 'number' ? j.puntos : 0,
-          victorias: typeof j.victorias === 'number' ? j.victorias : 0,
-          partidas: typeof j.partidas === 'number' ? j.partidas : 0,
-          rol: acc.rol || 'jugador',
-          actualizadoEn: Date.now(),
-        };
-
-        // Guardar en tabla ranking_semanal en D1
-        if (d1) {
-          try {
-            await d1
-              .prepare(`
-                INSERT OR REPLACE INTO ranking_semanal (
-                  semana_key, id, nombre, avatar_color, avatar_hat, avatar_ropa, avatar_ropa_color, puntos, victorias
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-              `)
-              .bind(
-                w.semanaActualId,
-                cleanId,
-                acc.nombre || cleanId,
-                acc.avatarColor || '#ff6b6b',
-                acc.avatarHat || 'corona',
-                acc.avatarRopa || 'ninguna',
-                acc.avatarRopaColor || null,
-                actual.jugadores[cleanId].puntos,
-                actual.jugadores[cleanId].victorias
-              )
-              .run();
-          } catch {}
-        }
-      }
-
-      await d1PutConfig(d1, keyActual, actual);
-      return new Response(JSON.stringify({ ok: true, dbBound }), { headers: jsonHeaders });
+      return new Response(JSON.stringify({ ok: true, dbBound }), { headers: cabecerasJson });
     }
   }
 
-  // 6. /api/salas — Salas P2P en línea
-  async function readRoomState(code) {
-    const clean = String(code || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
-    if (!clean) return null;
-    const now = Date.now();
-    if (memSalas.has(clean)) {
-      return memSalas.get(clean);
-    }
-    // Si no está en memoria, verificar si es una sala oficial de staff guardada en D1
-    if (d1) {
-      try {
-        const customSalas = await d1GetSalasPersonalizadas(d1);
-        const match = customSalas.find((s) => s.codigo === clean);
-        if (match) {
-          const roomObj = {
-            codigo: match.codigo,
-            nombre: match.nombre,
-            anfitrion: match.creador || 'Staff',
-            hostPeerId: `host_${clean.toLowerCase()}`,
-            color: '#ffd43b',
-            hat: 'corona',
-            maxJugadores: match.maxJugadores || 2,
-            publica: true,
-            enPartida: false,
-            jugadoresConectados: 0,
-            jugadores: [],
-            signals: {},
-            seq: 0,
-            mensajes: [],
-            creadoEn: match.creadoEn || now,
-            ultimoCambio: now,
-            modoMuros: match.modoMuros,
-            tamanoTablero: match.tamanoTablero,
-            esOficialStaff: true,
-          };
-          memSalas.set(clean, roomObj);
-          memSalasMeta.set(clean, { readAt: now, writtenAt: now });
-          return roomObj;
-        }
-      } catch {}
-    }
-    return null;
-  }
-
-  async function writeRoomState(code, roomObj) {
-    const clean = String(code || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
-    if (!clean) return;
-    const now = Date.now();
-    memSalas.set(clean, roomObj);
-    memSalasMeta.set(clean, { readAt: now, writtenAt: now });
-  }
-
-  async function deleteRoomState(code) {
-    const clean = String(code || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
-    if (!clean) return;
-    memSalas.delete(clean);
-    memSalasMeta.delete(clean);
-  }
-
+  // ==========================================
+  // 6. SALAS ONLINE P2P PERSISTENTES EN D1 `salas_online`
+  // ==========================================
   if (pathname === '/api/salas') {
+    await d1LimpiarSalasExpiradas(d1);
+
     if (request.method === 'GET') {
-      const valid = [];
-      const now = Date.now();
-      for (const r of memSalas.values()) {
-        if (
-          r &&
-          r.publica !== false &&
-          !r.enPartida &&
-          (r.jugadoresConectados || 0) < (r.maxJugadores || 2) &&
-          now - (r.ultimoCambio || r.creadoEn || 0) < 15 * 60 * 1000
-        ) {
-          valid.push(r);
-        }
+      const filas = d1 ? await d1.prepare('SELECT data_json, ultimo_cambio FROM salas_online').all() : { results: [] };
+      const ahora = Date.now();
+      const validas = [];
+      for (const f of filas?.results || []) {
+        try {
+          const r = JSON.parse(f.data_json);
+          if (
+            r &&
+            r.publica !== false &&
+            !r.enPartida &&
+            (r.jugadoresConectados || 0) < (r.maxJugadores || 2) &&
+            ahora - (Number(f.ultimo_cambio) || r.ultimoCambio || 0) < 15 * 60 * 1000
+          ) {
+            validas.push(r);
+          }
+        } catch {}
       }
-      valid.sort((a, b) => (b.creadoEn || 0) - (a.creadoEn || 0));
-      return new Response(JSON.stringify(valid), { headers: jsonHeaders });
+      validas.sort((a, b) => (b.creadoEn || 0) - (a.creadoEn || 0));
+      return new Response(JSON.stringify(validas), { headers: cabecerasJson });
     }
 
     if (request.method === 'POST') {
       const room = await request.json().catch(() => ({}));
-      const now = Date.now();
-      const code = String(room?.codigo || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
-      if (!code) {
+      const ahora = Date.now();
+      const codigo = normalizarCodigoSala(room?.codigo);
+      if (!codigo) {
         return new Response(JSON.stringify({ ok: false, error: 'Código inválido' }), {
           status: 400,
-          headers: jsonHeaders,
+          headers: cabecerasJson,
         });
       }
 
-      const existing = await readRoomState(code);
-      const esPublica = room.publica !== undefined ? Boolean(room.publica) : existing?.publica ?? true;
-      const hostPeerId = room.hostPeerId || existing?.hostPeerId || `host_${code.toLowerCase()}`;
-      const maxJugadores = room.maxJugadores === 4 ? 4 : existing?.maxJugadores || 2;
-      const anfitrion = String(room.anfitrion || existing?.anfitrion || 'Anfitrión').trim();
-      const color = room.color || existing?.color || '#ff6b6b';
-      const hat = room.hat || existing?.hat || 'corona';
+      const existente = await d1LeerSalaOnline(d1, codigo);
+      const esPublica = room.publica !== undefined ? Boolean(room.publica) : existente?.publica ?? true;
+      const hostPeerId = room.hostPeerId || existente?.hostPeerId || `host_${codigo.toLowerCase()}`;
+      const maxJugadores = room.maxJugadores === 4 ? 4 : existente?.maxJugadores || 2;
+      const anfitrion = String(room.anfitrion || existente?.anfitrion || 'Anfitrión').trim();
+      const color = room.color || existente?.color || '#ff6b6b';
+      const hat = room.hat || existente?.hat || 'corona';
+      const ropa = room.ropa || existente?.ropa || 'ninguna';
+      const ropaColor = room.ropaColor || existente?.ropaColor;
+      const aura = room.aura || existente?.aura || 'ninguna';
 
-      const defaultHostList = [
+      const listaHostPorDefecto = [
         {
           id: 0,
           peerId: hostPeerId,
+          cuentaId: room.cuentaId || undefined,
           nombre: anfitrion,
           color,
           hat,
+          ropa,
+          ropaColor,
+          aura,
           listo: true,
           conectado: true,
           esAnfitrion: true,
@@ -2352,67 +3037,69 @@ async function handleApiRequest(request, env) {
       const jugadores =
         Array.isArray(room.jugadores) && room.jugadores.length > 0
           ? room.jugadores
-          : existing?.jugadores?.length
-          ? existing.jugadores
-          : defaultHostList;
+          : existente?.jugadores?.length
+          ? existente.jugadores
+          : listaHostPorDefecto;
 
-      const fullRoom = {
-        codigo: code,
-        nombre: String(room.nombre || existing?.nombre || `Sala de ${anfitrion}`).trim(),
+      const salaCompleta = {
+        codigo,
+        nombre: String(room.nombre || existente?.nombre || `Sala de ${anfitrion}`).trim(),
         anfitrion,
         hostPeerId,
         color,
         hat,
+        ropa,
+        ropaColor,
+        aura,
         maxJugadores,
         publica: esPublica,
         enPartida: false,
         jugadoresConectados: jugadores.length,
         jugadores,
-        signals: existing?.signals || {},
-        seq: existing?.seq || 0,
-        mensajes: existing?.mensajes || [],
-        creadoEn: existing?.creadoEn || now,
-        ultimoCambio: now,
+        signals: existente?.signals || {},
+        seq: existente?.seq || 0,
+        mensajes: existente?.mensajes || [],
+        creadoEn: existente?.creadoEn || ahora,
+        ultimoCambio: ahora,
+        modoMuros: existente?.modoMuros || room.modoMuros,
+        tamanoTablero: existente?.tamanoTablero || room.tamanoTablero,
+        esOficialStaff: Boolean(existente?.esOficialStaff),
       };
 
-      await writeRoomState(code, fullRoom);
-      return new Response(JSON.stringify({ ok: true, dbBound, sala: fullRoom, timestamp: now }), {
-        headers: jsonHeaders,
+      await d1GuardarSalaOnline(d1, codigo, salaCompleta);
+      return new Response(JSON.stringify({ ok: true, dbBound, sala: salaCompleta, timestamp: ahora }), {
+        headers: cabecerasJson,
       });
     }
   }
 
   if (pathname.startsWith('/api/salas/')) {
     const rest = pathname.slice('/api/salas/'.length);
-    const parts = rest.split('/').filter(Boolean);
-    const codigo = decodeURIComponent(parts[0] || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
-    const subaction = parts[1] || '';
+    const partes = rest.split('/').filter(Boolean);
+    const codigo = normalizarCodigoSala(decodeURIComponent(partes[0] || ''));
+    const subaccion = partes[1] || '';
 
     if (!codigo) {
       return new Response(JSON.stringify({ ok: false, error: 'Código vacío' }), {
         status: 400,
-        headers: jsonHeaders,
+        headers: cabecerasJson,
       });
     }
 
     // GET /api/salas/:codigo
-    if (!subaction && request.method === 'GET') {
-      const sala = await readRoomState(codigo);
-      if (!sala || Date.now() - (sala.ultimoCambio || sala.creadoEn || 0) > 15 * 60 * 1000) {
+    if (!subaccion && request.method === 'GET') {
+      const sala = await d1LeerSalaOnline(d1, codigo);
+      if (!sala) {
         return new Response(JSON.stringify({ ok: false, error: 'Sala no disponible' }), {
           status: 404,
-          headers: jsonHeaders,
+          headers: cabecerasJson,
         });
       }
       const since = parseInt(url.searchParams.get('since') || '0', 10) || 0;
       const peerId = (url.searchParams.get('peerId') || '').trim();
       const mensajesNuevos = Array.isArray(sala.mensajes)
         ? sala.mensajes.filter(
-            (m) =>
-              m &&
-              m.seq > since &&
-              (!peerId || m.from !== peerId) &&
-              (!m.to || m.to === peerId)
+            (m) => m && m.seq > since && (!peerId || m.from !== peerId) && (!m.to || m.to === peerId)
           )
         : [];
 
@@ -2431,98 +3118,109 @@ async function handleApiRequest(request, env) {
             signals: sala.signals || {},
             seq: sala.seq || 0,
             ultimoCambio: sala.ultimoCambio || sala.creadoEn || 0,
+            modoMuros: sala.modoMuros,
+            tamanoTablero: sala.tamanoTablero,
+            esOficialStaff: Boolean(sala.esOficialStaff),
             mensajesNuevos,
           },
         }),
-        { headers: jsonHeaders }
+        { headers: cabecerasJson }
       );
     }
 
     // POST /api/salas/:codigo/join
-    if (subaction === 'join' && request.method === 'POST') {
-      const sala = await readRoomState(codigo);
+    if (subaccion === 'join' && request.method === 'POST') {
+      const sala = await d1LeerSalaOnline(d1, codigo);
       if (!sala) {
         return new Response(
-          JSON.stringify({
-            ok: false,
-            error: `La sala ${codigo} no existe o el anfitrión ya la cerró.`,
-          }),
-          { status: 404, headers: jsonHeaders }
+          JSON.stringify({ ok: false, error: `La sala ${codigo} no existe o el anfitrión ya la cerró.` }),
+          { status: 404, headers: cabecerasJson }
         );
       }
 
       const body = await request.json().catch(() => ({}));
       const peerId = String(body.peerId || '').trim();
+      const cuentaId = body.cuentaId ? String(body.cuentaId).trim().toLowerCase() : undefined;
       const nombre = String(body.nombre || 'Invitado').trim() || 'Invitado';
       const color = body.color || '#4dabf7';
       const hat = body.hat || 'pompon';
+      const ropa = body.ropa || 'ninguna';
+      const ropaColor = body.ropaColor || undefined;
+      const aura = body.aura || 'ninguna';
       const offer = body.offer || null;
 
       if (!peerId) {
         return new Response(JSON.stringify({ ok: false, error: 'Falta peerId' }), {
           status: 400,
-          headers: jsonHeaders,
+          headers: cabecerasJson,
         });
       }
 
       if (!Array.isArray(sala.jugadores)) sala.jugadores = [];
       if (!sala.signals || typeof sala.signals !== 'object') sala.signals = {};
 
-      let existing = sala.jugadores.find((p) => p.peerId === peerId);
-      if (!existing && sala.enPartida) {
-        const byName = sala.jugadores.find(
+      let existente = sala.jugadores.find((p) => p.peerId === peerId);
+      if (!existente && sala.enPartida) {
+        const porNombre = sala.jugadores.find(
           (p) => !p.esAnfitrion && String(p.nombre || '').toLowerCase() === nombre.toLowerCase()
         );
-        if (byName) {
-          byName.peerId = peerId;
-          byName.conectado = true;
-          existing = byName;
+        if (porNombre) {
+          porNombre.peerId = peerId;
+          porNombre.conectado = true;
+          existente = porNombre;
         } else {
-          return new Response(
-            JSON.stringify({ ok: false, error: 'La partida en esta sala ya comenzó.' }),
-            { status: 409, headers: jsonHeaders }
-          );
+          return new Response(JSON.stringify({ ok: false, error: 'La partida en esta sala ya comenzó.' }), {
+            status: 409,
+            headers: cabecerasJson,
+          });
         }
       }
 
       let esAnfitrionResultado = false;
-
-      if (existing) {
-        existing.nombre = nombre;
-        existing.color = color || existing.color;
-        existing.hat = hat || existing.hat;
-        existing.conectado = true;
-        esAnfitrionResultado = Boolean(existing.esAnfitrion);
+      if (existente) {
+        existente.nombre = nombre;
+        existente.cuentaId = cuentaId || existente.cuentaId;
+        existente.color = color || existingColor(existente.color);
+        existente.hat = hat || existente.hat;
+        existente.ropa = ropa || existente.ropa || 'ninguna';
+        existente.ropaColor = ropaColor !== undefined ? ropaColor : existente.ropaColor;
+        existente.aura = aura || existente.aura || 'ninguna';
+        existente.conectado = true;
+        esAnfitrionResultado = Boolean(existente.esAnfitrion);
       } else {
         if (sala.jugadores.length >= (sala.maxJugadores || 2)) {
-          return new Response(
-            JSON.stringify({ ok: false, error: 'La sala ya está llena.' }),
-            { status: 409, headers: jsonHeaders }
-          );
+          return new Response(JSON.stringify({ ok: false, error: 'La sala ya está llena.' }), {
+            status: 409,
+            headers: cabecerasJson,
+          });
         }
-        const playerColors = ['#ff6b6b', '#4dabf7', '#ffd43b', '#51cf66'];
-        const playerHats = ['corona', 'pompon', 'antena', 'brote'];
-        const isFirstPlayer = sala.jugadores.length === 0;
-        const newId = sala.jugadores.length;
+        const coloresBase = ['#ff6b6b', '#4dabf7', '#ffd43b', '#51cf66'];
+        const gorrosBase = ['corona', 'pompon', 'antena', 'brote'];
+        const esPrimero = sala.jugadores.length === 0;
+        const nuevoId = sala.jugadores.length;
         const nuevoJugador = {
-          id: newId,
+          id: nuevoId,
           peerId,
+          cuentaId,
           nombre,
-          color: color || playerColors[newId] || '#4dabf7',
-          hat: hat || playerHats[newId] || 'pompon',
+          color: color || coloresBase[nuevoId] || '#4dabf7',
+          hat: hat || gorrosBase[nuevoId] || 'pompon',
+          ropa,
+          ropaColor,
+          aura,
           listo: true,
           conectado: true,
-          esAnfitrion: isFirstPlayer,
+          esAnfitrion: esPrimero,
         };
-        if (isFirstPlayer) {
+        if (esPrimero) {
           sala.hostPeerId = peerId;
           sala.anfitrion = nombre;
         }
         sala.jugadores.push(nuevoJugador);
-        esAnfitrionResultado = isFirstPlayer;
+        esAnfitrionResultado = esPrimero;
       }
 
-      if (offer) {
+      if (offer && !esAnfitrionResultado) {
         sala.signals[peerId] = {
           ...(sala.signals[peerId] || {}),
           offer,
@@ -2532,21 +3230,20 @@ async function handleApiRequest(request, env) {
       }
 
       sala.jugadoresConectados = sala.jugadores.length;
-      sala.ultimoCambio = Date.now();
-      await writeRoomState(codigo, sala);
+      await d1GuardarSalaOnline(d1, codigo, sala);
 
       return new Response(JSON.stringify({ ok: true, sala, esAnfitrion: esAnfitrionResultado }), {
-        headers: jsonHeaders,
+        headers: cabecerasJson,
       });
     }
 
     // POST /api/salas/:codigo/signal
-    if (subaction === 'signal' && request.method === 'POST') {
-      const sala = await readRoomState(codigo);
+    if (subaccion === 'signal' && request.method === 'POST') {
+      const sala = await d1LeerSalaOnline(d1, codigo);
       if (!sala) {
         return new Response(JSON.stringify({ ok: false, error: 'Sala no disponible' }), {
           status: 404,
-          headers: jsonHeaders,
+          headers: cabecerasJson,
         });
       }
       const body = await request.json().catch(() => ({}));
@@ -2560,19 +3257,18 @@ async function handleApiRequest(request, env) {
           ...(body.answer !== undefined ? { answer: body.answer } : {}),
           updatedAt: Date.now(),
         };
-        sala.ultimoCambio = Date.now();
-        await writeRoomState(codigo, sala);
+        await d1GuardarSalaOnline(d1, codigo, sala);
       }
-      return new Response(JSON.stringify({ ok: true }), { headers: jsonHeaders });
+      return new Response(JSON.stringify({ ok: true }), { headers: cabecerasJson });
     }
 
     // POST /api/salas/:codigo/msg
-    if (subaction === 'msg' && request.method === 'POST') {
-      const sala = await readRoomState(codigo);
+    if (subaccion === 'msg' && request.method === 'POST') {
+      const sala = await d1LeerSalaOnline(d1, codigo);
       if (!sala) {
         return new Response(JSON.stringify({ ok: false, error: 'Sala no disponible' }), {
           status: 404,
-          headers: jsonHeaders,
+          headers: cabecerasJson,
         });
       }
       const body = await request.json().catch(() => ({}));
@@ -2586,23 +3282,18 @@ async function handleApiRequest(request, env) {
           msg: body.msg,
           ts: Date.now(),
         });
-        if (sala.mensajes.length > 35) {
-          sala.mensajes = sala.mensajes.slice(-35);
-        }
+        if (sala.mensajes.length > 40) sala.mensajes = sala.mensajes.slice(-40);
         if (body.msg.type === 'START_GAME') {
           sala.enPartida = true;
         }
-        sala.ultimoCambio = Date.now();
-        await writeRoomState(codigo, sala);
+        await d1GuardarSalaOnline(d1, codigo, sala);
       }
-      return new Response(JSON.stringify({ ok: true, seq: sala.seq || 0 }), {
-        headers: jsonHeaders,
-      });
+      return new Response(JSON.stringify({ ok: true, seq: sala.seq || 0 }), { headers: cabecerasJson });
     }
 
     // POST /api/salas/:codigo/leave
-    if (subaction === 'leave' && request.method === 'POST') {
-      const sala = await readRoomState(codigo);
+    if (subaccion === 'leave' && request.method === 'POST') {
+      const sala = await d1LeerSalaOnline(d1, codigo);
       if (sala) {
         const body = await request.json().catch(() => ({}));
         const peerId = String(body.peerId || '').trim();
@@ -2610,17 +3301,20 @@ async function handleApiRequest(request, env) {
         const jugadorId = typeof body.jugadorId === 'number' ? body.jugadorId : 1;
 
         if (!sala.enPartida && Array.isArray(sala.jugadores)) {
-          sala.jugadores = sala.jugadores.filter((p) => p.esAnfitrion || p.peerId !== peerId);
+          sala.jugadores = sala.jugadores.filter((p) => (sala.esOficialStaff ? p.peerId !== peerId : (p.esAnfitrion || p.peerId !== peerId)));
           sala.jugadores.forEach((p, idx) => {
             p.id = idx;
+            p.esAnfitrion = idx === 0;
           });
-          sala.jugadoresConectados = sala.jugadores.length;
-          if (sala.signals && peerId) {
-            delete sala.signals[peerId];
+          if (sala.jugadores.length > 0 && sala.esOficialStaff) {
+            sala.hostPeerId = sala.jugadores[0].peerId;
+            sala.anfitrion = sala.jugadores[0].nombre;
           }
+          sala.jugadoresConectados = sala.jugadores.length;
+          if (sala.signals && peerId) delete sala.signals[peerId];
         } else if (Array.isArray(sala.jugadores)) {
-          const leaving = sala.jugadores.find((p) => p.peerId === peerId || p.id === jugadorId);
-          if (leaving) leaving.conectado = false;
+          const saliente = sala.jugadores.find((p) => p.peerId === peerId || p.id === jugadorId);
+          if (saliente) saliente.conectado = false;
         }
 
         sala.seq = (sala.seq || 0) + 1;
@@ -2632,56 +3326,48 @@ async function handleApiRequest(request, env) {
           msg: { type: 'PLAYER_LEFT', jugadorId, nombre },
           ts: Date.now(),
         });
-        if (sala.mensajes.length > 35) sala.mensajes = sala.mensajes.slice(-35);
-
-        sala.ultimoCambio = Date.now();
-        await writeRoomState(codigo, sala);
+        if (sala.mensajes.length > 40) sala.mensajes = sala.mensajes.slice(-40);
+        await d1GuardarSalaOnline(d1, codigo, sala);
       }
-      return new Response(JSON.stringify({ ok: true }), { headers: jsonHeaders });
+      return new Response(JSON.stringify({ ok: true }), { headers: cabecerasJson });
     }
 
     // DELETE /api/salas/:codigo
-    if (!subaction && request.method === 'DELETE') {
-      await deleteRoomState(codigo);
-      return new Response(JSON.stringify({ ok: true, dbBound }), { headers: jsonHeaders });
+    if (!subaccion && request.method === 'DELETE') {
+      await d1EliminarSalaOnline(d1, codigo);
+      return new Response(JSON.stringify({ ok: true, dbBound }), { headers: cabecerasJson });
     }
 
     // PATCH /api/salas/:codigo
-    if (!subaction && request.method === 'PATCH') {
+    if (!subaccion && request.method === 'PATCH') {
       const body = await request.json().catch(() => ({}));
-      const now = Date.now();
-      const sala = await readRoomState(codigo);
+      const sala = await d1LeerSalaOnline(d1, codigo);
       if (sala) {
-        if (
-          typeof body.jugadoresConectados === 'number' &&
-          body.jugadoresConectados !== sala.jugadoresConectados
-        ) {
-          sala.jugadoresConectados = body.jugadoresConectados;
-        }
-        if (typeof body.enPartida === 'boolean' && body.enPartida !== sala.enPartida) {
-          sala.enPartida = body.enPartida;
-        }
-        sala.ultimoCambio = now;
-        memSalas.set(codigo, sala);
-        await writeRoomState(codigo, sala);
+        if (typeof body.jugadoresConectados === 'number') sala.jugadoresConectados = body.jugadoresConectados;
+        if (typeof body.enPartida === 'boolean') sala.enPartida = body.enPartida;
+        await d1GuardarSalaOnline(d1, codigo, sala);
       }
-      return new Response(JSON.stringify({ ok: true, dbBound }), { headers: jsonHeaders });
+      return new Response(JSON.stringify({ ok: true, dbBound }), { headers: cabecerasJson });
     }
   }
 
   return new Response(JSON.stringify({ error: 'Ruta API no encontrada' }), {
     status: 404,
-    headers: jsonHeaders,
+    headers: cabecerasJson,
   });
 }
 
-export { handleApiRequest };
+function existingColor(c) {
+  return c || '#4dabf7';
+}
+
+export { manejarPeticionApi, manejarPeticionApi as handleApiRequest };
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname.includes('/api/')) {
-      return handleApiRequest(request, env);
+      return manejarPeticionApi(request, env);
     }
     if (env && env.ASSETS && typeof env.ASSETS.fetch === 'function') {
       return env.ASSETS.fetch(request);

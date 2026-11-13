@@ -6,14 +6,14 @@
  */
 
 import {
-  Coord,
-  GameState,
-  MatchConfig,
-  Player,
-  PlayerStats,
-  ScoreBreakdown,
-  TorneoState,
-  WallOrientation,
+  ConfigDePartida,
+  Coordenada,
+  DesglosePuntos,
+  EstadoDeJuego,
+  EstadoTorneo,
+  EstadisticasJugador,
+  JugadorEnJuego,
+  OrientacionMuro,
 } from '../types/murosLocos';
 
 // =========================================================================
@@ -245,7 +245,7 @@ export function createEmptyGrid(val: number = -1): number[][] {
   return g;
 }
 
-export function createInitialStats(): PlayerStats {
+export function createInitialStats(): EstadisticasJugador {
   return {
     acciones: 0,
     movimientos: 0,
@@ -262,7 +262,7 @@ export function createInitialStats(): PlayerStats {
   };
 }
 
-export function crearEstadoTorneo(totalRondas: number, numJugadores: number): TorneoState {
+export function crearEstadoTorneo(totalRondas: number, numJugadores: number): EstadoTorneo {
   const puntosAcumulados: Record<number, number> = {};
   const victoriasAcumuladas: Record<number, number> = {};
   for (let i = 0; i < numJugadores; i++) {
@@ -281,16 +281,17 @@ export function crearEstadoTorneo(totalRondas: number, numJugadores: number): To
   };
 }
 
-export function inicializarPartida(config: MatchConfig): GameState {
+export function inicializarPartida(config: ConfigDePartida): EstadoDeJuego {
   const n = config.numJugadores;
   const initialWalls = n === 2 ? 10 : 5;
 
-  let jugadores: Player[] = [];
+  let jugadores: JugadorEnJuego[] = [];
 
   if (n === 2) {
     jugadores = [
       {
         id: 0,
+        cuentaId: config.jugadores[0]?.cuentaId,
         nombre: config.jugadores[0]?.nombre || 'Jugador 1',
         tipo: config.jugadores[0]?.tipo || 'humano',
         color: config.jugadores[0]?.color || '#ff6b6b',
@@ -307,6 +308,7 @@ export function inicializarPartida(config: MatchConfig): GameState {
       },
       {
         id: 1,
+        cuentaId: config.jugadores[1]?.cuentaId,
         nombre: config.jugadores[1]?.nombre || 'Bot Normal',
         tipo: config.jugadores[1]?.tipo || 'bot_normal',
         color: config.jugadores[1]?.color || '#4dabf7',
@@ -326,6 +328,7 @@ export function inicializarPartida(config: MatchConfig): GameState {
     jugadores = [
       {
         id: 0,
+        cuentaId: config.jugadores[0]?.cuentaId,
         nombre: config.jugadores[0]?.nombre || 'Jugador 1',
         tipo: config.jugadores[0]?.tipo || 'humano',
         color: config.jugadores[0]?.color || '#ff6b6b',
@@ -342,6 +345,7 @@ export function inicializarPartida(config: MatchConfig): GameState {
       },
       {
         id: 1,
+        cuentaId: config.jugadores[1]?.cuentaId,
         nombre: config.jugadores[1]?.nombre || 'Jugador 2',
         tipo: config.jugadores[1]?.tipo || 'bot_normal',
         color: config.jugadores[1]?.color || '#4dabf7',
@@ -358,6 +362,7 @@ export function inicializarPartida(config: MatchConfig): GameState {
       },
       {
         id: 2,
+        cuentaId: config.jugadores[2]?.cuentaId,
         nombre: config.jugadores[2]?.nombre || 'Jugador 3',
         tipo: config.jugadores[2]?.tipo || 'bot_normal',
         color: config.jugadores[2]?.color || '#ffd43b',
@@ -374,6 +379,7 @@ export function inicializarPartida(config: MatchConfig): GameState {
       },
       {
         id: 3,
+        cuentaId: config.jugadores[3]?.cuentaId,
         nombre: config.jugadores[3]?.nombre || 'Jugador 4',
         tipo: config.jugadores[3]?.tipo || 'bot_facil',
         color: config.jugadores[3]?.color || '#51cf66',
@@ -446,8 +452,8 @@ export function bloqueado(
   return false;
 }
 
-export function movimientosLegales(jugador: Player, estado: GameState): Coord[] {
-  const res: Coord[] = [];
+export function movimientosLegales(jugador: JugadorEnJuego, estado: EstadoDeJuego): Coordenada[] {
+  const res: Coordenada[] = [];
   const direcciones = [
     { dr: -1, dc: 0 },
     { dr: 1, dc: 0 },
@@ -455,7 +461,7 @@ export function movimientosLegales(jugador: Player, estado: GameState): Coord[] 
     { dr: 0, dc: 1 },
   ];
 
-  const ocupadoPor = (r: number, c: number): Player | undefined => {
+  const ocupadoPor = (r: number, c: number): JugadorEnJuego | undefined => {
     return estado.jugadores.find((p) => p.r === r && p.c === c);
   };
 
@@ -517,7 +523,7 @@ export function movimientosLegales(jugador: Player, estado: GameState): Coord[] 
   return res;
 }
 
-export function esMeta(jugador: Player, r: number, c: number, numJugadores: number = 2): boolean {
+export function esMeta(jugador: JugadorEnJuego, r: number, c: number, numJugadores: number = 2): boolean {
   if (numJugadores === 4) {
     if ((r === 0 || r === 8) && (c === 0 || c === 8)) {
       return false;
@@ -530,12 +536,12 @@ export function esMeta(jugador: Player, r: number, c: number, numJugadores: numb
 }
 
 export function bfsCamino(
-  jugador: Player,
+  jugador: JugadorEnJuego,
   murosH: number[][],
   murosV: number[][],
-  desde?: Coord,
+  desde?: Coordenada,
   numJugadores: number = 2
-): { distancia: number; camino: Coord[] } {
+): { distancia: number; camino: Coordenada[] } {
   const start = desde || { r: jugador.r, c: jugador.c };
 
   if (esMeta(jugador, start.r, start.c, numJugadores)) {
@@ -545,11 +551,11 @@ export function bfsCamino(
   const dist: number[][] = Array.from({ length: BOARD_SIZE }, () =>
     Array(BOARD_SIZE).fill(Infinity)
   );
-  const parent: (Coord | null)[][] = Array.from({ length: BOARD_SIZE }, () =>
+  const parent: (Coordenada | null)[][] = Array.from({ length: BOARD_SIZE }, () =>
     Array(BOARD_SIZE).fill(null)
   );
 
-  const queue: Coord[] = [start];
+  const queue: Coordenada[] = [start];
   dist[start.r][start.c] = 0;
 
   const dirs = [
@@ -559,7 +565,7 @@ export function bfsCamino(
     { dr: 0, dc: 1 },
   ];
 
-  let goalNode: Coord | null = null;
+  let goalNode: Coordenada | null = null;
 
   while (queue.length > 0) {
     const cur = queue.shift()!;
@@ -588,8 +594,8 @@ export function bfsCamino(
     return { distancia: Infinity, camino: [] };
   }
 
-  const path: Coord[] = [];
-  let curr: Coord | null = goalNode;
+  const path: Coordenada[] = [];
+  let curr: Coordenada | null = goalNode;
   while (curr) {
     path.unshift(curr);
     curr = parent[curr.r][curr.c];
@@ -599,12 +605,12 @@ export function bfsCamino(
 }
 
 export function validarMuro(
-  orientacion: WallOrientation,
+  orientacion: OrientacionMuro,
   r: number,
   c: number,
   murosH: number[][],
   murosV: number[][],
-  jugadores: Player[]
+  jugadores: JugadorEnJuego[]
 ): 'ok' | 'fuera' | 'solape' | 'bloquea' {
   if (r < 0 || r >= WALL_GRID_SIZE || c < 0 || c >= WALL_GRID_SIZE) {
     return 'fuera';
@@ -652,7 +658,7 @@ export function validarMuro(
   return 'ok';
 }
 
-export function tomarSnapshot(estado: GameState) {
+export function tomarSnapshot(estado: EstadoDeJuego) {
   return {
     jugadores: estado.jugadores.map((p) => ({
       id: p.id,
@@ -671,11 +677,11 @@ export function tomarSnapshot(estado: GameState) {
 }
 
 export function aplicarMovimiento(
-  estado: GameState,
-  destino: Coord
+  estado: EstadoDeJuego,
+  destino: Coordenada
 ): { ganador: boolean; esSalto: boolean; mensaje: string } {
   const jugador = estado.jugadores[estado.turnoActual];
-  const origenCoord = { r: jugador.r, c: jugador.c };
+  const origenCoordenada = { r: jugador.r, c: jugador.c };
 
   estado.historial.push(tomarSnapshot(estado));
 
@@ -691,7 +697,7 @@ export function aplicarMovimiento(
     jugador.estadisticas.saltos++;
   }
 
-  const notacionOrigen = coordToAlgebraic(origenCoord.r, origenCoord.c);
+  const notacionOrigen = coordToAlgebraic(origenCoordenada.r, origenCoordenada.c);
   const notacionDestino = coordToAlgebraic(destino.r, destino.c);
   estado.registroAcciones.push({
     id: `act_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -704,7 +710,7 @@ export function aplicarMovimiento(
     detalle: esSalto
       ? `Salto sobre rival de ${notacionOrigen} a ${notacionDestino}`
       : `Desde ${notacionOrigen}`,
-    coordOrigen: origenCoord,
+    coordOrigen: origenCoordenada,
     coordDestino: destino,
     esSalto,
     tiempo: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
@@ -731,8 +737,8 @@ export function aplicarMovimiento(
 }
 
 export function aplicarMuro(
-  estado: GameState,
-  orientacion: WallOrientation,
+  estado: EstadoDeJuego,
+  orientacion: OrientacionMuro,
   r: number,
   c: number
 ): { esMuroMaestro: boolean; mensaje: string } {
@@ -797,7 +803,7 @@ export function aplicarMuro(
   return { esMuroMaestro, mensaje };
 }
 
-function actualizarDesventaja(estado: GameState) {
+function actualizarDesventaja(estado: EstadoDeJuego) {
   for (const p of estado.jugadores) {
     const myDist = bfsCamino(p, estado.murosH, estado.murosV, undefined, estado.n).distancia;
     let minRivalDist = Infinity;
@@ -819,12 +825,12 @@ function actualizarDesventaja(estado: GameState) {
   }
 }
 
-export function obtenerRivalMasPeligroso(estado: GameState, myPlayerId: number): Player | null {
-  let closest: Player | null = null;
+export function obtenerRivalMasPeligroso(estado: EstadoDeJuego, myJugadorEnJuegoId: number): JugadorEnJuego | null {
+  let closest: JugadorEnJuego | null = null;
   let minDist = Infinity;
 
   for (const p of estado.jugadores) {
-    if (p.id !== myPlayerId) {
+    if (p.id !== myJugadorEnJuegoId) {
       const dist = bfsCamino(p, estado.murosH, estado.murosV, undefined, estado.n).distancia;
       if (dist < minDist) {
         minDist = dist;
@@ -836,7 +842,7 @@ export function obtenerRivalMasPeligroso(estado: GameState, myPlayerId: number):
   return closest;
 }
 
-export function avanzarTurno(estado: GameState) {
+export function avanzarTurno(estado: EstadoDeJuego) {
   estado.turnosTotales++;
   estado.caminoPista = null;
   estado.muroPrevisualizado = null;
@@ -853,10 +859,10 @@ export function avanzarTurno(estado: GameState) {
   let attempts = 0;
 
   while (attempts < estado.n) {
-    const nextPlayer = estado.jugadores[nextIdx];
-    const moves = movimientosLegales(nextPlayer, estado);
+    const nextJugadorEnJuego = estado.jugadores[nextIdx];
+    const moves = movimientosLegales(nextJugadorEnJuego, estado);
 
-    if (moves.length > 0 || nextPlayer.muros > 0) {
+    if (moves.length > 0 || nextJugadorEnJuego.muros > 0) {
       estado.turnoActual = nextIdx;
       estado.modoAccion = moves.length > 0 ? 'mover' : 'muro';
       return;
@@ -872,11 +878,11 @@ export function avanzarTurno(estado: GameState) {
 }
 
 export function calcularJugadaBot(
-  jugador: Player,
-  estado: GameState
+  jugador: JugadorEnJuego,
+  estado: EstadoDeJuego
 ):
-  | { tipo: 'mover'; coord: Coord }
-  | { tipo: 'muro'; orientacion: WallOrientation; coord: Coord }
+  | { tipo: 'mover'; coord: Coordenada }
+  | { tipo: 'muro'; orientacion: OrientacionMuro; coord: Coordenada }
   | { tipo: 'pasar' } {
   const moves = movimientosLegales(jugador, estado);
 
@@ -886,10 +892,10 @@ export function calcularJugadaBot(
 
   const tipoBot = jugador.tipo;
 
-  const bestMoveToGoal = (): Coord | null => {
+  const bestMoveToGoal = (): Coordenada | null => {
     if (moves.length === 0) return null;
     let bestDist = Infinity;
-    let candidates: Coord[] = [];
+    let candidates: Coordenada[] = [];
 
     for (const m of moves) {
       const { distancia } = bfsCamino(jugador, estado.murosH, estado.murosV, m, estado.n);
@@ -912,7 +918,7 @@ export function calcularJugadaBot(
         for (let tries = 0; tries < 20; tries++) {
           const r = Math.floor(Math.random() * WALL_GRID_SIZE);
           const c = Math.floor(Math.random() * WALL_GRID_SIZE);
-          const o: WallOrientation = Math.random() < 0.5 ? 'H' : 'V';
+          const o: OrientacionMuro = Math.random() < 0.5 ? 'H' : 'V';
           if (validarMuro(o, r, c, estado.murosH, estado.murosV, estado.jugadores) === 'ok') {
             if (o === 'H') estado.murosH[r][c] = jugador.id;
             else estado.murosV[r][c] = jugador.id;
@@ -957,8 +963,8 @@ export function calcularJugadaBot(
 
   if (tipoBot === 'bot_dificil') {
     let bestAction:
-      | { tipo: 'mover'; coord: Coord; score: number }
-      | { tipo: 'muro'; orientacion: WallOrientation; coord: Coord; score: number }
+      | { tipo: 'mover'; coord: Coordenada; score: number }
+      | { tipo: 'muro'; orientacion: OrientacionMuro; coord: Coordenada; score: number }
       | null = null;
 
     for (const m of moves) {
@@ -970,7 +976,7 @@ export function calcularJugadaBot(
     }
 
     if (jugador.muros > 0 && leadingRival) {
-      const candidateWalls: { o: WallOrientation; r: number; c: number }[] = [];
+      const candidateWalls: { o: OrientacionMuro; r: number; c: number }[] = [];
       const rivalPath = bfsCamino(leadingRival, estado.murosH, estado.murosV, undefined, estado.n).camino;
 
       for (const pt of rivalPath) {
@@ -1042,10 +1048,10 @@ export function calcularJugadaBot(
     if (bm) return { tipo: 'mover', coord: bm };
   }
 
-  let bestWall: { orientacion: WallOrientation; coord: Coord; ganancia: number } | null = null;
+  let bestWall: { orientacion: OrientacionMuro; coord: Coordenada; ganancia: number } | null = null;
 
   if (jugador.muros > 0 && leadingRival && rivalDist <= 6) {
-    const candidatePool: { o: WallOrientation; r: number; c: number }[] = [];
+    const candidatePool: { o: OrientacionMuro; r: number; c: number }[] = [];
     const rivalPath = bfsCamino(leadingRival, estado.murosH, estado.murosV, undefined, estado.n).camino;
 
     for (const pt of rivalPath.slice(0, 3)) {
@@ -1108,11 +1114,11 @@ export function calcularJugadaBot(
 }
 
 function buscarCualquierMuroValido(
-  estado: GameState
-): { tipo: 'muro'; orientacion: WallOrientation; coord: Coord } | null {
+  estado: EstadoDeJuego
+): { tipo: 'muro'; orientacion: OrientacionMuro; coord: Coordenada } | null {
   for (let r = 0; r < WALL_GRID_SIZE; r++) {
     for (let c = 0; c < WALL_GRID_SIZE; c++) {
-      for (const o of ['H', 'V'] as WallOrientation[]) {
+      for (const o of ['H', 'V'] as OrientacionMuro[]) {
         if (validarMuro(o, r, c, estado.murosH, estado.murosV, estado.jugadores) === 'ok') {
           return { tipo: 'muro', orientacion: o, coord: { r, c } };
         }
@@ -1123,11 +1129,11 @@ function buscarCualquierMuroValido(
 }
 
 export function calcularDesglosePuntos(
-  jugador: Player,
-  estado: GameState,
+  jugador: JugadorEnJuego,
+  estado: EstadoDeJuego,
   _rachaActual: number = 0,
   bonoTorneo: number = 0
-): ScoreBreakdown {
+): DesglosePuntos {
   const esGanador = estado.ganador === jugador.id;
   const stats = jugador.estadisticas;
 
@@ -1207,15 +1213,15 @@ export function calcularDesglosePuntos(
 
 export const iniciarPartida = inicializarPartida;
 
-export function calcularDesglosesPuntuacion(estado: GameState): Map<number, ScoreBreakdown> {
-  const map = new Map<number, ScoreBreakdown>();
+export function calcularDesglosesPuntuacion(estado: EstadoDeJuego): Map<number, DesglosePuntos> {
+  const map = new Map<number, DesglosePuntos>();
   estado.jugadores.forEach((p) => {
     map.set(p.id, calcularDesglosePuntos(p, estado, p.estadisticas.remontada ? 1 : 0));
   });
   return map;
 }
 
-function clonarEstadoParaAccion(estado: GameState): GameState {
+function clonarEstadoParaAccion(estado: EstadoDeJuego): EstadoDeJuego {
   return {
     ...estado,
     jugadores: estado.jugadores.map((p) => ({
@@ -1229,24 +1235,24 @@ function clonarEstadoParaAccion(estado: GameState): GameState {
   };
 }
 
-export function ejecutarAccionMover(estado: GameState, destino: Coord, _jugadorId?: number): GameState {
+export function ejecutarAccionMover(estado: EstadoDeJuego, destino: Coordenada, _jugadorId?: number): EstadoDeJuego {
   const copia = clonarEstadoParaAccion(estado);
   aplicarMovimiento(copia, destino);
   return copia;
 }
 
 export function ejecutarAccionMuro(
-  estado: GameState,
-  coord: Coord,
-  orientacion: WallOrientation,
+  estado: EstadoDeJuego,
+  coord: Coordenada,
+  orientacion: OrientacionMuro,
   _jugadorId?: number
-): GameState {
+): EstadoDeJuego {
   const copia = clonarEstadoParaAccion(estado);
   aplicarMuro(copia, orientacion, coord.r, coord.c);
   return copia;
 }
 
-export function ejecutarTurnoBot(estado: GameState): { nuevoEstado: GameState; accion: any } {
+export function ejecutarTurnoBot(estado: EstadoDeJuego): { nuevoEstado: EstadoDeJuego; accion: any } {
   const copia = clonarEstadoParaAccion(estado);
   const jugador = copia.jugadores[copia.turnoActual];
   const jugada = calcularJugadaBot(jugador, copia);
@@ -1261,16 +1267,16 @@ export function ejecutarTurnoBot(estado: GameState): { nuevoEstado: GameState; a
 }
 
 export function obtenerCaminoPista(
-  jugador: Player,
+  jugador: JugadorEnJuego,
   murosH: number[][],
   murosV: number[][],
   numJugadores: number = 2
-): Coord[] {
+): Coordenada[] {
   const { camino } = bfsCamino(jugador, murosH, murosV, undefined, numJugadores);
   return camino;
 }
 
-export function deshacerJugada(estado: GameState): GameState {
+export function deshacerJugada(estado: EstadoDeJuego): EstadoDeJuego {
   if (estado.historial.length === 0) return estado;
   const snapshot = estado.historial.pop()!;
 

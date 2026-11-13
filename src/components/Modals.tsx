@@ -10,30 +10,32 @@ import React, { useEffect, useMemo, useState } from 'react';
 import confetti from 'canvas-confetti';
 import { sounds } from '../game/murosLocosEngine';
 import {
-  AchievementDef,
-  AppSettings,
-  BoardTheme,
-  GameState,
-  HatType,
-  LevelInfo,
-  PERSONAJES_REGISTRO,
-  PersonajeAuraType,
-  PersonajeColeccionable,
-  PersonajeRopaType,
-  RankEntry,
-  ScoreBreakdown,
+  AjustesDeApp,
+  AvatarTipoDeAura,
+  AvatarTipoDeGorro,
+  AvatarTipoDeRopa,
+  UserCuenta,
+  DefLogro,
+  DesglosePuntos,
+  EntradaRanking,
+  EstadoDeJuego,
+  EstadoTorneo,
+  InfoNivel,
+  RegDeAvatar,
+  AvatarColeccionable,
+  RespuestaRankingSemanal,
+  UserRol,
+  SalaPersonalizada,
   SolicitudResetRanking,
-  TorneoState,
-  UserAccount,
-  UserRole,
-  WeeklyRankingResponse,
+  TemaTablero,
 } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
 import { PWAInstallButton } from './PWAInstallControl';
 import {
   actualizarCuentaAsync,
-  adminActualizarUsuarioAsync,
-  adminEliminarUsuarioAsync,
+  adminActualizarUserAsync,
+  adminCambiarIdUserAsync,
+  adminEliminarUserAsync,
   adminResetearRankingAsync,
   aprobarResetRankingAsync,
   borrarRankingLocal,
@@ -41,43 +43,42 @@ import {
   cargarRanking,
   cargarRankingLocal,
   cerrarSesion,
-  darDeBajaUsuarioAsync,
-  equiparPersonajeInventario,
+  crearSalaPersonalizadaAsync,
+  darDeBajaUserAsync,
+  eliminarSalaPersonalizadaAsync,
   exportarDatosJSON,
   fijarPremioSemanalAsync,
   guardarConfigSemanalAsync,
   guardarDesbloqueosPersonajesAsync,
   importarDatosJSONAsync,
   iniciarSesionAsync,
+  moverPersonajeInventarioAsync,
   obtenerConfigSemanalAsync,
   obtenerDesbloqueosLocales,
   obtenerDesbloqueosPersonajesAsync,
+  obtenerSalasPersonalizadasAsync,
   obtenerSolicitudResetRankingAsync,
   quitarPersonajeInventarioAsync,
   rechazarResetRankingAsync,
   regalarPersonajeAsync,
-  restablecerClaveUsuarioAsync,
-  crearSalaPersonalizadaAsync,
-  eliminarSalaPersonalizadaAsync,
-  obtenerSalasPersonalizadasAsync,
+  restablecerClaveUserAsync,
   solicitarResetRankingAsync,
-  cambiarClaveUsuarioAsync,
+  cambiarClaveUserAsync,
   LOGROS_LISTA,
-  NetworkDiagnostic,
+  DiagnosticoDeRed,
   obtenerDiagnosticoRed,
   obtenerNivelYTitulo,
   obtenerRankingSemanalAsync,
   pingServidor,
-  registrarUsuarioAsync,
+  registrarUserAsync,
   sincronizarConNube,
   suscribirCambiosNube,
   suscribirDiagnostico,
   D1_VerificarAccionAdmin,
 } from '../game/storage';
-import { SalaPersonalizada } from '../types/murosLocos';
 
 export const TEMAS_LISTA: {
-  id: BoardTheme;
+  id: TemaTablero;
   label: string;
   desc: string;
   border: string;
@@ -94,14 +95,14 @@ export const TEMAS_LISTA: {
 // =========================================================================
 interface AspectoModalProps {
   onCerrar: () => void;
-  personajeActual: { hat: HatType; color: string; ropa?: PersonajeRopaType; ropaColor?: string; aura?: PersonajeAuraType };
-  temaActual: BoardTheme;
-  usuarioActual?: UserAccount | null;
+  personajeActual: { hat: AvatarTipoDeGorro; color: string; ropa?: AvatarTipoDeRopa; ropaColor?: string; aura?: AvatarTipoDeAura };
+  temaActual: TemaTablero;
+  userActual?: UserCuenta | null;
   onAplicar: (
-    nuevoPersonaje: { hat: HatType; color: string; ropa?: PersonajeRopaType; ropaColor?: string; aura?: PersonajeAuraType },
-    nuevoTema: BoardTheme
+    nuevoPersonaje: { hat: AvatarTipoDeGorro; color: string; ropa?: AvatarTipoDeRopa; ropaColor?: string; aura?: AvatarTipoDeAura },
+    nuevoTema: TemaTablero
   ) => void;
-  onUsuarioActualizado?: (u: UserAccount) => void;
+  onuserActualizado?: (u: UserCuenta) => void;
   onShowToast?: (msg: string) => void;
 }
 
@@ -109,34 +110,34 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
   onCerrar,
   personajeActual,
   temaActual,
-  usuarioActual,
+  userActual,
   onAplicar,
-  onUsuarioActualizado,
+  onuserActualizado,
   onShowToast,
 }) => {
   const [tabPersonaje, setTabPersonaje] = useState<'base' | 'inventario'>('base');
-  const [selectedHat, setSelectedHat] = useState<HatType>(personajeActual.hat || 'corona');
+  const [selectedHat, setSelectedHat] = useState<AvatarTipoDeGorro>(personajeActual.hat || 'corona');
   const [selectedColor, setSelectedColor] = useState<string>(personajeActual.color || '#ff6b6b');
-  const [selectedRopa, setSelectedRopa] = useState<PersonajeRopaType>(
-    personajeActual.ropa || usuarioActual?.avatarRopa || 'ninguna'
+  const [selectedRopa, setSelectedRopa] = useState<AvatarTipoDeRopa>(
+    personajeActual.ropa || userActual?.avatarRopa || 'ninguna'
   );
   const [selectedRopaColor, setSelectedRopaColor] = useState<string | undefined>(
-    personajeActual.ropaColor || usuarioActual?.avatarRopaColor
+    personajeActual.ropaColor || userActual?.avatarRopaColor
   );
-  const [selectedAura, setSelectedAura] = useState<PersonajeAuraType>(
-    personajeActual.aura || usuarioActual?.avatarAura || 'ninguna'
+  const [selectedAura, setSelectedAura] = useState<AvatarTipoDeAura>(
+    personajeActual.aura || userActual?.avatarAura || 'ninguna'
   );
   const [selectedItemId, setSelectedItemId] = useState<string | null>(
-    usuarioActual?.inventario?.activoId || null
+    userActual?.inventario?.activoId || null
   );
-  const [selectedTema, setSelectedTema] = useState<BoardTheme>(temaActual || 'madera');
-  const [guardarEnPerfil, setGuardarEnPerfil] = useState(Boolean(usuarioActual));
+  const [selectedTema, setSelectedTema] = useState<TemaTablero>(temaActual || 'madera');
+  const [guardarEnPerfil, setGuardarEnPerfil] = useState(Boolean(userActual));
   const [guardando, setGuardando] = useState(false);
 
-  const userPoints = usuarioActual?.puntos || 0;
+  const userPoints = userActual?.puntos || 0;
   const esAdmin = Boolean(
-    usuarioActual &&
-      (usuarioActual.rol === 'admin' || usuarioActual.rol === 'dev' || usuarioActual.id === 'admin')
+    userActual &&
+      (userActual.rol === 'admin' || userActual.rol === 'dev' || userActual.id === 'admin')
   );
 
   const [desbloqueosPuntos, setDesbloqueosPuntos] = useState<Record<string, number>>(() => obtenerDesbloqueosLocales());
@@ -146,7 +147,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
   }, []);
 
   const personajesBaseConPuntos = useMemo(() => {
-    return PERSONAJES_REGISTRO.map((p) => {
+    return RegDeAvatar.map((p) => {
       const customReq = desbloqueosPuntos[p.id];
       return {
         ...p,
@@ -169,25 +170,25 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
     return personajesBaseConPuntos.find((p) => !isPersonajeDesbloqueado(p.puntosRequeridos));
   }, [personajesBaseConPuntos, userPoints, esAdmin]);
 
-  const cuentaFresca = usuarioActual ? cargarCuentas()[usuarioActual.id] || usuarioActual : null;
-  const misExclusivos = cuentaFresca?.inventario?.personajes || usuarioActual?.inventario?.personajes || [];
+  const cuentaFresca = userActual ? cargarCuentas()[userActual.id] || userActual : null;
+  const misExclusivos = cuentaFresca?.inventario?.personajes || userActual?.inventario?.personajes || [];
 
-  const handleSeleccionarPersonajeBase = (p: (typeof PERSONAJES_REGISTRO)[0]) => {
+  const handleSeleccionarPersonajeBase = (p: (typeof RegDeAvatar)[0]) => {
     if (!isPersonajeDesbloqueado(p.puntosRequeridos)) {
       sounds.playError();
-      onShowToast?.(`🔒 ${p.label} se desbloquea al alcanzar ${p.puntosRequeridos} puntos`);
+      onShowToast?.(`🔒 ${p.nombre} se desbloquea al alcanzar ${p.puntosRequeridos} puntos`);
       return;
     }
     sounds.playClick();
     setSelectedHat(p.id);
-    setSelectedColor(p.defaultColor);
+    setSelectedColor(p.colorDefault);
     setSelectedRopa('ninguna');
     setSelectedRopaColor(undefined);
     setSelectedAura('ninguna');
     setSelectedItemId(null);
   };
 
-  const handleSeleccionarExclusivo = (item: PersonajeColeccionable) => {
+  const handleSeleccionarExclusivo = (item: AvatarColeccionable) => {
     sounds.playClick();
     setSelectedHat(item.hat);
     setSelectedColor(item.color);
@@ -218,26 +219,28 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
     setGuardando(true);
 
     try {
-      if (usuarioActual && guardarEnPerfil) {
+      if (userActual && guardarEnPerfil) {
         const cuentas = cargarCuentas();
-        const baseUser = cuentas[usuarioActual.id] || usuarioActual;
+        const baseUser = cuentas[userActual.id] || userActual;
         const invActual = baseUser.inventario || { personajes: [] };
-        const updated: UserAccount = {
-          ...baseUser,
+        const res = await actualizarCuentaAsync(baseUser, {
           avatarHat: selectedHat,
           avatarColor: selectedColor,
           avatarRopa: selectedRopa,
-          avatarRopaColor: selectedRopaColor,
+          avatarRopaColor: selectedRopa !== 'ninguna' ? selectedRopaColor : undefined,
           avatarAura: selectedAura,
           inventario: {
             ...invActual,
             activoId: selectedItemId || undefined,
           },
           temaTablero: selectedTema,
-        };
-        const freshSaved = await actualizarCuentaAsync(updated);
-        onUsuarioActualizado?.(freshSaved);
-        onShowToast?.('⭐ Personaje y terreno guardados como predeterminados en tu perfil');
+        });
+        if (res.ok && res.user) {
+          onuserActualizado?.(res.user);
+          onShowToast?.('⭐ Personaje y terreno guardados como predeterminados en tu perfil');
+        } else {
+          onShowToast?.(res.error || '⚠️ No se pudo guardar en tu perfil');
+        }
       }
 
       onAplicar(
@@ -257,7 +260,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
   };
 
   const activeCharDef =
-    PERSONAJES_REGISTRO.find((p) => p.id === selectedHat) || PERSONAJES_REGISTRO[0];
+    RegDeAvatar.find((p) => p.id === selectedHat) || RegDeAvatar[0];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
@@ -270,7 +273,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
                 Aspecto y Terreno
               </h3>
               <span className="text-[11px] font-bold text-[#86542d]">
-                {usuarioActual
+                {userActual
                   ? `⭐ Tus puntos: ${userPoints}`
                   : '💡 Modo Invitado (Crea perfil para guardar tus aspectos)'}
               </span>
@@ -293,6 +296,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
             color={selectedColor}
             hat={selectedHat}
             ropa={selectedRopa}
+            ropaColor={selectedRopaColor}
             aura={selectedAura}
             size={58}
             showShadow={false}
@@ -302,11 +306,11 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
               Vista Previa Activa
             </span>
             <span className="font-extrabold text-sm text-[#2b2140] flex items-center gap-1.5 truncate">
-              <span>{activeCharDef.icon}</span>
+              <span>{activeCharDef.emoji}</span>
               <span className="truncate">
                 {selectedItemId
-                  ? misExclusivos.find((i) => i.id === selectedItemId)?.nombre || activeCharDef.label
-                  : activeCharDef.label}
+                  ? misExclusivos.find((i) => i.id === selectedItemId)?.nombre || activeCharDef.nombre
+                  : activeCharDef.nombre}
               </span>
               {selectedItemId && (
                 <span className="text-[9px] font-black bg-[#ffd43b] text-[#5c3c00] px-1.5 py-0.5 rounded-full border border-[#2b2140]/30 shrink-0">
@@ -380,11 +384,11 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
                         ? 'bg-[#ffd43b] shadow-[0_3px_0_#2b2140] -translate-y-0.5'
                         : 'bg-white hover:bg-[#f8f9fa]'
                     }`}
-                    title={p.label}
+                    title={p.nombre}
                   >
-                    <CartoonCharacter color={p.defaultColor} hat={p.id} size={38} showShadow={false} />
+                    <CartoonCharacter color={p.colorDefault} hat={p.id} size={38} showShadow={false} />
                     <span className="text-[10px] font-extrabold text-[#2b2140] text-center leading-tight">
-                      {p.label}
+                      {p.nombre}
                     </span>
                     {isSelected && (
                       <span className="text-[8px] font-black text-[#134e20] bg-[#d3f9d8] px-1 rounded border border-[#2b8a3e]">
@@ -406,7 +410,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
                       Próximo Desbloqueo
                     </span>
                     <span className="font-black text-xs text-[#2b2140] block truncate">
-                      {siguientePorDesbloquear.label} ({siguientePorDesbloquear.icon})
+                      {siguientePorDesbloquear.nombre} ({siguientePorDesbloquear.emoji})
                     </span>
                   </div>
                 </div>
@@ -466,6 +470,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
                         color={item.color}
                         hat={item.hat}
                         ropa={item.ropa}
+                        ropaColor={item.ropaColor}
                         aura={item.aura}
                         size={42}
                         showShadow={false}
@@ -538,7 +543,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
           </div>
         </div>
 
-        {usuarioActual ? (
+        {userActual ? (
           <label className="flex items-center gap-2 p-2 bg-[#e7f5ff] rounded-xl border border-[#2b2140]/30 cursor-pointer mb-3 select-none">
             <input
               type="checkbox"
@@ -574,15 +579,15 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
 // 1. AJUSTES MODAL
 // =========================================================================
 interface AjustesModalProps {
-  ajustes: AppSettings;
-  onGuardar: (nuevosAjustes: AppSettings) => void;
+  ajustes: AjustesDeApp;
+  onGuardar: (nuevosAjustes: AjustesDeApp) => void;
   onCerrar: () => void;
 }
 
 export const AjustesModal: React.FC<AjustesModalProps> = ({ ajustes, onGuardar, onCerrar }) => {
-  const [localAjustes, setLocalAjustes] = useState<AppSettings>({ ...ajustes });
+  const [localAjustes, setLocalAjustes] = useState<AjustesDeApp>({ ...ajustes });
 
-  const toggle = (key: keyof AppSettings) => {
+  const toggle = (key: keyof AjustesDeApp) => {
     sounds.playClick();
     setLocalAjustes((prev) => {
       const next = { ...prev, [key]: !prev[key] };
@@ -599,7 +604,7 @@ export const AjustesModal: React.FC<AjustesModalProps> = ({ ajustes, onGuardar, 
     onCerrar();
   };
 
-  const opciones: { key: keyof AppSettings; label: string; desc: string; icon: string }[] = [
+  const opciones: { key: keyof AjustesDeApp; label: string; desc: string; icon: string }[] = [
     { key: 'sonido', label: 'Efectos de Sonido', desc: 'Sonidos retro y efectos en cada jugada', icon: '🔊' },
     { key: 'animacionesReducidas', label: 'Animaciones Reducidas', desc: 'Simplifica transiciones visuales del juego', icon: '⚡' },
     { key: 'mostrarDistancia', label: 'Mostrar Distancia a Meta', desc: 'Indica los pasos mínimos en la tarjeta', icon: '📏' },
@@ -891,38 +896,41 @@ export const LogrosModal: React.FC<{ onCerrar: () => void }> = ({ onCerrar }) =>
 // =========================================================================
 interface RankingModalProps {
   onCerrar: () => void;
-  usuarioActual?: UserAccount | null;
+  userActual?: UserCuenta | null;
   onAbrirPerfil?: () => void;
 }
 
 type TabType = 'local' | 'global' | 'esta_semana' | 'semana_pasada';
 
 interface DisplayRankEntry {
+  id?: string;
   nombre: string;
   puntosTotales: number;
   partidas: number;
   victorias: number;
-  elo: number;
   avatarColor: string;
-  avatarHat: RankEntry['avatarHat'];
+  avatarHat: EntradaRanking['avatarHat'];
+  avatarRopa?: AvatarTipoDeRopa;
+  avatarRopaColor?: string;
+  avatarAura?: AvatarTipoDeAura;
 }
 
 export const RankingModal: React.FC<RankingModalProps> = ({
   onCerrar,
-  usuarioActual,
+  userActual,
   onAbrirPerfil,
 }) => {
   // Orden solicitado: Local siempre primero, luego Global, Esta Semana y Sem. Pasada
   const [tab, setTab] = useState<TabType>('local');
-  const [rankingData, setRankingData] = useState<Record<string, RankEntry>>(() => cargarRanking());
-  const [localRankingData, setLocalRankingData] = useState<Record<string, RankEntry>>(() =>
+  const [rankingData, setRankingData] = useState<Record<string, EntradaRanking>>(() => cargarRanking());
+  const [localRankingData, setLocalRankingData] = useState<Record<string, EntradaRanking>>(() =>
     cargarRankingLocal()
   );
-  const [semanalData, setSemanalData] = useState<WeeklyRankingResponse | null>(null);
+  const [semanalData, setSemanalData] = useState<RespuestaRankingSemanal | null>(null);
   const [mensajeToast, setMensajeToast] = useState<string | null>(null);
   const [sincronizando, setSincronizando] = useState(false);
   const [confirmandoBorrarLocal, setConfirmandoBorrarLocal] = useState(false);
-  const [diag, setDiag] = useState<NetworkDiagnostic>(() => obtenerDiagnosticoRed());
+  const [diag, setDiag] = useState<DiagnosticoDeRed>(() => obtenerDiagnosticoRed());
 
   useEffect(() => {
     return suscribirDiagnostico(setDiag);
@@ -938,18 +946,21 @@ export const RankingModal: React.FC<RankingModalProps> = ({
       const list = Object.values(localRankingData)
         .filter((r) => r.partidas > 0)
         .map((r) => ({
+          id: r.id,
           nombre: r.nombre,
           puntosTotales: r.puntosTotales,
           partidas: r.partidas,
           victorias: r.victorias,
-          elo: r.elo || 1000,
           avatarColor: r.avatarColor || '#ff6b6b',
           avatarHat: r.avatarHat || 'corona',
+          avatarRopa: r.avatarRopa,
+          avatarRopaColor: r.avatarRopaColor,
+          avatarAura: r.avatarAura,
         }));
 
       list.sort((a, b) => {
         if (b.puntosTotales !== a.puntosTotales) return b.puntosTotales - a.puntosTotales;
-        if (b.elo !== a.elo) return b.elo - a.elo;
+        if (b.victorias !== a.victorias) return b.victorias - a.victorias;
         return b.partidas - a.partidas;
       });
       return list;
@@ -959,18 +970,21 @@ export const RankingModal: React.FC<RankingModalProps> = ({
       const list = Object.values(rankingData)
         .filter((r) => r.partidas > 0 || r.puntosTotales > 0)
         .map((r) => ({
+          id: r.id,
           nombre: r.nombre,
           puntosTotales: r.puntosTotales,
           partidas: r.partidas,
           victorias: r.victorias,
-          elo: r.elo || 1000,
           avatarColor: r.avatarColor || '#ff6b6b',
           avatarHat: r.avatarHat || 'corona',
+          avatarRopa: r.avatarRopa,
+          avatarRopaColor: r.avatarRopaColor,
+          avatarAura: r.avatarAura,
         }));
 
       list.sort((a, b) => {
         if (b.puntosTotales !== a.puntosTotales) return b.puntosTotales - a.puntosTotales;
-        if (b.elo !== a.elo) return b.elo - a.elo;
+        if (b.victorias !== a.victorias) return b.victorias - a.victorias;
         return b.partidas - a.partidas;
       });
       return list;
@@ -982,13 +996,16 @@ export const RankingModal: React.FC<RankingModalProps> = ({
     const list: DisplayRankEntry[] = Object.values(board.jugadores)
       .filter((p) => p && p.partidas > 0)
       .map((p) => ({
+        id: p.id,
         nombre: p.nombre,
         puntosTotales: p.puntos,
         partidas: p.partidas,
         victorias: p.victorias,
-        elo: p.elo || 1000,
         avatarColor: p.avatarColor || '#ff6b6b',
         avatarHat: p.avatarHat || 'corona',
+        avatarRopa: p.avatarRopa,
+        avatarRopaColor: p.avatarRopaColor,
+        avatarAura: p.avatarAura,
       }));
 
     list.sort((a, b) => {
@@ -1031,7 +1048,11 @@ export const RankingModal: React.FC<RankingModalProps> = ({
     return dias > 0 ? `${dias}d ${horas}h restantes` : `${horas}h restantes`;
   }, [semanalData?.cierraEnMs]);
 
-  const bonosSemanal = [25, 15, 10];
+  const bonosSemanal = [
+    semanalData?.actual?.puntosConfig?.primerLugar ?? 50,
+    semanalData?.actual?.puntosConfig?.segundoLugar ?? 25,
+    semanalData?.actual?.puntosConfig?.tercerLugar ?? 15,
+  ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
@@ -1151,7 +1172,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
           </div>
         )}
 
-        {!usuarioActual && tab !== 'local' && (
+        {!userActual && tab !== 'local' && (
           <div className="p-2.5 bg-[#fff3bf] rounded-2xl border-2 border-[#2b2140] mb-2 flex items-center justify-between gap-2 shadow-sm text-xs">
             <div className="text-[11px] font-bold text-[#8f4b00] leading-tight">
               Juegas como <strong>Invitado</strong>. Inicia sesión para competir en Global y Esta Semana.
@@ -1239,7 +1260,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
 
               return (
                 <div
-                  key={entry.nombre}
+                  key={`${tab}-${entry.id || entry.nombre}-${index}`}
                   className={`p-2.5 sm:p-3 rounded-2xl border-2 border-[#2b2140] flex items-center gap-3 transition-all ${
                     index === 0
                       ? 'bg-gradient-to-r from-[#fff9db] to-white shadow-[0_3px_0_#2b2140]'
@@ -1253,6 +1274,9 @@ export const RankingModal: React.FC<RankingModalProps> = ({
                   <CartoonCharacter
                     color={entry.avatarColor}
                     hat={entry.avatarHat}
+                    ropa={entry.avatarRopa}
+                    ropaColor={entry.avatarRopaColor}
+                    aura={entry.avatarAura}
                     size={38}
                     showShadow={false}
                   />
@@ -1273,10 +1297,8 @@ export const RankingModal: React.FC<RankingModalProps> = ({
                     </div>
 
                     <div className="flex items-center gap-2 text-[11px] text-[#86542d] font-semibold mt-0.5">
-                      <span>Elo: {entry.elo}</span>
-                      <span>·</span>
                       <span>
-                        {entry.victorias}V / {entry.partidas}P ({winRate}%)
+                        {entry.victorias}V / {entry.partidas}P ({winRate}% victorias)
                       </span>
                     </div>
                   </div>
@@ -1331,8 +1353,8 @@ export const RankingModal: React.FC<RankingModalProps> = ({
 // 5. TORNEO MODAL
 // =========================================================================
 interface TorneoModalProps {
-  estado: GameState;
-  torneo: TorneoState;
+  estado: EstadoDeJuego;
+  torneo: EstadoTorneo;
   onSiguienteRonda: () => void;
   onFinalizarTorneo: () => void;
   onVerTablero: () => void;
@@ -1407,7 +1429,15 @@ export const TorneoModal: React.FC<TorneoModalProps> = ({
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-sm font-black w-5">{idx === 0 ? '🥇' : `${idx + 1}º`}</span>
-                  <CartoonCharacter color={p.color} hat={p.hat} size={30} showShadow={false} />
+                  <CartoonCharacter
+                    color={p.color}
+                    hat={p.hat}
+                    ropa={p.ropa}
+                    ropaColor={p.ropaColor}
+                    aura={p.aura}
+                    size={30}
+                    showShadow={false}
+                  />
                   <div className="text-left min-w-0">
                     <span className="text-xs font-bold text-[#2b2140] block truncate">{p.nombre}</span>
                     <span className="text-[10px] text-[#2b8a3e] font-bold block">
@@ -1466,10 +1496,10 @@ export const TorneoModal: React.FC<TorneoModalProps> = ({
 // 6. VICTORY MODAL
 // =========================================================================
 interface VictoryModalProps {
-  estado: GameState;
-  desgloses: Map<number, ScoreBreakdown>;
-  nuevosLogros: Map<string, AchievementDef[]>;
-  subidasNivel: Map<string, { anterior: LevelInfo; nuevo: LevelInfo }>;
+  estado: EstadoDeJuego;
+  desgloses: Map<number, DesglosePuntos>;
+  nuevosLogros: Map<string, DefLogro[]>;
+  subidasNivel: Map<string, { anterior: InfoNivel; nuevo: InfoNivel }>;
   onRevancha: () => void;
   onVerTablero: () => void;
   onIrAlMenu: () => void;
@@ -1631,6 +1661,9 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
           <CartoonCharacter
             color={jugadorSeleccionado.color}
             hat={jugadorSeleccionado.hat}
+            ropa={jugadorSeleccionado.ropa}
+            ropaColor={jugadorSeleccionado.ropaColor}
+            aura={jugadorSeleccionado.aura}
             size={60}
           />
         </div>
@@ -1804,18 +1837,18 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
 };
 
 // =========================================================================
-// 7. PERFIL Y CUENTA DE USUARIO MODAL (Login único + Personaje y Terreno Predeterminados)
+// 7. PERFIL Y CUENTA DE USER MODAL (Login único + Personaje y Terreno Predeterminados)
 // =========================================================================
 interface PerfilModalProps {
-  usuarioActual: UserAccount | null;
-  onLoginSuccess: (usuario: UserAccount) => void;
+  userActual: UserCuenta | null;
+  onLoginSuccess: (user: UserCuenta) => void;
   onLogout: () => void;
   onAbrirAdmin: () => void;
   onCerrar: () => void;
 }
 
 export const PerfilModal: React.FC<PerfilModalProps> = ({
-  usuarioActual,
+  userActual,
   onLoginSuccess,
   onLogout,
   onAbrirAdmin,
@@ -1828,8 +1861,8 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
   const [nombre, setNombre] = useState('');
   const [clave, setClave] = useState('');
   const [color, setColor] = useState('#ff6b6b');
-  const [hat, setHat] = useState<HatType>('corona');
-  const [temaRegistro, setTemaRegistro] = useState<BoardTheme>('madera');
+  const [hat, setHat] = useState<AvatarTipoDeGorro>('corona');
+  const [temaRegistro, setTemaRegistro] = useState<TemaTablero>('madera');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
 
@@ -1840,19 +1873,23 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
   const [cambioClaveError, setCambioClaveError] = useState<string | null>(null);
   const [cambioClaveOk, setCambioClaveOk] = useState(false);
 
-  const [perfilHat, setPerfilHat] = useState<HatType>(() => usuarioActual?.avatarHat || 'corona');
+  const [perfilNombre, setPerfilNombre] = useState<string>(() => userActual?.nombre || '');
+  const [perfilHat, setPerfilHat] = useState<AvatarTipoDeGorro>(() => userActual?.avatarHat || 'corona');
   const [perfilColor, setPerfilColor] = useState<string>(
-    () => usuarioActual?.avatarColor || '#ff6b6b'
+    () => userActual?.avatarColor || '#ff6b6b'
   );
-  const [perfilTema, setPerfilTema] = useState<BoardTheme>(
-    () => usuarioActual?.temaTablero || 'madera'
+  const [perfilTema, setPerfilTema] = useState<TemaTablero>(
+    () => userActual?.temaTablero || 'madera'
+  );
+  const [desbloqueosPuntos, setDesbloqueosPuntos] = useState<Record<string, number>>(() =>
+    obtenerDesbloqueosLocales()
   );
   const [guardandoPreferencias, setGuardandoPreferencias] = useState(false);
   const [guardadoOkMsg, setGuardadoOkMsg] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
-  const [diag, setDiag] = useState<NetworkDiagnostic>(() => obtenerDiagnosticoRed());
+  const [diag, setDiag] = useState<DiagnosticoDeRed>(() => obtenerDiagnosticoRed());
 
-  const [todasLasCuentas, setTodasLasCuentas] = useState<Record<string, UserAccount>>(() =>
+  const [todasLasCuentas, setTodasLasCuentas] = useState<Record<string, UserCuenta>>(() =>
     cargarCuentas()
   );
 
@@ -1862,6 +1899,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
       setTodasLasCuentas(nuevas);
     });
     sincronizarConNube(false).then(() => setTodasLasCuentas(cargarCuentas())).catch(() => {});
+    obtenerDesbloqueosPersonajesAsync().then((d) => setDesbloqueosPuntos(d)).catch(() => {});
     return () => {
       unsubDiag();
       unsubNube();
@@ -1870,19 +1908,21 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
 
   useEffect(() => {
     setTodasLasCuentas(cargarCuentas());
-  }, [usuarioActual, cargando]);
+  }, [userActual, cargando]);
 
   useEffect(() => {
-    if (usuarioActual) {
-      setPerfilHat(usuarioActual.avatarHat || 'corona');
-      setPerfilColor(usuarioActual.avatarColor || '#ff6b6b');
-      setPerfilTema(usuarioActual.temaTablero || 'madera');
+    if (userActual) {
+      setPerfilNombre(userActual.nombre || '');
+      setPerfilHat(userActual.avatarHat || 'corona');
+      setPerfilColor(userActual.avatarColor || '#ff6b6b');
+      setPerfilTema(userActual.temaTablero || 'madera');
     }
   }, [
-    usuarioActual?.id,
-    usuarioActual?.avatarHat,
-    usuarioActual?.avatarColor,
-    usuarioActual?.temaTablero,
+    userActual?.id,
+    userActual?.nombre,
+    userActual?.avatarHat,
+    userActual?.avatarColor,
+    userActual?.temaTablero,
   ]);
 
   const comunidadLista = useMemo(() => {
@@ -1919,7 +1959,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
     setErrorMsg(null);
     setCargando(true);
     try {
-      const res = await registrarUsuarioAsync(nombre, clave, color, hat, temaRegistro);
+      const res = await registrarUserAsync(nombre, clave, color, hat, temaRegistro);
       if (res.ok && res.user) {
         onLoginSuccess(res.user);
         onCerrar();
@@ -1939,7 +1979,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
       <div className="relative w-full max-w-sm bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
           <h3 className="text-xl font-black text-[#2b2140] flex items-center gap-2">
-            <span>👤</span> {usuarioActual ? 'Mi Perfil' : 'Perfil y Cuenta'}
+            <span>👤</span> {userActual ? 'Mi Perfil' : 'Perfil y Cuenta'}
           </h3>
           <button
             onClick={() => {
@@ -1969,7 +2009,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
           </div>
         )}
 
-        {usuarioActual ? (
+        {userActual ? (
           <div className="flex flex-col gap-3 py-1">
             <div className="grid grid-cols-2 p-1 bg-[#ede4d0] rounded-xl border-2 border-[#2b2140]">
               <button
@@ -2008,31 +2048,45 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                   <CartoonCharacter
                     color={perfilColor}
                     hat={perfilHat}
+                    ropa={userActual.avatarRopa}
+                    ropaColor={userActual.avatarRopaColor}
+                    aura={userActual.avatarAura}
                     size={56}
                     showShadow={false}
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-black text-base text-[#2b2140] truncate">
-                        {usuarioActual.nombre}
+                        {userActual.nombre}
                       </span>
-                      {(usuarioActual.rol === 'admin' || usuarioActual.id === 'admin') && (
-                        <span className="text-[10px] font-black text-[#8f4b00]">
-                          · 👑 {usuarioActual.id === 'admin' ? 'Admin Supremo' : 'Admin'}
+                      {(userActual.rol === 'dev' || userActual.id === 'admin') && (
+                        <span className="text-[10px] font-black text-[#d9480f]">
+                          · 👑 {userActual.id === 'admin' ? 'Dev Supremo' : 'Dev'}
+                        </span>
+                      )}
+                      {userActual.rol === 'admin' && userActual.id !== 'admin' && (
+                        <span className="text-[10px] font-black text-[#364fc7]">
+                          · 🛡️ Admin
+                        </span>
+                      )}
+                      {userActual.rol === 'mod' && (
+                        <span className="text-[10px] font-black text-[#099268]">
+                          · 🔰 Mod
                         </span>
                       )}
                     </div>
                     <span className="text-[11px] font-semibold text-[#495057] block">
-                      ID: {usuarioActual.id} · {obtenerNivelYTitulo(usuarioActual.puntos).titulo}
+                      ID: {userActual.id} · {obtenerNivelYTitulo(userActual.puntos).titulo}
                     </span>
                     <span className="text-xs font-black text-[#2b8a3e] block">
-                      {usuarioActual.puntos} puntos acumulados
+                      {userActual.puntos} puntos acumulados
                     </span>
-                    {(perfilHat !== usuarioActual.avatarHat ||
-                      perfilColor !== usuarioActual.avatarColor ||
-                      perfilTema !== (usuarioActual.temaTablero || 'madera')) && (
+                    {(perfilNombre.trim() !== userActual.nombre ||
+                      perfilHat !== userActual.avatarHat ||
+                      perfilColor !== userActual.avatarColor ||
+                      perfilTema !== (userActual.temaTablero || 'madera')) && (
                       <span className="text-[10px] font-black text-[#d9480f] block mt-0.5">
-                        👀 Vista previa activa · Pulsa Guardar abajo
+                        👀 Cambios sin guardar · Pulsa Guardar abajo
                       </span>
                     )}
                   </div>
@@ -2042,20 +2096,22 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                   <div className="p-2.5 bg-white rounded-xl border-2 border-[#2b2140]">
                     <span className="text-[11px] font-bold text-[#86542d] block">Victorias</span>
                     <span className="text-lg font-black text-[#2b2140]">
-                      {usuarioActual.victorias} / {usuarioActual.partidas}
+                      {userActual.victorias} / {userActual.partidas}
                     </span>
                   </div>
                   <div className="p-2.5 bg-white rounded-xl border-2 border-[#2b2140]">
-                    <span className="text-[11px] font-bold text-[#86542d] block">Puntos Elo</span>
-                    <span className="text-lg font-black text-[#2b2140]">{usuarioActual.elo}</span>
+                    <span className="text-[11px] font-bold text-[#86542d] block">Nivel Actual</span>
+                    <span className="text-sm font-black text-[#2b2140]">
+                      {obtenerNivelYTitulo(userActual.puntos).icono} {obtenerNivelYTitulo(userActual.puntos).titulo}
+                    </span>
                   </div>
                 </div>
 
-                {/* Personaje y Terreno Predeterminados */}
+                {/* Personaje, Nombre y Terreno Predeterminados */}
                 <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] flex flex-col gap-2 shadow-sm text-left">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
-                      Personaje y Terreno Predeterminados
+                      Perfil, Personaje y Terreno
                     </span>
                     {toastMsg && (
                       <span className="text-[10px] text-[#e03131] font-black animate-pulse">
@@ -2069,12 +2125,31 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                     )}
                   </div>
 
+                  {userActual.id !== 'admin' && (
+                    <div>
+                      <label className="text-[10px] font-bold text-[#86542d] block mb-0.5">
+                        Nombre visible (3 a 15 caracteres):
+                      </label>
+                      <input
+                        type="text"
+                        minLength={3}
+                        maxLength={15}
+                        value={perfilNombre}
+                        onChange={(e) => setPerfilNombre(e.target.value)}
+                        className="w-full text-xs font-bold text-[#2b2140] bg-[#f8f9fa] border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-[#ffd43b]"
+                      />
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-5 gap-1.5 mt-1">
-                    {PERSONAJES_REGISTRO.map((h) => {
+                    {RegDeAvatar.map((h) => {
+                      const puntosReq = desbloqueosPuntos[h.id] ?? h.puntosRequeridos;
                       const unlocked =
-                        (usuarioActual.puntos || 0) >= h.puntosRequeridos ||
-                        usuarioActual.rol === 'admin' ||
-                        usuarioActual.id === 'admin';
+                        puntosReq === 0 ||
+                        (userActual.puntos || 0) >= puntosReq ||
+                        userActual.rol === 'dev' ||
+                        userActual.rol === 'admin' ||
+                        userActual.id === 'admin';
                       return (
                         <button
                           key={h.id}
@@ -2082,13 +2157,13 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                           onClick={() => {
                             if (!unlocked) {
                               sounds.playError();
-                              setToastMsg(`🔒 Requiere ${h.puntosRequeridos} pts`);
+                              setToastMsg(`🔒 Requiere ${puntosReq} pts`);
                               setTimeout(() => setToastMsg(null), 2500);
                               return;
                             }
                             sounds.playClick();
                             setPerfilHat(h.id);
-                            setPerfilColor(h.defaultColor);
+                            setPerfilColor(h.colorDefault);
                           }}
                           className={`relative py-1.5 px-1 rounded-xl text-xs border-2 border-[#2b2140] cursor-pointer flex flex-col items-center gap-0.5 transition-all ${
                             !unlocked
@@ -2097,13 +2172,13 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                               ? 'bg-[#ffd43b] shadow-sm -translate-y-0.5 font-black'
                               : 'bg-[#fff8e7] hover:bg-white'
                           }`}
-                          title={unlocked ? h.label : `Requiere ${h.puntosRequeridos} puntos`}
+                          title={unlocked ? h.nombre : `Requiere ${puntosReq} puntos`}
                         >
                           {!unlocked && (
                             <span className="absolute top-0.5 right-0.5 text-[8px]">🔒</span>
                           )}
-                          <span className="text-base">{h.icon}</span>
-                          <span className="text-[9px] font-bold truncate max-w-full">{h.label}</span>
+                          <span className="text-base">{h.emoji}</span>
+                          <span className="text-[9px] font-bold truncate max-w-full">{h.nombre}</span>
                         </button>
                       );
                     })}
@@ -2133,20 +2208,33 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                     disabled={guardandoPreferencias}
                     onClick={async () => {
                       sounds.playClick();
+                      const cleanName = perfilNombre.trim();
+                      if (userActual.id !== 'admin' && (cleanName.length < 3 || cleanName.length > 15)) {
+                        sounds.playError();
+                        setToastMsg('⚠️ Nombre entre 3 y 15 caracteres');
+                        setTimeout(() => setToastMsg(null), 2500);
+                        return;
+                      }
                       setGuardandoPreferencias(true);
                       try {
-                        const actualizado: UserAccount = {
-                          ...usuarioActual,
+                        const res = await actualizarCuentaAsync(userActual, {
+                          nombre: userActual.id !== 'admin' ? cleanName : undefined,
                           avatarHat: perfilHat,
                           avatarColor: perfilColor,
                           temaTablero: perfilTema,
-                        };
-                        const freshSaved = await actualizarCuentaAsync(actualizado);
-                        onLoginSuccess(freshSaved);
-                        setGuardadoOkMsg(true);
-                        setTimeout(() => setGuardadoOkMsg(false), 2500);
+                        });
+                        if (res.ok && res.user) {
+                          onLoginSuccess(res.user);
+                          setGuardadoOkMsg(true);
+                          setTimeout(() => setGuardadoOkMsg(false), 2500);
+                        } else {
+                          sounds.playError();
+                          setToastMsg(res.error || '⚠️ No se pudo guardar');
+                          setTimeout(() => setToastMsg(null), 2500);
+                        }
                       } catch {
-                        // ignore
+                        setToastMsg('⚠️ Error de red');
+                        setTimeout(() => setToastMsg(null), 2500);
                       } finally {
                         setGuardandoPreferencias(false);
                       }
@@ -2160,7 +2248,10 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                   </button>
                 </div>
 
-                {(usuarioActual.rol === 'admin' || usuarioActual.id === 'admin') && (
+                {(userActual.rol === 'dev' ||
+                  userActual.rol === 'admin' ||
+                  userActual.rol === 'mod' ||
+                  userActual.id === 'admin') && (
                   <button
                     onClick={() => {
                       sounds.playClick();
@@ -2168,8 +2259,20 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                     }}
                     className="w-full py-2.5 rounded-xl font-black text-xs bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer flex items-center justify-center gap-1.5"
                   >
-                    <span>👑</span>
-                    <span>Abrir Panel de Administración</span>
+                    <span>
+                      {userActual.rol === 'dev' || userActual.id === 'admin'
+                        ? '👑'
+                        : userActual.rol === 'admin'
+                        ? '🛡️'
+                        : '🔰'}
+                    </span>
+                    <span>
+                      {userActual.rol === 'dev' || userActual.id === 'admin'
+                        ? 'Abrir Consola de Desarrollo (Dev)'
+                        : userActual.rol === 'admin'
+                        ? 'Abrir Panel de Administración'
+                        : 'Abrir Salas Online (Moderación)'}
+                    </span>
                   </button>
                 )}
 
@@ -2227,7 +2330,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                             sounds.playClick();
                             setCambioClaveError(null);
                             setCambiandoClave(true);
-                            const res = await cambiarClaveUsuarioAsync(claveActualInput, nuevaClaveInput);
+                            const res = await cambiarClaveUserAsync(claveActualInput, nuevaClaveInput);
                             setCambiandoClave(false);
                             if (res.ok) {
                               sounds.playWin();
@@ -2290,7 +2393,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                   )}
                 </div>
 
-                {usuarioActual.id !== 'admin' && (
+                {userActual.id !== 'admin' && (
                   <div className="pt-2 border-t border-[#2b2140]/15">
                     {!confirmandoBaja ? (
                       <button
@@ -2311,13 +2414,13 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                           ⚠️ ¿Confirmas eliminar tu cuenta permanentemente?
                         </div>
                         <p className="text-[11px] font-bold text-[#c92a2a]">
-                          Escribe <strong>{usuarioActual.nombre}</strong> o <strong>BORRAR</strong>:
+                          Escribe <strong>{userActual.nombre}</strong> o <strong>BORRAR</strong>:
                         </p>
                         <input
                           type="text"
                           value={textoBajaConfirmacion}
                           onChange={(e) => setTextoBajaConfirmacion(e.target.value)}
-                          placeholder={`Escribe ${usuarioActual.nombre} o BORRAR`}
+                          placeholder={`Escribe ${userActual.nombre} o BORRAR`}
                           className="w-full text-xs font-bold bg-white border-2 border-[#ff8787] rounded-xl px-2.5 py-1.5 outline-none"
                         />
                         <div className="flex gap-2 mt-1">
@@ -2334,18 +2437,18 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                               cargando ||
                               (textoBajaConfirmacion.trim().toUpperCase() !== 'BORRAR' &&
                                 textoBajaConfirmacion.trim().toLowerCase() !==
-                                  usuarioActual.nombre.trim().toLowerCase())
+                                  userActual.nombre.trim().toLowerCase())
                             }
                             onClick={async () => {
                               sounds.playClick();
                               setCargando(true);
-                              const ok = await darDeBajaUsuarioAsync(usuarioActual.id);
+                              const res = await darDeBajaUserAsync(textoBajaConfirmacion);
                               setCargando(false);
-                              if (ok) {
+                              if (res.ok) {
                                 onLogout();
                                 onCerrar();
                               } else {
-                                setToastMsg('⚠️ Sin conexión a la Database para eliminar');
+                                setToastMsg(res.error || '⚠️ Sin conexión a la Database para eliminar');
                               }
                             }}
                             className="flex-1 py-1.5 rounded-xl font-black text-xs bg-[#c92a2a] text-white border border-[#a61e1e] disabled:opacity-40 cursor-pointer"
@@ -2364,7 +2467,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                   Jugadores Registrados ({comunidadLista.length})
                 </span>
                 {comunidadLista.map((u, idx) => {
-                  const esYo = u.id === usuarioActual.id;
+                  const esYo = u.id === userActual.id;
                   const lvl = obtenerNivelYTitulo(u.puntos);
                   return (
                     <div
@@ -2377,6 +2480,9 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                       <CartoonCharacter
                         color={u.avatarColor}
                         hat={u.avatarHat}
+                        ropa={u.avatarRopa}
+                        ropaColor={u.avatarRopaColor}
+                        aura={u.avatarAura}
                         size={34}
                         showShadow={false}
                       />
@@ -2386,7 +2492,9 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                             {u.nombre}
                           </span>
                           {esYo && <span className="text-[10px] font-black text-[#2b8a3e]">· TÚ</span>}
-                          {u.rol === 'admin' && <span className="text-[10px]">👑</span>}
+                          {(u.rol === 'dev' || u.id === 'admin') && <span className="text-[10px]">👑</span>}
+                          {u.rol === 'admin' && u.id !== 'admin' && <span className="text-[10px]">🛡️</span>}
+                          {u.rol === 'mod' && <span className="text-[10px]">🔰</span>}
                         </div>
                         <span className="text-[10px] text-[#86542d] font-semibold block">
                           {lvl.icono} {lvl.titulo} · {u.id}
@@ -2443,7 +2551,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
             >
               <div>
                 <label className="text-xs font-bold text-[#86542d] block mb-0.5">
-                  Nombre de usuario:
+                  Nombre de user:
                 </label>
                 <input
                   type="text"
@@ -2452,7 +2560,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                   required
                   value={nombre}
                   onChange={(e) => setNombre(e.target.value)}
-                  placeholder={tab === 'login' ? 'Tu usuario o Admin Supremo' : 'Tu nombre (3-15 caracteres)'}
+                  placeholder={tab === 'login' ? 'Tu user o Admin Supremo' : 'Tu nombre (3-15 caracteres)'}
                   className="w-full text-xs font-bold text-[#2b2140] bg-white border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-[#ffd43b]"
                 />
               </div>
@@ -2481,29 +2589,29 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                       <CartoonCharacter color={color} hat={hat} size={46} showShadow={false} />
                       <div className="text-left min-w-0">
                         <span className="text-xs font-black text-[#2b2140] block truncate">
-                          {PERSONAJES_REGISTRO.find((p) => p.id === hat)?.label || 'Corona'}
+                          {RegDeAvatar.find((p) => p.id === hat)?.nombre || 'Corona'}
                         </span>
                         <span className="text-[10px] font-semibold text-[#86542d] block">
                           Terreno: {TEMAS_LISTA.find((t) => t.id === temaRegistro)?.label}
                         </span>
                       </div>
                     </div>
-                    <div className="grid grid-cols-6 gap-1">
-                      {PERSONAJES_REGISTRO.filter((p) => p.puntosRequeridos === 0).map((item) => (
+                    <div className="grid grid-cols-5 gap-1">
+                      {RegDeAvatar.filter((p) => p.puntosRequeridos === 0).map((item) => (
                         <button
                           key={item.id}
                           type="button"
                           onClick={() => {
                             sounds.playClick();
                             setHat(item.id);
-                            setColor(item.defaultColor);
+                            setColor(item.colorDefault);
                           }}
                           className={`py-1 rounded-xl text-sm border-2 border-[#2b2140] cursor-pointer flex flex-col items-center gap-0.5 ${
                             hat === item.id ? 'bg-[#ffd43b] shadow-sm -translate-y-0.5' : 'bg-white'
                           }`}
                         >
-                          <span>{item.icon}</span>
-                          <span className="text-[8px] font-bold">{item.label}</span>
+                          <span>{item.emoji}</span>
+                          <span className="text-[8px] font-bold truncate max-w-full px-0.5">{item.nombre}</span>
                         </button>
                       ))}
                     </div>
@@ -2568,38 +2676,38 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
 interface AdminPanelModalProps {
   onCerrar: () => void;
   onShowToast?: (msg: string) => void;
-  usuarioActual?: UserAccount | null;
-  onUsuarioActualizado?: (usuario: UserAccount | null) => void;
+  userActual?: UserCuenta | null;
+  onuserActualizado?: (user: UserCuenta | null) => void;
   onAbrirLogin?: () => void;
 }
 
 export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   onCerrar,
   onShowToast = () => {},
-  usuarioActual,
-  onUsuarioActualizado,
+  userActual,
+  onuserActualizado,
   onAbrirLogin,
 }) => {
   const esAdminSupremoUnico = Boolean(
-    usuarioActual && (usuarioActual.id === 'admin' || usuarioActual.esSupremo)
+    userActual && (userActual.id === 'admin' || userActual.esSupremo)
   );
   const esYoSupremo = Boolean(
-    usuarioActual && (usuarioActual.rol === 'dev' || esAdminSupremoUnico)
+    userActual && (userActual.rol === 'dev' || esAdminSupremoUnico)
   );
-  const esAdmin = Boolean(usuarioActual && (usuarioActual.rol === 'admin' || esYoSupremo));
-  const esMod = Boolean(usuarioActual && usuarioActual.rol === 'mod');
+  const esAdmin = Boolean(userActual && (userActual.rol === 'admin' || esYoSupremo));
+  const esMod = Boolean(userActual && userActual.rol === 'mod');
   const tieneRolStaff = esYoSupremo || esAdmin || esMod;
 
   const [adminTab, setAdminTab] = useState<'jugadores' | 'editor' | 'torneo' | 'salas'>(() => {
     if (esMod && !esAdmin) return 'salas';
     return 'jugadores';
   });
-  const [cuentas, setCuentas] = useState<Record<string, UserAccount>>(() => cargarCuentas());
+  const [cuentas, setCuentas] = useState<Record<string, UserCuenta>>(() => cargarCuentas());
   const [filtro, setFiltro] = useState('');
   const [editandoId, setEditandoId] = useState<string | null>(null);
   const [sincronizando, setSincronizando] = useState(false);
   const [guardando, setGuardando] = useState(false);
-  const [diag, setDiag] = useState<NetworkDiagnostic>(() => obtenerDiagnosticoRed());
+  const [diag, setDiag] = useState<DiagnosticoDeRed>(() => obtenerDiagnosticoRed());
 
   // Salas Personalizadas (Dev, Admin, Mod)
   const [salasPersonalizadas, setSalasPersonalizadas] = useState<SalaPersonalizada[]>([]);
@@ -2616,26 +2724,28 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const [confirmandoEliminarId, setConfirmandoEliminarId] = useState<string | null>(null);
 
   // Inspector de inventario
-  const [inspectingUser, setInspectingUser] = useState<UserAccount | null>(null);
+  const [inspectingUser, setInspectingUser] = useState<UserCuenta | null>(null);
+  const [moveTargets, setMoveTargets] = useState<Record<string, string>>({});
+  const [moviendoCharId, setMoviendoCharId] = useState<string | null>(null);
 
   // Solicitud de reset de ranking
   const [solicitudReset, setSolicitudReset] = useState<SolicitudResetRanking | null>(null);
 
   // Configuración de torneo semanal
   const [puntos1, setPuntos1] = useState(50);
-  const [puntos2, setPuntos2] = useState(30);
+  const [puntos2, setPuntos2] = useState(25);
   const [puntos3, setPuntos3] = useState(15);
   const [puntosPart, setPuntosPart] = useState(5);
-  const [premioActivo, setPremioActivo] = useState<PersonajeColeccionable | undefined>(undefined);
+  const [premioActivo, setPremioActivo] = useState<AvatarColeccionable | undefined>(undefined);
   const [guardandoTorneo, setGuardandoTorneo] = useState(false);
 
   // Editor visual de personajes
   const [editorNombre, setEditorNombre] = useState('Campeón Legendario');
   const [editorColor, setEditorColor] = useState('#ffd43b');
-  const [editorHat, setEditorHat] = useState<HatType>('corona');
-  const [editorRopa, setEditorRopa] = useState<PersonajeRopaType>('capa');
+  const [editorHat, setEditorHat] = useState<AvatarTipoDeGorro>('corona');
+  const [editorRopa, setEditorRopa] = useState<AvatarTipoDeRopa>('capa');
   const [editorRopaColor, setEditorRopaColor] = useState<string>('#c92a2a');
-  const [editorAura, setEditorAura] = useState<PersonajeAuraType>('dorada');
+  const [editorAura, setEditorAura] = useState<AvatarTipoDeAura>('dorada');
   const [editorTargetId, setEditorTargetId] = useState<string>('');
   const [guardandoEditor, setGuardandoEditor] = useState(false);
 
@@ -2645,26 +2755,34 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
   // Campos de edición de jugador
   const [editNombre, setEditNombre] = useState('');
+  const [editNuevoId, setEditNuevoId] = useState('');
   const [editClave, setEditClave] = useState('');
-  const [editRol, setEditRol] = useState<UserRole>('jugador');
+  const [editRol, setEditRol] = useState<UserRol>('jugador');
   const [editPuntos, setEditPuntos] = useState<number>(0);
   const [editVictorias, setEditVictorias] = useState<number>(0);
 
   const eraStaffRef = React.useRef<boolean>(tieneRolStaff);
   const revocadoNotificadoRef = React.useRef<boolean>(false);
-  const usuarioActualRef = React.useRef<UserAccount | null | undefined>(usuarioActual);
-  usuarioActualRef.current = usuarioActual;
+  const userActualRef = React.useRef<UserCuenta | null | undefined>(userActual);
+  userActualRef.current = userActual;
 
   const onCerrarRef = React.useRef(onCerrar);
   onCerrarRef.current = onCerrar;
   const onShowToastRef = React.useRef(onShowToast);
   onShowToastRef.current = onShowToast;
-  const onUsuarioActualizadoRef = React.useRef(onUsuarioActualizado);
-  onUsuarioActualizadoRef.current = onUsuarioActualizado;
+  const onuserActualizadoRef = React.useRef(onuserActualizado);
+  onuserActualizadoRef.current = onuserActualizado;
 
   useEffect(() => {
     return suscribirDiagnostico(setDiag);
   }, []);
+
+  // Forzar pestaña de Salas si es Moderador sin rango Admin/Dev
+  useEffect(() => {
+    if (esMod && !esAdmin && adminTab !== 'salas') {
+      setAdminTab('salas');
+    }
+  }, [esMod, esAdmin, adminTab]);
 
   // Si su rol cambia o se cierra sesión, cerrar modal
   useEffect(() => {
@@ -2692,12 +2810,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       if (salas) {
         setSalasPersonalizadas(salas);
       }
-      if (cfg) {
-        setPuntos1(cfg.primerLugar ?? 50);
-        setPuntos2(cfg.segundoLugar ?? 30);
-        setPuntos3(cfg.tercerLugar ?? 15);
-        setPuntosPart(cfg.participacion ?? 5);
-        setPremioActivo(cfg.premioSemanal);
+      if (cfg?.puntosConfig) {
+        setPuntos1(cfg.puntosConfig.primerLugar ?? 50);
+        setPuntos2(cfg.puntosConfig.segundoLugar ?? 25);
+        setPuntos3(cfg.puntosConfig.tercerLugar ?? 15);
+        setPuntosPart(cfg.puntosConfig.participacion ?? 5);
+      }
+      if (cfg?.premioSemanal !== undefined) {
+        setPremioActivo(cfg.premioSemanal || undefined);
       }
     } catch {
       // Ignorar errores transitorios de red
@@ -2705,19 +2825,19 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   }, []);
 
   const verificarRevocacionYActualizarLista = React.useCallback(
-    (accs: Record<string, UserAccount>) => {
+    (accs: Record<string, UserCuenta>) => {
       setCuentas(accs);
       setEditandoId((prevEdit) => (prevEdit && !accs[prevEdit] ? null : prevEdit));
       setConfirmandoEliminarId((prevDel) => (prevDel && !accs[prevDel] ? null : prevDel));
       setInspectingUser((prevIns) => (prevIns && accs[prevIns.id] ? accs[prevIns.id] : null));
 
-      const cur = usuarioActualRef.current;
+      const cur = userActualRef.current;
       if (cur && cur.id !== 'admin' && cur.rol !== 'dev') {
         const fresh = accs[cur.id];
         if (!fresh) {
           if (!revocadoNotificadoRef.current) {
             revocadoNotificadoRef.current = true;
-            onUsuarioActualizadoRef.current?.(null);
+            onuserActualizadoRef.current?.(null);
             onShowToastRef.current('⚠️ Tu cuenta ya no existe en la Database.');
             onCerrarRef.current();
           }
@@ -2727,15 +2847,19 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           fresh.rol !== cur.rol ||
           fresh.puntos !== cur.puntos ||
           fresh.victorias !== cur.victorias ||
-          fresh.nombre !== cur.nombre
+          fresh.nombre !== cur.nombre ||
+          fresh.avatarHat !== cur.avatarHat ||
+          fresh.avatarRopa !== cur.avatarRopa ||
+          fresh.avatarAura !== cur.avatarAura ||
+          (fresh.inventario?.personajes?.length || 0) !== (cur.inventario?.personajes?.length || 0)
         ) {
-          onUsuarioActualizadoRef.current?.(fresh);
+          onuserActualizadoRef.current?.(fresh);
         }
-        if (fresh.rol !== 'admin' && fresh.rol !== 'dev') {
+        if (fresh.rol !== 'admin' && fresh.rol !== 'dev' && fresh.rol !== 'mod') {
           if (!revocadoNotificadoRef.current) {
             revocadoNotificadoRef.current = true;
             sounds.playError();
-            onShowToastRef.current('⛔ Tus permisos de administración fueron revocados.');
+            onShowToastRef.current('⛔ Tus permisos de Staff fueron revocados.');
             onCerrarRef.current();
           }
           return false;
@@ -2794,14 +2918,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   }, [sincronizar, verificarRevocacionYActualizarLista]);
 
   const verificarPermisoAccion = async (requiereSupremo: boolean = false): Promise<boolean> => {
-    const check = await D1_VerificarAccionAdmin(usuarioActual || null, requiereSupremo);
+    const check = await D1_VerificarAccionAdmin(userActual || null, requiereSupremo);
     if (!check.ok) {
       sounds.playError();
       onShowToast(check.error || '⛔ Acción no autorizada');
       if (check.revocado) {
         const accs = cargarCuentas();
-        const updated = usuarioActual ? accs[usuarioActual.id] || null : null;
-        onUsuarioActualizado?.(updated);
+        const updated = userActual ? accs[userActual.id] || null : null;
+        onuserActualizado?.(updated);
         onCerrar();
       }
       return false;
@@ -2814,7 +2938,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const handleRestablecerClave = async (id: string, nombre: string) => {
     sounds.playClick();
     onShowToast('⏳ Generando clave temporal...');
-    const res = await restablecerClaveUsuarioAsync(id);
+    const res = await restablecerClaveUserAsync(id);
     if (res.ok && res.claveTemporal) {
       setClaveTemporalInfo({ nombre, clave: res.claveTemporal });
       onShowToast(`🔑 Clave restablecida para ${nombre}`);
@@ -2824,10 +2948,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     }
   };
 
-  const iniciarEdicion = (acc: UserAccount) => {
+  const iniciarEdicion = (acc: UserCuenta) => {
     sounds.playClick();
     setEditandoId(acc.id);
     setEditNombre(acc.nombre);
+    setEditNuevoId(acc.id);
     setEditClave('');
     setEditRol(acc.rol || 'jugador');
     setEditPuntos(acc.puntos);
@@ -2839,8 +2964,12 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     const targetOriginal = cuentas[id];
     if (!targetOriginal) return;
 
-    // Solo el Dev Supremo puede alterar roles mayores a mod o tocar admins
-    const cambioRolMayor = editRol === 'admin' || editRol === 'dev' || targetOriginal.rol === 'admin';
+    // Solo el Dev Supremo Único puede asignar o revocar el rango Dev, o modificar a un Dev
+    const cambioRolMayor =
+      editRol === 'admin' ||
+      editRol === 'dev' ||
+      targetOriginal.rol === 'admin' ||
+      targetOriginal.rol === 'dev';
     const autorizado = await verificarPermisoAccion(cambioRolMayor);
     if (!autorizado) return;
 
@@ -2850,11 +2979,38 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       return;
     }
 
+    const nuevoIdLimpio = editNuevoId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    if (esYoSupremo && nuevoIdLimpio !== id) {
+      if (nuevoIdLimpio.length < 3 || nuevoIdLimpio.length > 20 || nuevoIdLimpio === 'admin') {
+        onShowToast('⚠️ El nuevo ID debe tener entre 3 y 20 caracteres válidos');
+        return;
+      }
+    }
+
     setGuardando(true);
     try {
+      let effectiveTargetId = id;
+      if (esYoSupremo && nuevoIdLimpio && nuevoIdLimpio !== id) {
+        const resId = await adminCambiarIdUserAsync(id, nuevoIdLimpio);
+        if (!resId.ok) {
+          sounds.playError();
+          onShowToast(resId.error || '⚠️ No se pudo cambiar el ID de la cuenta');
+          return;
+        }
+        effectiveTargetId = nuevoIdLimpio;
+      }
+
       const patchData: any = {
         nombre: nombreLimpio,
-        rol: esYoSupremo ? editRol : (editRol === 'mod' ? 'mod' : 'jugador'),
+        rol: esAdminSupremoUnico
+          ? editRol
+          : esYoSupremo
+          ? editRol === 'dev'
+            ? targetOriginal.rol
+            : editRol
+          : editRol === 'mod'
+          ? 'mod'
+          : 'jugador',
         puntos: editPuntos,
         victorias: editVictorias,
       };
@@ -2862,14 +3018,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         patchData.clave = editClave.trim();
       }
 
-      const res = await adminActualizarUsuarioAsync(id, patchData);
+      const res = await adminActualizarUserAsync(effectiveTargetId, patchData);
 
       if (res.ok) {
         const actualizadas = cargarCuentas();
         setCuentas(actualizadas);
         setEditandoId(null);
-        if (usuarioActual && usuarioActual.id === id) {
-          onUsuarioActualizado?.(actualizadas[id] || null);
+        if (userActual && (userActual.id === id || userActual.id === effectiveTargetId)) {
+          onuserActualizado?.(actualizadas[effectiveTargetId] || null);
         }
         onShowToast(`✅ Cambios de "${nombreLimpio}" guardados en Database`);
       } else {
@@ -2883,7 +3039,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     }
   };
 
-  const ejecutarEliminarUsuario = async (id: string, nombre: string) => {
+  const ejecutarEliminarUser = async (id: string, nombre: string) => {
     sounds.playClick();
     if (!esYoSupremo) {
       onShowToast('⛔ Solo el Dev Supremo puede eliminar cuentas permanentemente.');
@@ -2894,15 +3050,15 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
     setGuardando(true);
     try {
-      const res = await adminEliminarUsuarioAsync(id);
+      const res = await adminEliminarUserAsync(id);
       if (res.ok) {
         const actualizadas = cargarCuentas();
         setCuentas(actualizadas);
         setConfirmandoEliminarId(null);
-        onShowToast(`🗑️ Usuario "${nombre}" eliminado de la Database`);
+        onShowToast(`🗑️ User "${nombre}" eliminado de la Database`);
       } else {
         sounds.playError();
-        onShowToast(res.error || '⚠️ No se pudo eliminar el usuario');
+        onShowToast(res.error || '⚠️ No se pudo eliminar el user');
       }
     } catch {
       onShowToast('❌ Error al eliminar en la Database');
@@ -2925,8 +3081,8 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         setCuentas(actualizadas);
         setConfirmandoResetRanking(false);
         setSolicitudReset(null);
-        if (usuarioActual && usuarioActual.id !== 'admin' && actualizadas[usuarioActual.id]) {
-          onUsuarioActualizado?.(actualizadas[usuarioActual.id]);
+        if (userActual && userActual.id !== 'admin' && actualizadas[userActual.id]) {
+          onuserActualizado?.(actualizadas[userActual.id]);
         }
         onShowToast('🧹 Ranking Global reiniciado a cero en la Database');
       } else {
@@ -2950,8 +3106,8 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         onShowToast('📨 Solicitud enviada al Dev Supremo');
         setSolicitudReset({
           solicitada: true,
-          porNombre: usuarioActual?.nombre || 'Admin',
-          porId: usuarioActual?.id || 'admin',
+          porNombre: userActual?.nombre || 'Admin',
+          porId: userActual?.id || 'admin',
           fecha: new Date().toLocaleDateString(),
           motivo: 'Reinicio semanal solicitado',
         });
@@ -3023,7 +3179,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     sounds.playClick();
     setGuardandoEditor(true);
     try {
-      const nuevoChar: Omit<PersonajeColeccionable, 'id' | 'origen'> = {
+      const nuevoChar = {
         nombre: editorNombre.trim() || 'Personaje Exclusivo',
         color: editorColor,
         hat: editorHat,
@@ -3051,7 +3207,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     sounds.playClick();
     setGuardandoEditor(true);
     try {
-      const nuevoPremio: Omit<PersonajeColeccionable, 'id' | 'origen'> = {
+      const nuevoPremio = {
         nombre: editorNombre.trim() || 'Campeón Semanal',
         color: editorColor,
         hat: editorHat,
@@ -3062,8 +3218,13 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       const res = await fijarPremioSemanalAsync(nuevoPremio);
       if (res.ok) {
         sounds.playVictory();
-        const premioGuardado = (res.premioSemanal || nuevoPremio) as PersonajeColeccionable;
-        setPremioActivo(premioGuardado);
+        setPremioActivo({
+          id: 'premio_actual',
+          ...nuevoPremio,
+          fechaAdquisicion: new Date().toISOString(),
+          origen: 'torneo_semanal',
+        });
+        await cargarDatosAdminAdicionales();
         onShowToast(`🏆 ¡"${nuevoPremio.nombre}" fijado como premio del Torneo Semanal!`);
       } else {
         onShowToast(res.error || 'Error al fijar premio semanal');
@@ -3106,7 +3267,6 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         modoMuros: nuevaSalaModo,
         tamanoTablero: nuevaSalaTablero,
         mensajeEspecial: nuevaSalaMensaje.trim(),
-        destacada: true,
       });
       if (res.ok && res.sala) {
         sounds.playVictory();
@@ -3135,7 +3295,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     }
   };
 
-  // Quitar personaje del inventario (exclusivo Dev)
+  // Quitar personaje del inventario (Dev o Admin)
   const handleQuitarPersonaje = async (userId: string, personajeId: string) => {
     sounds.playClick();
     const res = await quitarPersonajeInventarioAsync(userId, personajeId);
@@ -3148,6 +3308,33 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       onShowToast('🗑️ Personaje retirado del inventario');
     } else {
       onShowToast(res.error || 'No se pudo retirar el personaje');
+    }
+  };
+
+  // Mover personaje de un inventario a otro (Dev o Admin)
+  const handleMoverPersonaje = async (fromId: string, toId: string, personajeId: string) => {
+    if (!toId) {
+      onShowToast('⚠️ Selecciona un jugador destino para mover el personaje');
+      return;
+    }
+    sounds.playClick();
+    setMoviendoCharId(personajeId);
+    try {
+      const res = await moverPersonajeInventarioAsync(fromId, toId, personajeId);
+      if (res.ok) {
+        sounds.playVictory();
+        const accs = cargarCuentas();
+        setCuentas(accs);
+        if (inspectingUser && inspectingUser.id === fromId) {
+          setInspectingUser(accs[fromId] || null);
+        }
+        onShowToast(res.mensaje || '📦 Personaje transferido al otro inventario');
+      } else {
+        sounds.playError();
+        onShowToast(res.error || 'No se pudo mover el personaje');
+      }
+    } finally {
+      setMoviendoCharId(null);
     }
   };
 
@@ -3174,12 +3361,12 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     const reader = new FileReader();
     reader.onload = async (ev) => {
       const content = ev.target?.result as string;
-      const ok = await importarDatosJSONAsync(content);
-      if (ok) {
+      const res = await importarDatosJSONAsync(content);
+      if (res.ok) {
         setCuentas(cargarCuentas());
-        onShowToast('✅ Database restaurada');
+        onShowToast('✅ Datos locales restaurados');
       } else {
-        onShowToast('❌ Archivo de respaldo inválido');
+        onShowToast(res.error || '❌ Archivo de respaldo inválido');
       }
     };
     reader.readAsText(file);
@@ -3207,23 +3394,24 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     '#fab005', '#e03131', '#1098ad', '#5c7cfa',
   ];
 
-  const sombrerosDisponibles: HatType[] = [
+  const sombrerosDisponibles: AvatarTipoDeGorro[] = [
     'corona', 'pompon', 'antena', 'brote', 'mago',
     'gatito', 'zorro', 'robot', 'dragon', 'ninja',
     'navidad', 'granjero', 'vikingo', 'copa', 'gorra', 'boina', 'espacial',
   ];
 
-  const ropasDisponibles: { id: PersonajeRopaType; label: string; icon: string }[] = [
+  const ropasDisponibles: { id: AvatarTipoDeRopa; label: string; icon: string }[] = [
     { id: 'ninguna', label: 'Sin Ropa', icon: '👕' },
     { id: 'capa', label: 'Capa Real', icon: '🧣' },
     { id: 'armadura', label: 'Armadura', icon: '🛡️' },
     { id: 'tunica', label: 'Túnica', icon: '🥋' },
     { id: 'tuxedo', label: 'Tuxedo', icon: '🤵' },
+    { id: 'smoking', label: 'Smoking', icon: '🎩' },
     { id: 'cinturon', label: 'Cinturón Oro', icon: '🥋' },
     { id: 'alas', label: 'Alas Cósmicas', icon: '🪽' },
   ];
 
-  const aurasDisponibles: { id: PersonajeAuraType; label: string; icon: string }[] = [
+  const aurasDisponibles: { id: AvatarTipoDeAura; label: string; icon: string }[] = [
     { id: 'ninguna', label: 'Sin Aura', icon: '⚪' },
     { id: 'dorada', label: 'Dorada', icon: '✨' },
     { id: 'fuego', label: 'Fuego', icon: '🔥' },
@@ -3237,13 +3425,21 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
           <div className="flex items-center gap-2">
-            <span className="text-2xl">{esYoSupremo ? '👑' : '🛡️'}</span>
+            <span className="text-2xl">{esYoSupremo ? '👑' : esAdmin ? '🛡️' : '🔰'}</span>
             <div>
               <h3 className="text-lg sm:text-xl font-black text-[#2b2140] leading-none">
-                {esYoSupremo ? 'Consola de Desarrollo (Dev)' : 'Panel de Moderación & Admin'}
+                {esYoSupremo
+                  ? 'Consola de Desarrollo (Dev)'
+                  : esAdmin
+                  ? 'Panel de Administración'
+                  : 'Panel de Moderación (Salas)'}
               </h3>
               <span className="text-[11px] font-bold text-[#86542d]">
-                {esYoSupremo ? 'Control Total de la Database D1' : `Administrador: ${usuarioActual?.nombre}`}
+                {esYoSupremo
+                  ? 'Control Total de la Database D1'
+                  : esAdmin
+                  ? `Administrador: ${userActual?.nombre}`
+                  : `Moderador: ${userActual?.nombre}`}
               </span>
             </div>
           </div>
@@ -3303,10 +3499,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
             ) : (
               <div className="p-2 rounded-2xl border-2 border-[#2b2140] bg-[#d3f9d8] text-[#134e20] text-xs font-black flex items-center justify-between gap-2 shadow-sm">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="text-base">{esYoSupremo ? '👑' : '🛡️'}</span>
+                  <span className="text-base">{esYoSupremo ? '👑' : esAdmin ? '🛡️' : '🔰'}</span>
                   <div className="leading-tight truncate">
                     <span className="block truncate text-xs">
-                      {esYoSupremo ? 'Sesión Suprema: Dev Activo' : `Admin: ${usuarioActual?.nombre}`}
+                      {esYoSupremo
+                        ? 'Sesión Suprema: Dev Activo'
+                        : esAdmin
+                        ? `Admin: ${userActual?.nombre}`
+                        : `Mod: ${userActual?.nombre}`}
                     </span>
                     <span className="text-[10px] font-bold text-[#2b8a3e]">
                       🟢 Database D1 Conectada ({diag.serverPingMs} ms)
@@ -3326,51 +3526,55 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
             {/* Pestañas de Navegación */}
             <div className="flex gap-1.5 bg-[#ebdcc2] p-1 rounded-2xl border-2 border-[#2b2140]">
-              <button
-                type="button"
-                onClick={() => {
-                  sounds.playClick();
-                  setAdminTab('jugadores');
-                }}
-                className={`flex-1 py-1.5 px-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                  adminTab === 'jugadores'
-                    ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
-                    : 'text-[#5c3c00] hover:bg-white/40'
-                }`}
-              >
-                <span>👥</span>
-                <span>Jugadores</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  sounds.playClick();
-                  setAdminTab('editor');
-                }}
-                className={`flex-1 py-1.5 px-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                  adminTab === 'editor'
-                    ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
-                    : 'text-[#5c3c00] hover:bg-white/40'
-                }`}
-              >
-                <span>🎨</span>
-                <span>Editor de Personajes</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  sounds.playClick();
-                  setAdminTab('torneo');
-                }}
-                className={`flex-1 py-1.5 px-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                  adminTab === 'torneo'
-                    ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
-                    : 'text-[#5c3c00] hover:bg-white/40'
-                }`}
-              >
-                <span>🏆</span>
-                <span>Torneo & Premios</span>
-              </button>
+              {esAdmin && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sounds.playClick();
+                      setAdminTab('jugadores');
+                    }}
+                    className={`flex-1 py-1.5 px-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                      adminTab === 'jugadores'
+                        ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                        : 'text-[#5c3c00] hover:bg-white/40'
+                    }`}
+                  >
+                    <span>👥</span>
+                    <span>Jugadores</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sounds.playClick();
+                      setAdminTab('editor');
+                    }}
+                    className={`flex-1 py-1.5 px-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                      adminTab === 'editor'
+                        ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                        : 'text-[#5c3c00] hover:bg-white/40'
+                    }`}
+                  >
+                    <span>🎨</span>
+                    <span>Editor de Personajes</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sounds.playClick();
+                      setAdminTab('torneo');
+                    }}
+                    className={`flex-1 py-1.5 px-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                      adminTab === 'torneo'
+                        ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                        : 'text-[#5c3c00] hover:bg-white/40'
+                    }`}
+                  >
+                    <span>🏆</span>
+                    <span>Torneo & Premios</span>
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -3384,7 +3588,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 }`}
               >
                 <span>🎮</span>
-                <span>Salas Online (Mod)</span>
+                <span>Salas Online ({esAdmin ? 'Staff' : 'Mod'})</span>
               </button>
             </div>
 
@@ -3472,7 +3676,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                         </button>
                       </div>
                       <p className="mt-1 text-[11px] text-[#495057]">
-                        Esta clave fue cifrada en la Database. Pásasela al usuario.
+                        Esta clave fue cifrada en la Database. Pásasela al user.
                       </p>
                     </div>
                     <button
@@ -3538,6 +3742,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                   color={acc.avatarColor}
                                   hat={acc.avatarHat}
                                   ropa={acc.avatarRopa}
+                                  ropaColor={acc.avatarRopaColor}
                                   aura={acc.avatarAura}
                                   size={36}
                                   showShadow={false}
@@ -3550,7 +3755,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                     {badgeRol}
                                   </div>
                                   <span className="text-[11px] text-[#86542d] font-semibold block truncate">
-                                    {acc.puntos} pts · {acc.victorias} vic · ELO {acc.elo || 1000}
+                                    ID: {acc.id} · {acc.puntos} pts · {acc.victorias} vic
                                   </span>
                                 </div>
                               </div>
@@ -3593,7 +3798,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                   </>
                                 )}
 
-                                {esYoSupremo && acc.id !== 'admin' && acc.id !== usuarioActual?.id && (
+                                {esYoSupremo && acc.id !== 'admin' && acc.id !== userActual?.id && (
                                   <button
                                     type="button"
                                     onClick={() => {
@@ -3626,7 +3831,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                   <button
                                     type="button"
                                     disabled={guardando}
-                                    onClick={() => ejecutarEliminarUsuario(acc.id, acc.nombre)}
+                                    onClick={() => ejecutarEliminarUser(acc.id, acc.nombre)}
                                     className="py-1 px-2.5 rounded-lg bg-[#c92a2a] text-white font-black text-[11px] cursor-pointer"
                                   >
                                     {guardando ? 'Borrando...' : 'Sí, eliminar'}
@@ -3689,12 +3894,28 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                               </div>
                             </div>
 
+                            {esYoSupremo && acc.id !== 'admin' && (
+                              <div className="text-xs">
+                                <label className="font-bold text-[#86542d] block">
+                                  🆔 ID de Cuenta en Cascada (Solo Dev):
+                                </label>
+                                <input
+                                  type="text"
+                                  minLength={3}
+                                  maxLength={20}
+                                  value={editNuevoId}
+                                  onChange={(e) => setEditNuevoId(e.target.value.toLowerCase())}
+                                  className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-2 py-1 font-mono font-bold text-xs"
+                                />
+                              </div>
+                            )}
+
                             <div className="text-xs">
                               <label className="font-bold text-[#86542d] block">Rol Asignado:</label>
                               {esAdminSupremoUnico ? (
                                 <select
                                   value={editRol}
-                                  onChange={(e) => setEditRol(e.target.value as UserRole)}
+                                  onChange={(e) => setEditRol(e.target.value as UserRol)}
                                   className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs cursor-pointer"
                                 >
                                   <option value="jugador">🎮 Jugador Normal</option>
@@ -3706,7 +3927,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                 <select
                                   value={editRol === 'dev' ? 'dev' : editRol}
                                   disabled={editRol === 'dev'}
-                                  onChange={(e) => setEditRol(e.target.value as UserRole)}
+                                  onChange={(e) => setEditRol(e.target.value as UserRol)}
                                   className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs cursor-pointer"
                                 >
                                   <option value="jugador">🎮 Jugador Normal</option>
@@ -3716,7 +3937,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                               ) : (
                                 <select
                                   value={editRol === 'mod' ? 'mod' : 'jugador'}
-                                  onChange={(e) => setEditRol(e.target.value as UserRole)}
+                                  onChange={(e) => setEditRol(e.target.value as UserRol)}
                                   className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs cursor-pointer"
                                 >
                                   <option value="jugador">🎮 Jugador Normal</option>
@@ -4187,32 +4408,26 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                         <span>🔓</span> Requisitos de Desbloqueo de Personajes Base (Solo Dev)
                       </h4>
                       <p className="text-[11px] text-[#86542d] font-medium mt-0.5">
-                        Puntos requeridos en el Ranking Global para que cada personaje base aparezca y se desbloquee a los usuarios. Los 5 iniciales siempre están disponibles desde 0 pts.
+                        Puntos requeridos en el Ranking Global para que cada personaje base aparezca y se desbloquee a los users. Los 5 iniciales siempre están disponibles desde 0 pts.
                       </p>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                      {[
-                        { id: 'gatito', nombre: 'Gatito Curioso', icon: '🐱' },
-                        { id: 'zorro', nombre: 'Zorro Astuto', icon: '🦊' },
-                        { id: 'robot', nombre: 'Cyber Bot', icon: '🤖' },
-                        { id: 'dragon', nombre: 'Dragón Guardián', icon: '🐲' },
-                        { id: 'ninja', nombre: 'Ninja Maestro', icon: '🥷' },
-                      ].map((item) => (
+                      {RegDeAvatar.filter((p) => p.desbloqueoTipo === 'puntos').map((item) => (
                         <div key={item.id} className="p-2 bg-[#f8f9fa] rounded-xl border border-[#2b2140]/20 flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg">{item.icon}</span>
-                            <div>
-                              <span className="font-black text-xs text-[#2b2140] block">{item.nombre}</span>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-lg">{item.emoji}</span>
+                            <div className="min-w-0">
+                              <span className="font-black text-xs text-[#2b2140] block truncate">{item.nombre}</span>
                               <span className="text-[10px] text-[#86542d] block">Puntos mínimos:</span>
                             </div>
                           </div>
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-1 shrink-0">
                             <input
                               type="number"
                               min={0}
                               max={10000}
-                              value={desbloqueosDev[item.id] ?? 0}
+                              value={desbloqueosDev[item.id] ?? item.puntosRequeridos}
                               onChange={(e) => {
                                 const val = Math.max(0, Number(e.target.value));
                                 setDesbloqueosDev((prev) => ({ ...prev, [item.id]: val }));
@@ -4444,46 +4659,79 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   inspectingUser.inventario.personajes.map((char) => (
                     <div
                       key={char.id}
-                      className="p-2.5 rounded-2xl border-2 border-[#2b2140] bg-white flex items-center justify-between gap-2 shadow-sm"
+                      className="p-2.5 rounded-2xl border-2 border-[#2b2140] bg-white flex flex-col gap-2 shadow-sm"
                     >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <CartoonCharacter
-                          size={44}
-                          color={char.color}
-                          hat={char.hat}
-                          ropa={char.ropa}
-                          ropaColor={char.ropaColor}
-                          aura={char.aura}
-                        />
-                        <div className="min-w-0">
-                          <span className="font-black text-xs text-[#2b2140] block truncate">
-                            {char.nombre}
-                          </span>
-                          <span className="text-[10px] text-[#86542d] block">
-                            Atuendo: {char.ropa || 'ninguno'} · Aura: {char.aura || 'ninguna'}
-                          </span>
-                          <span className="text-[9px] text-[#2b8a3e] font-black block">
-                            {typeof char.origen === 'object' && char.origen?.tipo === 'torneo_semanal'
-                              ? '🏆 Premio Torneo Semanal'
-                              : typeof char.origen === 'object' && char.origen?.tipo === 'regalo_dev'
-                              ? '👑 Regalo Dev Supremo'
-                              : typeof char.origen === 'string'
-                              ? `🎁 ${char.origen}`
-                              : `🎁 Regalo de ${typeof char.origen === 'object' && char.origen?.otorgadoPor ? char.origen.otorgadoPor : 'Admin'}`}
-                            {typeof char.origen === 'object' && char.origen?.fecha ? ` · ${char.origen.fecha}` : ''}
-                          </span>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <CartoonCharacter
+                            size={44}
+                            color={char.color}
+                            hat={char.hat}
+                            ropa={char.ropa}
+                            ropaColor={char.ropaColor}
+                            aura={char.aura}
+                          />
+                          <div className="min-w-0">
+                            <span className="font-black text-xs text-[#2b2140] block truncate">
+                              {char.nombre}
+                            </span>
+                            <span className="text-[10px] text-[#86542d] block">
+                              Atuendo: {char.ropa || 'ninguno'} · Aura: {char.aura || 'ninguna'}
+                            </span>
+                            <span className="text-[9px] text-[#2b8a3e] font-black block">
+                              {typeof char.origen === 'object' && char.origen?.tipo === 'torneo_semanal'
+                                ? '🏆 Premio Torneo Semanal'
+                                : typeof char.origen === 'object' && char.origen?.tipo === 'regalo_dev'
+                                ? '👑 Regalo Dev Supremo'
+                                : typeof char.origen === 'string'
+                                ? `🎁 ${char.origen}`
+                                : `🎁 Regalo de ${typeof char.origen === 'object' && char.origen?.otorgadoPor ? char.origen.otorgadoPor : 'Admin'}`}
+                              {typeof char.origen === 'object' && char.origen?.fecha ? ` · ${char.origen.fecha}` : ''}
+                            </span>
+                          </div>
                         </div>
+
+                        {esAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => handleQuitarPersonaje(inspectingUser.id, char.id)}
+                            className="py-1 px-2 rounded-lg bg-[#ffe3e3] border border-[#c92a2a] text-[10px] font-black text-[#c92a2a] hover:bg-[#ffc9c9] cursor-pointer shrink-0"
+                            title="Retirar personaje del inventario del user"
+                          >
+                            🗑️ Retirar
+                          </button>
+                        )}
                       </div>
 
-                      {esYoSupremo && (
-                        <button
-                          type="button"
-                          onClick={() => handleQuitarPersonaje(inspectingUser.id, char.id)}
-                          className="py-1 px-2 rounded-lg bg-[#ffe3e3] border border-[#c92a2a] text-[10px] font-black text-[#c92a2a] hover:bg-[#ffc9c9] cursor-pointer shrink-0"
-                          title="Retirar personaje del inventario del usuario"
-                        >
-                          🗑️ Retirar
-                        </button>
+                      {esAdmin && (
+                        <div className="flex items-center gap-1.5 pt-1.5 border-t border-[#2b2140]/10">
+                          <select
+                            value={moveTargets[char.id] || ''}
+                            onChange={(e) =>
+                              setMoveTargets((prev) => ({ ...prev, [char.id]: e.target.value }))
+                            }
+                            className="flex-1 text-[11px] font-bold bg-[#f8f9fa] border border-[#2b2140] rounded-lg px-2 py-1 outline-none cursor-pointer"
+                          >
+                            <option value="">Mover a otro jugador...</option>
+                            {Object.values(cuentas)
+                              .filter((u) => u.id !== 'admin' && u.id !== inspectingUser.id)
+                              .map((u) => (
+                                <option key={u.id} value={u.id}>
+                                  {u.nombre} ({u.id})
+                                </option>
+                              ))}
+                          </select>
+                          <button
+                            type="button"
+                            disabled={moviendoCharId === char.id || !moveTargets[char.id]}
+                            onClick={() =>
+                              handleMoverPersonaje(inspectingUser.id, moveTargets[char.id] || '', char.id)
+                            }
+                            className="py-1 px-2.5 rounded-lg bg-[#e7f5ff] border border-[#1971c2] text-[10px] font-black text-[#1864ab] hover:bg-[#d0ebff] disabled:opacity-50 cursor-pointer shrink-0"
+                          >
+                            {moviendoCharId === char.id ? '⏳...' : '📦 Mover'}
+                          </button>
+                        </div>
                       )}
                     </div>
                   ))

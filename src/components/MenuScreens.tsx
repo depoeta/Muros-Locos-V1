@@ -8,16 +8,16 @@
 import React, { useEffect, useState } from 'react';
 import { sounds } from '../game/murosLocosEngine';
 import {
-  AppSettings,
-  BoardTheme,
+  AjustesDeApp,
+  TemaTablero,
   EstiloVisual,
-  HatType,
-  MatchConfig,
-  PERSONAJES_REGISTRO,
-  PersonajeAuraType,
-  PersonajeRopaType,
-  PlayerType,
-  UserAccount,
+  AvatarTipoDeGorro,
+  ConfigDePartida,
+  RegDeAvatar,
+  AvatarTipoDeAura,
+  AvatarTipoDeRopa,
+  TipoDeJugador,
+  UserCuenta,
 } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
 import { AspectoModal } from './Modals';
@@ -28,7 +28,7 @@ import { actualizarNombreInvitadoLocal } from '../game/storage';
 // 1. MENU SCREEN
 // =========================================================================
 interface MenuScreenProps {
-  usuarioActual: UserAccount | null;
+  userActual: UserCuenta | null;
   estiloVisual?: EstiloVisual;
   onToggleEstiloVisual?: () => void;
   onAbrirPerfil: () => void;
@@ -44,7 +44,7 @@ interface MenuScreenProps {
 }
 
 export const MenuScreen: React.FC<MenuScreenProps> = ({
-  usuarioActual,
+  userActual,
   estiloVisual = 'clasico',
   onToggleEstiloVisual,
   onAbrirPerfil,
@@ -88,9 +88,9 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
     { char: 'S', color: '#51cf66' },
   ];
 
-  const esDev = Boolean(usuarioActual && (usuarioActual.rol === 'dev' || usuarioActual.id === 'admin' || usuarioActual.esSupremo));
-  const esAdmin = Boolean(usuarioActual && (usuarioActual.rol === 'admin' || esDev));
-  const esMod = Boolean(usuarioActual && usuarioActual.rol === 'mod');
+  const esDev = Boolean(userActual && (userActual.rol === 'dev' || userActual.id === 'admin' || userActual.esSupremo));
+  const esAdmin = Boolean(userActual && (userActual.rol === 'admin' || esDev));
+  const esMod = Boolean(userActual && userActual.rol === 'mod');
   const esStaff = esDev || esAdmin || esMod;
 
   const esMinimalista = estiloVisual === 'minimalista';
@@ -232,23 +232,23 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
                 ? 'py-1 px-3 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/10 text-white transition-all cursor-pointer flex items-center gap-2 group shadow-sm'
                 : 'py-1 px-3 rounded-2xl bg-white border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fff9db] hover:-translate-y-0.5 active:translate-y-1 active:shadow-none transition-all cursor-pointer flex items-center gap-2 group'
             }
-            title="Gestionar perfil de usuario o iniciar sesión"
+            title="Gestionar perfil de user o iniciar sesión"
           >
-            {usuarioActual ? (
+            {userActual ? (
               <>
                 <CartoonCharacter
-                  color={usuarioActual.avatarColor}
-                  hat={usuarioActual.avatarHat}
-                  ropa={usuarioActual.avatarRopa}
-                  ropaColor={usuarioActual.avatarRopaColor}
-                  aura={usuarioActual.avatarAura}
+                  color={userActual.avatarColor}
+                  hat={userActual.avatarHat}
+                  ropa={userActual.avatarRopa}
+                  ropaColor={userActual.avatarRopaColor}
+                  aura={userActual.avatarAura}
                   size={26}
                   showShadow={false}
                 />
                 <div className="text-left leading-tight">
                   <div className="flex items-center gap-1">
                     <span className={esMinimalista ? 'text-xs font-semibold text-slate-200 max-w-[95px] truncate' : 'text-xs font-black text-[#2b2140] max-w-[95px] truncate'}>
-                      {usuarioActual.nombre}
+                      {userActual.nombre}
                     </span>
                     {esStaff && (
                       <span className={
@@ -264,12 +264,12 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
                           ? 'text-[8px] bg-[#a5d8ff] text-[#1864ab] font-black px-1 rounded border border-[#2b2140]'
                           : 'text-[8px] bg-[#b2f2bb] text-[#2b8a3e] font-black px-1 rounded border border-[#2b2140]'
                       }>
-                        {usuarioActual.id === 'admin' ? 'DEV SUPREMO' : esDev ? 'DEV' : esAdmin ? 'ADMIN' : 'MOD'}
+                        {userActual.id === 'admin' ? 'DEV SUPREMO' : esDev ? 'DEV' : esAdmin ? 'ADMIN' : 'MOD'}
                       </span>
                     )}
                   </div>
                   <span className={esMinimalista ? 'text-[10px] font-semibold text-emerald-400 block' : 'text-[10px] font-bold text-[#2b8a3e] block'}>
-                    ⭐ {usuarioActual.puntos} pts
+                    ⭐ {userActual.puntos} pts
                   </span>
                 </div>
               </>
@@ -544,16 +544,16 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
 // 2. CONFIG SCREEN (Único botón de Aspecto arriba + personaje/terreno predeterminados)
 // =========================================================================
 interface ConfigScreenProps {
-  ajustes?: AppSettings;
+  ajustes?: AjustesDeApp;
   esTorneoInicial?: boolean;
-  usuarioActual?: UserAccount | null;
-  onIniciar: (config: MatchConfig) => void;
+  userActual?: UserCuenta | null;
+  onIniciar: (config: ConfigDePartida) => void;
   onVolver: () => void;
-  onUsuarioActualizado?: (u: UserAccount) => void;
+  onuserActualizado?: (u: UserCuenta) => void;
   onShowToast?: (msg: string) => void;
 }
 
-const TEMA_ICONOS: Record<BoardTheme, string> = {
+const TEMA_ICONOS: Record<TemaTablero, string> = {
   madera: '🪵 Madera',
   neon: '⚡ Neón',
   hielo: '❄️ Hielo',
@@ -563,72 +563,75 @@ const TEMA_ICONOS: Record<BoardTheme, string> = {
 export const ConfigScreen: React.FC<ConfigScreenProps> = ({
   ajustes,
   esTorneoInicial = false,
-  usuarioActual,
+  userActual,
   onIniciar,
   onVolver,
-  onUsuarioActualizado,
+  onuserActualizado,
   onShowToast,
 }) => {
   const [numJugadores, setNumJugadores] = useState<2 | 4>(2);
   const [modalAspectoAbierto, setModalAspectoAbierto] = useState(false);
 
-  // Carga automática del terreno y personaje predeterminados del usuario si existen
-  const [temaTablero, setTemaTablero] = useState<BoardTheme>(
-    () => usuarioActual?.temaTablero || ajustes?.temaTablero || 'madera'
+  // Carga automática del terreno y personaje predeterminados del user si existen
+  const [temaTablero, setTemaTablero] = useState<TemaTablero>(
+    () => userActual?.temaTablero || ajustes?.temaTablero || 'madera'
   );
   const [jugadores, setJugadores] = useState<
     {
+      cuentaId?: string;
       nombre: string;
-      tipo: PlayerType;
+      tipo: TipoDeJugador;
       color: string;
-      hat: HatType;
-      ropa?: PersonajeRopaType;
+      hat: AvatarTipoDeGorro;
+      ropa?: AvatarTipoDeRopa;
       ropaColor?: string;
-      aura?: PersonajeAuraType;
+      aura?: AvatarTipoDeAura;
     }[]
   >(() => [
     {
-      nombre: usuarioActual?.nombre || 'Tú',
+      cuentaId: userActual?.id,
+      nombre: userActual?.nombre || 'Tú',
       tipo: 'humano',
-      color: usuarioActual?.avatarColor || '#ff6b6b',
-      hat: usuarioActual?.avatarHat || 'corona',
-      ropa: usuarioActual?.avatarRopa || 'ninguna',
-      ropaColor: usuarioActual?.avatarRopaColor,
-      aura: usuarioActual?.avatarAura || 'ninguna',
+      color: userActual?.avatarColor || '#ff6b6b',
+      hat: userActual?.avatarHat || 'corona',
+      ropa: userActual?.avatarRopa || 'ninguna',
+      ropaColor: userActual?.avatarRopaColor,
+      aura: userActual?.avatarAura || 'ninguna',
     },
     { nombre: 'Bot Normal', tipo: 'bot_normal', color: '#4dabf7', hat: 'bot_cpu', ropa: 'ninguna', aura: 'ninguna' },
     { nombre: 'Bot Fácil', tipo: 'bot_facil', color: '#ffd43b', hat: 'bot_cpu', ropa: 'ninguna', aura: 'ninguna' },
     { nombre: 'Bot Difícil', tipo: 'bot_dificil', color: '#51cf66', hat: 'bot_cpu', ropa: 'ninguna', aura: 'ninguna' },
   ]);
 
-  // Si el usuario inicia sesión o sincroniza su perfil predeterminado, reflejar su personaje y terreno
+  // Si el user inicia sesión o sincroniza su perfil predeterminado, reflejar su personaje y terreno
   useEffect(() => {
-    if (usuarioActual) {
-      if (usuarioActual.temaTablero) {
-        setTemaTablero(usuarioActual.temaTablero);
+    if (userActual) {
+      if (userActual.temaTablero) {
+        setTemaTablero(userActual.temaTablero);
       }
       setJugadores((prev) => {
         const next = [...prev];
         next[0] = {
           ...next[0],
-          nombre: usuarioActual.nombre,
-          color: usuarioActual.avatarColor || next[0].color,
-          hat: usuarioActual.avatarHat || next[0].hat,
-          ropa: usuarioActual.avatarRopa || 'ninguna',
-          ropaColor: usuarioActual.avatarRopaColor,
-          aura: usuarioActual.avatarAura || 'ninguna',
+          cuentaId: userActual.id,
+          nombre: userActual.nombre,
+          color: userActual.avatarColor || next[0].color,
+          hat: userActual.avatarHat || next[0].hat,
+          ropa: userActual.avatarRopa || 'ninguna',
+          ropaColor: userActual.avatarRopaColor,
+          aura: userActual.avatarAura || 'ninguna',
         };
         return next;
       });
     }
   }, [
-    usuarioActual?.id,
-    usuarioActual?.avatarHat,
-    usuarioActual?.avatarColor,
-    usuarioActual?.avatarRopa,
-    usuarioActual?.avatarRopaColor,
-    usuarioActual?.avatarAura,
-    usuarioActual?.temaTablero,
+    userActual?.id,
+    userActual?.avatarHat,
+    userActual?.avatarColor,
+    userActual?.avatarRopa,
+    userActual?.avatarRopaColor,
+    userActual?.avatarAura,
+    userActual?.temaTablero,
   ]);
 
   const [empiezaAlAzar, setEmpiezaAlAzar] = useState<boolean>(false);
@@ -661,7 +664,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
       if (merged.tipo !== 'humano') {
         merged.hat = 'bot_cpu';
       } else if (patch.tipo === 'humano' && next[idx].tipo !== 'humano' && merged.hat === 'bot_cpu') {
-        merged.hat = idx === 0 && usuarioActual?.avatarHat ? usuarioActual.avatarHat : 'corona';
+        merged.hat = idx === 0 && userActual?.avatarHat ? userActual.avatarHat : 'corona';
       }
       next[idx] = merged;
       return next;
@@ -675,13 +678,14 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
     const seenNames = new Set<string>();
 
     const sanitized = activeList.map((j, i) => {
-      let nom = i === 0 && usuarioActual ? usuarioActual.nombre : j.nombre.trim();
+      let nom = i === 0 && userActual ? userActual.nombre : j.nombre.trim();
       if (!nom) nom = i === 0 ? 'Tú' : `Jugador ${i + 1}`;
       if (seenNames.has(nom.toLowerCase())) {
         nom = `${nom} (2)`;
       }
       seenNames.add(nom.toLowerCase());
       return {
+        cuentaId: i === 0 ? userActual?.id : j.cuentaId,
         nombre: nom.slice(0, 15),
         tipo: j.tipo,
         color: j.color,
@@ -692,7 +696,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
       };
     });
 
-    if (!usuarioActual && sanitized[0]?.nombre && sanitized[0].nombre !== 'Tú') {
+    if (!userActual && sanitized[0]?.nombre && sanitized[0].nombre !== 'Tú') {
       actualizarNombreInvitadoLocal('Tú', sanitized[0].nombre);
       actualizarNombreInvitadoLocal('Invitado', sanitized[0].nombre);
     }
@@ -747,7 +751,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
 
       {/* Main Settings Body */}
       <div className="w-full flex-1 flex flex-col gap-3 py-1">
-        {!usuarioActual && avisoInvitadoVisible && (
+        {!userActual && avisoInvitadoVisible && (
           <div className="w-full p-2.5 bg-[#fff3bf] rounded-2xl border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] flex items-center justify-between gap-2 text-xs animate-[fadeIn_0.2s_ease-out]">
             <div className="flex items-center gap-2 min-w-0">
               <span className="text-xl shrink-0">ℹ️</span>
@@ -875,7 +879,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
             Terreno seleccionado: <strong className="text-[#2b2140]">{TEMA_ICONOS[temaTablero]}</strong>
           </span>
           <span className="text-[11px] font-semibold text-[#86542d]">
-            {usuarioActual?.temaTablero === temaTablero && usuarioActual?.avatarHat === jugadores[0].hat
+            {userActual?.temaTablero === temaTablero && userActual?.avatarHat === jugadores[0].hat
               ? '⭐ Predeterminado de tu perfil'
               : 'Usa 🎨 Aspecto arriba para cambiar'}
           </span>
@@ -891,7 +895,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
                 key={idx}
                 className="p-2.5 bg-white rounded-2xl border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] flex items-center gap-3 animate-[slideDown_0.2s_ease-out]"
               >
-                {isUserPlayer && usuarioActual ? (
+                {isUserPlayer && userActual ? (
                   <div className="shrink-0" title="Tu personaje de cuenta">
                     <CartoonCharacter
                       color={j.color}
@@ -915,12 +919,12 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
                     type="button"
                     onClick={() => {
                       sounds.playClick();
-                      const iniciales = PERSONAJES_REGISTRO.filter(
+                      const iniciales = RegDeAvatar.filter(
                         (p) => p.puntosRequeridos === 0 && p.id !== 'bot_cpu'
                       );
                       const curIdx = iniciales.findIndex((h) => h.id === j.hat);
                       const nextH = iniciales[(curIdx + 1) % iniciales.length];
-                      updateJugador(idx, { hat: nextH.id, color: nextH.defaultColor });
+                      updateJugador(idx, { hat: nextH.id, color: nextH.colorDefault });
                     }}
                     className="hover:scale-110 active:scale-95 transition-transform cursor-pointer shrink-0"
                     title="Clic para cambiar personaje de este jugador humano"
@@ -938,9 +942,9 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
                 )}
 
                 <div className="flex-1 min-w-0">
-                  {isUserPlayer && usuarioActual ? (
+                  {isUserPlayer && userActual ? (
                     <div className="w-full flex items-center justify-between text-sm font-extrabold text-[#2b2140] bg-[#e7f5ff] border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 shadow-xs select-none">
-                      <span className="truncate">{usuarioActual.nombre}</span>
+                      <span className="truncate">{userActual.nombre}</span>
                       <span className="text-[10px] text-[#1971c2] font-black uppercase tracking-wider flex items-center gap-1 shrink-0 bg-white px-1.5 py-0.5 rounded border border-[#1971c2]/30">
                         🔒 Cuenta
                       </span>
@@ -960,11 +964,11 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
                 <select
                   value={j.tipo}
                   onChange={(e) => {
-                    const newTipo = e.target.value as PlayerType;
+                    const newTipo = e.target.value as TipoDeJugador;
                     let newNombre = j.nombre;
                     const isBotName = /^bot\s*(normal|fácil|facil|difícil|dificil)/i.test(j.nombre);
                     if (newTipo === 'humano' && (isBotName || j.tipo !== 'humano')) {
-                      newNombre = idx === 0 ? usuarioActual?.nombre || 'Tú' : `Jugador ${idx + 1}`;
+                      newNombre = idx === 0 ? userActual?.nombre || 'Tú' : `Jugador ${idx + 1}`;
                     } else if (
                       newTipo !== 'humano' &&
                       (j.tipo === 'humano' || /^jugador\s*\d+/i.test(j.nombre) || j.nombre === 'Tú')
@@ -973,9 +977,9 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
                       else if (newTipo === 'bot_normal') newNombre = 'Bot Normal';
                       else if (newTipo === 'bot_dificil') newNombre = 'Bot Difícil';
                     }
-                    const newHat: HatType = newTipo !== 'humano'
+                    const newHat: AvatarTipoDeGorro = newTipo !== 'humano'
                       ? 'bot_cpu'
-                      : (idx === 0 && usuarioActual?.avatarHat ? usuarioActual.avatarHat : 'corona');
+                      : (idx === 0 && userActual?.avatarHat ? userActual.avatarHat : 'corona');
                     updateJugador(idx, { tipo: newTipo, nombre: newNombre, hat: newHat });
                   }}
                   className="text-xs font-bold text-[#2b2140] bg-[#fff9db] border-2 border-[#2b2140] rounded-xl px-2 py-1.5 outline-none cursor-pointer shadow-sm shrink-0"
@@ -1134,8 +1138,8 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
             aura: jugadores[0].aura,
           }}
           temaActual={temaTablero}
-          usuarioActual={usuarioActual}
-          onUsuarioActualizado={onUsuarioActualizado}
+          userActual={userActual}
+          onuserActualizado={onuserActualizado}
           onShowToast={onShowToast}
           onAplicar={(nuevoP, nuevoTema) => {
             updateJugador(0, {

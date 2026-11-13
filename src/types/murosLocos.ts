@@ -1,10 +1,10 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
+// ============================================================================
+// TIPOS GLOBALES DE MUROS LOCOS
+// ============================================================================
 
-export type PlayerType = 'humano' | 'bot_facil' | 'bot_normal' | 'bot_dificil';
-export type HatType =
+export type TipoDeJugador = 'humano' | 'bot_facil' | 'bot_normal' | 'bot_dificil';
+
+export type AvatarTipoDeGorro =
   | 'corona'
   | 'pompon'
   | 'antena'
@@ -15,112 +15,115 @@ export type HatType =
   | 'robot'
   | 'dragon'
   | 'ninja'
-  | 'bot_cpu'
   | 'navidad'
   | 'granjero'
   | 'vikingo'
   | 'copa'
   | 'gorra'
   | 'boina'
-  | 'espacial';
+  | 'espacial'
+  | 'bot_cpu';
 
-export type PersonajeRopaType =
+export type AvatarTipoDeRopa =
   | 'ninguna'
   | 'capa'
   | 'armadura'
-  | 'tunica'
   | 'tuxedo'
   | 'smoking'
   | 'cinturon'
-  | 'alas';
+  | 'alas'
+  | 'tunica';
 
-export type PersonajeAuraType =
+export type AvatarTipoDeAura =
   | 'ninguna'
   | 'dorada'
   | 'fuego'
   | 'ciber'
   | 'arcoiris';
 
-export type UserRole = 'dev' | 'admin' | 'mod' | 'jugador';
+export type UserRol = 'dev' | 'admin' | 'mod' | 'jugador';
 
-export interface PersonajeColeccionable {
+export type EstiloVisual = 'clasico' | 'minimalista';
+
+export interface AvatarColeccionable {
   id: string;
   nombre: string;
   color: string;
-  hat: HatType;
-  ropa?: PersonajeRopaType;
+  hat: AvatarTipoDeGorro;
+  ropa?: AvatarTipoDeRopa;
   ropaColor?: string;
-  aura?: PersonajeAuraType;
+  aura?: AvatarTipoDeAura;
   descripcion?: string;
-  fechaAdquisicion?: string;
+  fechaAdquisicion: string;
   origen:
+    | 'regalo_dev'
+    | 'regalo_admin'
+    | 'torneo_semanal'
     | {
-        tipo: 'torneo_semanal' | 'regalo_dev' | 'regalo_admin' | string;
+        tipo: 'regalo_dev' | 'regalo_admin' | 'torneo_semanal';
         otorgadoPor: string;
-        fecha?: string;
-        semanaTorneo?: string;
-      }
-    | string;
+        fecha: string;
+      };
 }
 
 export interface UserInventario {
-  personajes: PersonajeColeccionable[];
+  personajes: AvatarColeccionable[];
   activoId?: string;
 }
 
-export interface SolicitudResetRanking {
-  solicitada: boolean;
-  porNombre: string;
-  porId: string;
-  fecha: string;
-  motivo?: string;
+export interface SalaPersonalizada {
+  codigo: string;
+  nombre: string;
+  creador: string;
+  creadorRol: UserRol;
+  maxJugadores: 2 | 4 | 6;
+  modoMuros: 'estandar' | 'tactico' | 'caos';
+  tamanoTablero: 7 | 9 | 13;
+  mensajeEspecial?: string;
+  creadaEn: number;
 }
 
-export type EstiloVisual = 'clasico' | 'minimalista';
-export type WallOrientation = 'H' | 'V';
+export type OrientacionMuro = 'H' | 'V';
 
-export interface CharacterDef {
-  id: HatType;
-  label: string;
-  icon: string;
-  defaultColor: string;
+export interface DefPersonaje {
+  id: AvatarTipoDeGorro;
+  nombre: string;
+  emoji: string;
+  colorDefault: string;
+  desbloqueoTipo: 'inicial' | 'puntos' | 'exclusivo';
   puntosRequeridos: number;
   descripcion: string;
+  exclusivo?: boolean;
 }
 
-export type ConfigDesbloqueoPersonajes = Record<string, number>;
-
-export const PERSONAJES_REGISTRO: CharacterDef[] = [
-  // 5 Personajes Iniciales Disponibles desde el principio (0 pts)
-  { id: 'corona', label: 'Corona Real', icon: '👑', defaultColor: '#ff6b6b', puntosRequeridos: 0, descripcion: 'Inicial' },
-  { id: 'pompon', label: 'Pompón', icon: '🧶', defaultColor: '#4dabf7', puntosRequeridos: 0, descripcion: 'Inicial' },
-  { id: 'antena', label: 'Antena', icon: '📡', defaultColor: '#ffd43b', puntosRequeridos: 0, descripcion: 'Inicial' },
-  { id: 'brote', label: 'Brote', icon: '🌱', defaultColor: '#51cf66', puntosRequeridos: 0, descripcion: 'Inicial' },
-  { id: 'mago', label: 'Mago Místico', icon: '🧙', defaultColor: '#9775fa', puntosRequeridos: 0, descripcion: 'Inicial' },
-
-  // Personajes Desbloqueables por Puntos (Ajustables por el Dev)
-  { id: 'gatito', label: 'Gatito Curioso', icon: '🐱', defaultColor: '#f06595', puntosRequeridos: 30, descripcion: 'Requiere 30 pts' },
-  { id: 'zorro', label: 'Zorro Astuto', icon: '🦊', defaultColor: '#f76707', puntosRequeridos: 60, descripcion: 'Requiere 60 pts' },
-  { id: 'robot', label: 'Cyber Bot', icon: '🤖', defaultColor: '#22b8cf', puntosRequeridos: 120, descripcion: 'Requiere 120 pts' },
-  { id: 'dragon', label: 'Dragón Mítico', icon: '🐲', defaultColor: '#12b886', puntosRequeridos: 200, descripcion: 'Requiere 200 pts' },
-  { id: 'ninja', label: 'Sombra Ninja', icon: '🥷', defaultColor: '#495057', puntosRequeridos: 300, descripcion: 'Requiere 300 pts' },
-
-  // Nuevos Sombreros & Personajes Temáticos
-  { id: 'navidad', label: 'Gorro Navideño', icon: '🎅', defaultColor: '#e03131', puntosRequeridos: 400, descripcion: 'Requiere 400 pts' },
-  { id: 'granjero', label: 'Granjero', icon: '🌾', defaultColor: '#f59f00', puntosRequeridos: 500, descripcion: 'Requiere 500 pts' },
-  { id: 'vikingo', label: 'Casco Vikingo', icon: '🪓', defaultColor: '#868e96', puntosRequeridos: 650, descripcion: 'Requiere 650 pts' },
-  { id: 'copa', label: 'Chistera Elegante', icon: '🎩', defaultColor: '#212529', puntosRequeridos: 800, descripcion: 'Requiere 800 pts' },
-  { id: 'gorra', label: 'Gorra Deportiva', icon: '🧢', defaultColor: '#1971c2', puntosRequeridos: 950, descripcion: 'Requiere 950 pts' },
-  { id: 'boina', label: 'Boina Artista', icon: '🎨', defaultColor: '#ae3ec9', puntosRequeridos: 1100, descripcion: 'Requiere 1100 pts' },
-  { id: 'espacial', label: 'Casco Espacial', icon: '🚀', defaultColor: '#3bc9db', puntosRequeridos: 1300, descripcion: 'Requiere 1300 pts' },
+export const RegDeAvatar: DefPersonaje[] = [
+  // 5 Iniciales (Siempre disponibles desde el principio)
+  { id: 'corona', nombre: 'Realeza', emoji: '👑', colorDefault: '#ff6b6b', desbloqueoTipo: 'inicial', puntosRequeridos: 0, descripcion: 'Sólo la realeza debe de estar aquí.' },
+  { id: 'pompon', nombre: 'Nieve', emoji: '❄️', colorDefault: '#339af0', desbloqueoTipo: 'inicial', puntosRequeridos: 0, descripcion: 'No soy fría, pero tampoco permito.' },
+  { id: 'antena', nombre: 'Alien', emoji: '👽', colorDefault: '#51cf66', desbloqueoTipo: 'inicial', puntosRequeridos: 0, descripcion: 'Capta las mejores rutas con su radar espacial.' },
+  { id: 'brote', nombre: 'Elfo', emoji: '🌱', colorDefault: '#20c997', desbloqueoTipo: 'inicial', puntosRequeridos: 0, descripcion: 'Ágil guardián de la naturaleza.' },
+  { id: 'mago', nombre: 'Mago', emoji: '🧙', colorDefault: '#7950f2', desbloqueoTipo: 'inicial', puntosRequeridos: 0, descripcion: 'Domina los trucos de muros invisibles.' },
+  // 12 Desbloqueables por puntos (ajustables por el Dev)
+  { id: 'gatito', nombre: 'Gatito', emoji: '🐱', colorDefault: '#f06595', desbloqueoTipo: 'puntos', puntosRequeridos: 50, descripcion: 'Tierno y veloz entre los laberintos.' },
+  { id: 'zorro', nombre: 'Astuto', emoji: '🦊', colorDefault: '#fd7e14', desbloqueoTipo: 'puntos', puntosRequeridos: 100, descripcion: 'Maestro de las fintas y bloqueos precisos.' },
+  { id: 'robot', nombre: 'Bot', emoji: '🤖', colorDefault: '#868e96', desbloqueoTipo: 'puntos', puntosRequeridos: 150, descripcion: 'Visor cibernético que calcula cada paso.' },
+  { id: 'dragon', nombre: 'Dragón', emoji: '🐲', colorDefault: '#20c997', desbloqueoTipo: 'puntos', puntosRequeridos: 200, descripcion: 'Escamas milenarias y fuego en el tablero.' },
+  { id: 'ninja', nombre: 'Ninja', emoji: '🥷', colorDefault: '#212529', desbloqueoTipo: 'puntos', puntosRequeridos: 250, descripcion: 'Sigiloso estratega oculto en las sombras.' },
+  { id: 'navidad', nombre: 'Navidad', emoji: '🎅', colorDefault: '#e03131', desbloqueoTipo: 'puntos', puntosRequeridos: 300, descripcion: 'Trae alegría navideña a cada partida.' },
+  { id: 'granjero', nombre: 'Granjero', emoji: '🤠', colorDefault: '#fab005', desbloqueoTipo: 'puntos', puntosRequeridos: 350, descripcion: 'Construye los muros más firmes del campo.' },
+  { id: 'vikingo', nombre: 'Guerrero', emoji: '🛡️', colorDefault: '#fa5252', desbloqueoTipo: 'puntos', puntosRequeridos: 400, descripcion: 'Imparable con su casco con cuernos.' },
+  { id: 'copa', nombre: 'Elegante', emoji: '🎩', colorDefault: '#343a40', desbloqueoTipo: 'puntos', puntosRequeridos: 500, descripcion: 'Estilo impecable de alta etiqueta.' },
+  { id: 'gorra', nombre: 'Campeón', emoji: '🧢', colorDefault: '#1971c2', desbloqueoTipo: 'puntos', puntosRequeridos: 600, descripcion: 'Velocidad callejera y reflejos rápidos.' },
+  { id: 'boina', nombre: 'Artista', emoji: '🎨', colorDefault: '#ae3ec9', desbloqueoTipo: 'puntos', puntosRequeridos: 700, descripcion: 'Pinta las jugadas más inesperadas.' },
+  { id: 'espacial', nombre: 'Astronauta', emoji: '👨‍🚀', colorDefault: '#0c8599', desbloqueoTipo: 'puntos', puntosRequeridos: 1000, descripcion: 'Explorador de los confines del tablero.' },
 ];
 
-export interface Coord {
+export interface Coordenada {
   r: number;
   c: number;
 }
 
-export interface PlayerStats {
+export interface EstadisticasJugador {
   acciones: number;
   movimientos: number;
   saltos: number;
@@ -135,33 +138,35 @@ export interface PlayerStats {
   partidaLimpia: boolean;
 }
 
-export interface Player {
+export interface JugadorEnJuego {
   id: number;
+  cuentaId?: string;
   nombre: string;
-  tipo: PlayerType;
+  tipo: TipoDeJugador;
   color: string;
-  hat: HatType;
-  ropa?: PersonajeRopaType;
+  hat: AvatarTipoDeGorro;
+  ropa?: AvatarTipoDeRopa;
   ropaColor?: string;
-  aura?: PersonajeAuraType;
+  aura?: AvatarTipoDeAura;
   r: number;
   c: number;
   muros: number;
   targetType: 'row' | 'col';
   targetValue: number;
-  estadisticas: PlayerStats;
+  estadisticas: EstadisticasJugador;
 }
 
-export interface MatchConfig {
+export interface ConfigDePartida {
   numJugadores: 2 | 4;
   jugadores: {
+    cuentaId?: string;
     nombre: string;
-    tipo: PlayerType;
-    color?: string;
-    hat?: HatType;
-    ropa?: PersonajeRopaType;
+    tipo: TipoDeJugador;
+    color: string;
+    hat: AvatarTipoDeGorro;
+    ropa?: AvatarTipoDeRopa;
     ropaColor?: string;
-    aura?: PersonajeAuraType;
+    aura?: AvatarTipoDeAura;
   }[];
   empiezaAlAzar: boolean;
   permitirDeshacer: boolean;
@@ -170,7 +175,7 @@ export interface MatchConfig {
   segundosPorTurno: number;
   esTorneo?: boolean;
   totalRondasTorneo?: number;
-  temaTablero?: BoardTheme;
+  temaTablero?: TemaTablero;
   rotationMode?: boolean;
 }
 
@@ -180,26 +185,26 @@ export interface AccionRegistro {
   jugadorId: number;
   jugadorNombre: string;
   jugadorColor: string;
-  tipo: 'mover' | 'muro' | 'pasar';
+  tipo: 'mover' | 'muro' | 'salto' | 'tiempo';
   descripcion: string;
   detalle?: string;
-  coordOrigen?: Coord;
-  coordDestino?: Coord;
-  orientacion?: WallOrientation;
-  coordMuro?: Coord;
+  coordOrigen?: Coordenada;
+  coordDestino?: Coordenada;
+  orientacion?: OrientacionMuro;
+  coordMuro?: Coordenada;
   esSalto?: boolean;
   esMuroMaestro?: boolean;
-  tiempo: string;
+  tiempo?: string;
 }
 
-export interface GameSnapshot {
+export interface InstantaneaJuego {
   jugadores: {
     id: number;
-    tipo: PlayerType;
+    tipo: TipoDeJugador;
     r: number;
     c: number;
     muros: number;
-    estadisticas: PlayerStats;
+    estadisticas: EstadisticasJugador;
   }[];
   murosH: number[][];
   murosV: number[][];
@@ -208,69 +213,109 @@ export interface GameSnapshot {
   registroAcciones: AccionRegistro[];
 }
 
-export interface TorneoRondaRecord {
+export interface RegistroRondaTorneo {
   ronda: number;
   ganadorId: number;
   ganadorNombre: string;
   puntosRonda: Record<number, number>;
 }
 
-export interface TorneoState {
+export interface EstadoTorneo {
   activo: boolean;
   rondaActual: number;
   totalRondas: number;
   puntosAcumulados: Record<number, number>;
   victoriasAcumuladas: Record<number, number>;
-  historialRondas: TorneoRondaRecord[];
+  historialRondas: RegistroRondaTorneo[];
   terminado: boolean;
   ganadorGlobalId: number | null;
 }
 
-export interface OnlinePlayerInfo {
+export type RolRedOnline = 'local' | 'host' | 'client';
+
+export interface InfoJugadorOnline {
   id: number;
   peerId: string;
+  cuentaId?: string;
   nombre: string;
   color: string;
-  hat: HatType;
-  listo: boolean;
-  conectado: boolean;
+  hat: AvatarTipoDeGorro;
+  ropa?: AvatarTipoDeRopa;
+  ropaColor?: string;
+  aura?: AvatarTipoDeAura;
+  listo?: boolean;
   esAnfitrion: boolean;
+  conectado: boolean;
 }
 
-export type OnlineMessage =
-  | { type: 'JOIN_REQUEST'; nombre: string; color: string; hat: HatType }
+export type MensajeOnline =
+  | {
+      type: 'JOIN_REQUEST';
+      cuentaId?: string;
+      nombre: string;
+      color: string;
+      hat: AvatarTipoDeGorro;
+      ropa?: AvatarTipoDeRopa;
+      ropaColor?: string;
+      aura?: AvatarTipoDeAura;
+    }
   | { type: 'JOIN_REJECTED'; motivo: string }
-  | { type: 'LOBBY_UPDATE'; roomCode: string; maxJugadores: 2 | 4; jugadores: OnlinePlayerInfo[] }
-  | { type: 'START_GAME'; config: MatchConfig; initialState: GameState; _startId?: string }
-  | { type: 'PLAYER_ACTION'; jugadorId: number; accion: 'mover' | 'muro' | 'pasar'; payload: any; _actionId?: string }
-  | { type: 'STATE_SYNC'; state: GameState }
+  | {
+      type: 'LOBBY_UPDATE';
+      roomCode: string;
+      maxJugadores: 2 | 4 | 6;
+      jugadores: InfoJugadorOnline[];
+    }
+  | {
+      type: 'START_GAME';
+      config: ConfigDePartida;
+      initialState: EstadoDeJuego;
+      _startId?: string;
+    }
+  | {
+      type: 'PLAYER_ACTION';
+      jugadorId: number;
+      accion: 'mover' | 'muro' | 'pasar';
+      payload: {
+        destino?: Coordenada;
+        orientacion?: OrientacionMuro;
+        r?: number;
+        c?: number;
+      };
+      _actionId?: string;
+    }
+  | { type: 'STATE_SYNC'; state: EstadoDeJuego }
+  | { type: 'REQUEST_SYNC'; jugadorId: number; turnosTotales?: number }
   | { type: 'REACTION'; jugadorId: number; emoji: string }
   | { type: 'REMATCH_REQUEST'; jugadorId: number; nombre?: string }
   | { type: 'REMATCH_RESPONSE'; jugadorId: number; nombre?: string; aceptada: boolean }
-  | { type: 'REMATCH_ACCEPT'; state: GameState }
   | { type: 'PLAYER_LEFT'; jugadorId: number; nombre?: string }
-  | { type: 'REQUEST_SYNC'; jugadorId: number; turnosTotales?: number }
   | { type: 'PING'; turnosTotales?: number; turnoActual?: number; terminada?: boolean }
   | { type: 'PONG'; turnosTotales?: number; turnoActual?: number; terminada?: boolean }
   | { type: 'DIAG_PING'; ts: number }
   | { type: 'DIAG_PONG'; ts: number }
-  | { type: 'HOST_DISCONNECT_WARNING'; tiempoRestante: number }
-  | { type: 'HOST_RESUMED'; state: GameState };
+  | { type: 'HOST_RESUMED'; state: EstadoDeJuego };
 
-export interface ActiveOnlineSession {
-  roomCode: string;
+export interface SesionOnlineActiva {
   role: 'host' | 'client';
-  myPlayerId: number;
+  roomCode: string;
+  myPeerId?: string;
+  hostPeerId?: string;
+  myPlayerId?: number;
+  myCuentaId?: string;
   myName: string;
   myColor: string;
-  myHat: HatType;
-  lastState?: GameState;
+  myHat: AvatarTipoDeGorro;
+  myRopa?: AvatarTipoDeRopa;
+  myRopaColor?: string;
+  myAura?: AvatarTipoDeAura;
+  lastState?: EstadoDeJuego;
   timestamp: number;
 }
 
-export interface GameState {
-  n: 2 | 4;
-  jugadores: Player[];
+export interface EstadoDeJuego {
+  n: 2 | 4 | 6;
+  jugadores: JugadorEnJuego[];
   murosH: number[][];
   murosV: number[][];
   turnoActual: number;
@@ -278,16 +323,21 @@ export interface GameState {
   terminada: boolean;
   ganador: number | null;
   modoAccion: 'mover' | 'muro';
-  orientacionMuro: WallOrientation;
-  muroPrevisualizado: Coord | null;
-  caminoPista: Coord[] | null;
-  historial: GameSnapshot[];
+  orientacionMuro: OrientacionMuro;
+  muroPrevisualizado: {
+    o: OrientacionMuro;
+    r: number;
+    c: number;
+    validez: 'ok' | 'fuera' | 'solape' | 'bloquea';
+  } | null;
+  caminoPista: Coordenada[] | null;
+  historial: InstantaneaJuego[];
   registroAcciones: AccionRegistro[];
-  config: MatchConfig;
+  config: ConfigDePartida;
   tiempoRestante: number;
   pensandoBot: boolean;
   ultimoMensaje: string;
-  torneo?: TorneoState;
+  torneo?: EstadoTorneo;
   modoOnline?: boolean;
   miJugadorId?: number;
   codigoSala?: string;
@@ -295,7 +345,7 @@ export interface GameState {
   reaccionActiva?: { jugadorId: number; emoji: string; ts: number } | null;
 }
 
-export interface ScoreBreakdown {
+export interface DesglosePuntos {
   resultado: number;
   murosUsados: number;
   finalCerrado: number;
@@ -320,170 +370,209 @@ export interface ScoreBreakdown {
   total: number;
 }
 
-export interface MatchResultRecord {
+export interface RegistroHistorialPartida {
   id: string;
   fecha: string;
-  numJugadores: 2 | 4;
-  ganadorNombre: string;
-  duracionSegundos: number;
-  turnosTotales: number;
-  puntosPorJugador: {
-    nombre: string;
-    color: string;
-    puntos: number;
-    puesto: number;
-    esHumano: boolean;
-  }[];
-  esTorneo?: boolean;
+  rival: string;
+  resultado: 'victoria' | 'derrota' | 'empate';
+  puntosGanados: number;
+  movimientos: number;
+  murosColocados: number;
+  saltos: number;
+  partidaLimpia?: boolean;
+  modo: string;
+  duracionSegundos?: number;
+  logros?: string[];
 }
 
-export interface RankEntry {
+export interface RegistroResultadoPartida {
+  nombre: string;
+  cuentaId?: string;
+  color: string;
+  hat: AvatarTipoDeGorro;
+  ropa?: AvatarTipoDeRopa;
+  ropaColor?: string;
+  aura?: AvatarTipoDeAura;
+  gano: boolean;
+  esBot: boolean;
+  movimientos: number;
+  murosColocados: number;
+  saltos: number;
+  partidaLimpia: boolean;
+  puntosGanados: number;
+  logrosDesbloqueados: string[];
+  rivalNombre?: string;
+}
+
+export interface EntradaRanking {
+  id?: string;
   nombre: string;
   puntosTotales: number;
   partidas: number;
   victorias: number;
   derrotas: number;
-  empates: number;
+  empates?: number;
   rachaActual: number;
   mejorRacha: number;
-  murosColocados: number;
-  saltos: number;
-  mejorPartida: number;
-  partidaMasRapida: number;
+  murosTotales: number;
+  saltosTotales: number;
   partidasLimpias: number;
-  elo: number;
-  fechaUltimaPartida: string;
   logros: string[];
+  ultimaPartida: string;
   avatarColor: string;
-  avatarHat: HatType;
+  avatarHat: AvatarTipoDeGorro;
+  avatarRopa?: AvatarTipoDeRopa;
+  avatarRopaColor?: string;
+  avatarAura?: AvatarTipoDeAura;
 }
 
-export interface AchievementDef {
+export interface DefLogro {
   id: string;
   titulo: string;
   descripcion: string;
   icono: string;
 }
 
-export type BoardTheme = 'madera' | 'neon' | 'hielo' | 'lava';
+export type TemaTablero = 'madera' | 'neon' | 'hielo' | 'lava';
 
-export interface AppSettings {
+export interface AjustesDeApp {
   sonido: boolean;
-  animacionesReducidas: boolean;
   mostrarDistancia: boolean;
+  mostrarCoordenadas: boolean;
+  modoDaltonico: boolean;
+  animacionesReducidas: boolean;
   permitirDeshacer: boolean;
   permitirPistas: boolean;
-  modoDaltonico: boolean;
-  temaTablero?: BoardTheme;
+  temaTablero: TemaTablero;
   cambiarVistaPorTurno?: boolean;
-  vistaPropiaOnline?: boolean;
 }
 
-export interface LevelInfo {
+export interface InfoNivel {
   nivel: number;
   titulo: string;
-  minPuntos: number;
-  maxPuntos: number;
   icono: string;
+  minPuntos: number;
+  siguientePuntos: number | null;
 }
 
-export interface PublicRoomInfo {
+export interface InfoSalaPublica {
   codigo: string;
   nombre: string;
   anfitrion: string;
   color: string;
-  hat: HatType;
-  maxJugadores: 2 | 4;
+  hat: AvatarTipoDeGorro;
+  ropa?: AvatarTipoDeRopa;
+  ropaColor?: string;
+  aura?: AvatarTipoDeAura;
+  maxJugadores: 2 | 4 | 6;
+  jugadoresConectados: number;
   creadoEn: number;
+  esOficialStaff?: boolean;
+  modoMuros?: 'estandar' | 'tactico' | 'caos';
+  tamanoTablero?: 7 | 9 | 13;
 }
 
-export interface SalaPersonalizada {
-  id: string;
-  codigo: string;
-  nombre: string;
-  creador: string;
-  creadorId: string;
-  creadorRol: 'dev' | 'admin' | 'mod';
-  creadoEn: number;
-  maxJugadores: 2 | 4;
-  modoMuros?: 'estandar' | 'caos' | 'tactico';
-  tamanoTablero?: 7 | 9;
-  destacada?: boolean;
-  mensajeEspecial?: string;
+export interface SolicitudResetRanking {
+  solicitada: boolean;
+  porNombre: string;
+  porId: string;
+  fecha: string;
+  motivo?: string;
 }
 
-export interface UserAccount {
+export interface UserCuenta {
   id: string;
   nombre: string;
-  clave?: string;
-  rol: UserRole;
+  rol: UserRol;
   esSupremo?: boolean;
+  clave?: string;
   avatarColor: string;
-  avatarHat: HatType;
-  avatarRopa?: PersonajeRopaType;
+  avatarHat: AvatarTipoDeGorro;
+  avatarRopa?: AvatarTipoDeRopa;
   avatarRopaColor?: string;
-  avatarAura?: PersonajeAuraType;
+  avatarAura?: AvatarTipoDeAura;
   inventario?: UserInventario;
   puntos: number;
   partidas: number;
   victorias: number;
-  elo: number;
-  creadoEn: string;
+  derrotas?: number;
+  empates?: number;
+  logrosDesbloqueados: string[];
+  temaTablero?: TemaTablero;
+  historialPartidas?: RegistroHistorialPartida[];
+  fechaRegistro: string;
   ultimaConexion: string;
-  temaTablero?: BoardTheme;
-  historialPartidas?: {
-    id: string;
-    fecha: string;
-    resultado: 'victoria' | 'derrota' | 'empate';
-    puntos: number;
-    rivales: string;
-    duracionSegundos: number;
-  }[];
 }
 
-export type Screen = 'menu' | 'config' | 'juego' | 'ranking' | 'logros' | 'como_jugar' | 'ajustes' | 'online_lobby';
+export type PantallaApp =
+  | 'menu'
+  | 'config'
+  | 'juego'
+  | 'ranking'
+  | 'logros'
+  | 'como_jugar'
+  | 'ajustes'
+  | 'online_lobby';
 
-export interface WeeklyPlayerEntry {
+export interface EntradaJugadorSemanal {
+  id?: string;
   nombre: string;
   avatarColor: string;
-  avatarHat: HatType;
-  avatarRopa?: PersonajeRopaType;
+  avatarHat: AvatarTipoDeGorro;
+  avatarRopa?: AvatarTipoDeRopa;
   avatarRopaColor?: string;
-  avatarAura?: PersonajeAuraType;
+  avatarAura?: AvatarTipoDeAura;
   puntos: number;
-  partidas: number;
   victorias: number;
-  elo?: number;
-  partidasIds?: string[];
+  partidas: number;
 }
 
-export interface WeeklyBoardData {
+export interface DatosTableroSemanal {
   semanaId: string;
-  premiada?: boolean;
-  premiados?: { nombre: string; puesto: number; bono: number; personajePremio?: PersonajeColeccionable }[];
-  premioSemanal?: PersonajeColeccionable;
-  puntosConfig?: { primerLugar: number; segundoLugar: number; tercerLugar: number };
-  jugadores: Record<string, WeeklyPlayerEntry>;
+  cerrada?: boolean;
+  premiados?: { nombre: string; puesto: number; bono: number; personajePremio?: AvatarColeccionable }[];
+  premioSemanal?: AvatarColeccionable;
+  puntosConfig?: {
+    puntosVictoria?: number;
+    puntosEmpate?: number;
+    primerLugar: number;
+    segundoLugar: number;
+    tercerLugar: number;
+    participacion?: number;
+  };
+  jugadores: Record<string, EntradaJugadorSemanal>;
 }
 
-export interface WeeklyRankingResponse {
+export interface RespuestaRankingSemanal {
   ok: boolean;
-  d1Bound?: boolean;
-  dbBound?: boolean;
   semanaActualId: string;
   semanaPasadaId: string;
   cierraEnMs: number;
-  actual: WeeklyBoardData;
-  pasada: WeeklyBoardData;
+  dbConectado?: boolean;
+  actual: DatosTableroSemanal;
+  pasada: DatosTableroSemanal;
 }
 
-export interface OnlineDiagnosticData {
-  status: 'conectado' | 'negociando' | 'reconectando' | 'desconectado';
+export interface NotificacionStaff {
+  id: string;
+  actorId?: string;
+  actorNombre: string;
+  actorRol: UserRol;
+  accion?: string;
+  detalle?: string;
+  ts?: number;
+  tipo?: string;
+  mensaje?: string;
+  fecha?: string;
+}
+
+export interface DatosDiagnosticoOnline {
+  status: 'desconectado' | 'negociando' | 'conectado' | 'reconectando';
   pingMs: number | null;
-  calidad: 'excelente' | 'buena' | 'inestable' | 'critica' | 'desconectado';
+  calidad: 'desconectado' | 'excelente' | 'buena' | 'inestable' | 'critica';
   miPeerId: string;
   rivalPeerId: string | null;
-  role: 'host' | 'client' | 'none';
+  role: 'none' | 'host' | 'client';
   iceState: string;
   dataChannelState: string;
   logs: { ts: string; tipo: 'info' | 'warn' | 'error'; mensaje: string }[];

@@ -5,203 +5,158 @@ import fs from 'fs';
 import path from 'path';
 
 const app = express();
-const PORT = 3000;
+const PUERTO = 3000;
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.text({ limit: '10mb' }));
 app.use('/api', (_req, res, next) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
   res.setHeader('Pragma', 'no-cache');
+  res.setHeader('X-DB-Bound', 'true');
+  res.setHeader('X-Database-Bound', 'true');
   next();
 });
 
-const DATA_DIR = path.resolve(process.cwd(), '.data');
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+const DIR_DATOS = path.resolve(process.cwd(), '.data');
+if (!fs.existsSync(DIR_DATOS)) {
+  fs.mkdirSync(DIR_DATOS, { recursive: true });
 }
 
-const CUENTAS_FILE = path.join(DATA_DIR, 'cuentas.json');
-const RANKING_FILE = path.join(DATA_DIR, 'ranking.json');
-const SALAS_FILE = path.join(DATA_DIR, 'salas.json');
-const SALAS_PERSONALIZADAS_FILE = path.join(DATA_DIR, 'salas_personalizadas.json');
+// Espejo local de las 8 tablas de Cloudflare D1
+const ARCHIVO_CUENTAS = path.join(DIR_DATOS, 'cuentas.json');
+const ARCHIVO_HISTORIAL = path.join(DIR_DATOS, 'historial.json');
+const ARCHIVO_INVENTARIO = path.join(DIR_DATOS, 'inventario.json');
+const ARCHIVO_RANKING = path.join(DIR_DATOS, 'ranking.json');
+const ARCHIVO_SESIONES = path.join(DIR_DATOS, 'sesiones.json');
+const ARCHIVO_SALAS_PERSONALIZADAS = path.join(DIR_DATOS, 'salas_personalizadas.json');
+const ARCHIVO_SALAS_ONLINE = path.join(DIR_DATOS, 'salas_online.json');
+const ARCHIVO_CONFIG = path.join(DIR_DATOS, 'config.json');
 
-function readJsonFile(filePath: string, fallback: any = {}) {
+const DESBLOQUEOS_POR_DEFECTO: Record<string, number> = {
+  gatito: 30,
+  zorro: 60,
+  robot: 120,
+  dragon: 200,
+  ninja: 300,
+  navidad: 400,
+  granjero: 500,
+  vikingo: 650,
+  copa: 800,
+  gorra: 950,
+  boina: 1100,
+  espacial: 1300,
+};
+
+const CONFIG_SEMANAL_POR_DEFECTO = {
+  puntosVictoria: 3,
+  puntosEmpate: 1,
+  primerLugar: 50,
+  segundoLugar: 25,
+  tercerLugar: 15,
+  participacion: 5,
+};
+
+function leerJson(rutaArchivo: string, respaldo: any = {}) {
   try {
-    if (fs.existsSync(filePath)) {
-      const content = fs.readFileSync(filePath, 'utf-8');
-      return JSON.parse(content);
+    if (fs.existsSync(rutaArchivo)) {
+      const contenido = fs.readFileSync(rutaArchivo, 'utf-8');
+      return JSON.parse(contenido);
     }
   } catch (err) {
-    console.error(`Error reading ${filePath}:`, err);
+    console.error(`Error leyendo ${rutaArchivo}:`, err);
   }
-  return fallback;
+  return respaldo;
 }
 
-function writeJsonFile(filePath: string, data: any) {
+function escribirJson(rutaArchivo: string, datos: any) {
   try {
-    const parsed = typeof data === 'string' ? JSON.parse(data) : data;
-    fs.writeFileSync(filePath, JSON.stringify(parsed, null, 2), 'utf-8');
+    const parsed = typeof datos === 'string' ? JSON.parse(datos) : datos;
+    fs.writeFileSync(rutaArchivo, JSON.stringify(parsed, null, 2), 'utf-8');
   } catch (err) {
-    console.error(`Error writing ${filePath}:`, err);
+    console.error(`Error escribiendo ${rutaArchivo}:`, err);
   }
 }
 
-const getAdminCredentials = () => ({
+const obtenerCredencialesAdmin = () => ({
   user: String(process.env.ADMIN_USERNAME || process.env.ADMIN_USER || 'admin').trim(),
   pass: String(process.env.ADMIN_SECRET_KEY || process.env.ADMIN_KEY || process.env.ADMIN_PASSWORD || 'muros2026').trim(),
 });
 
-function sanitizeCuentas(cuentas: Record<string, any>) {
-  const copy = { ...(cuentas || {}) };
-  if (copy['admin']) {
-    copy['admin'] = {
-      ...copy['admin'],
-      id: 'admin',
-      rol: 'admin',
-      esSupremo: true,
-      clave: '***SUPREMO***',
-    };
-  }
-  return copy;
+// ==========================================
+// HELPERS TABLA `config`
+// ==========================================
+
+function leerConfig(clave: string, respaldo: any = null) {
+  const cfg = leerJson(ARCHIVO_CONFIG, {});
+  return cfg[clave] !== undefined ? cfg[clave] : respaldo;
 }
 
-function buildSupremeProfile(cuentas: Record<string, any>) {
-  const existing = cuentas['admin'] || {};
-  return {
-    id: 'admin',
-    nombre: existing.nombre || 'Admin Supremo',
-    clave: '***SUPREMO***',
-    rol: 'dev' as const,
-    esSupremo: true,
-    avatarColor: existing.avatarColor || '#ffd43b',
-    avatarHat: existing.avatarHat || 'corona',
-    avatarRopa: existing.avatarRopa || 'capa',
-    avatarRopaColor: existing.avatarRopaColor || undefined,
-    avatarAura: existing.avatarAura || 'dorada',
-    inventario: existing.inventario || { personajes: [] },
-    temaTablero: existing.temaTablero || 'madera',
-    puntos: typeof existing.puntos === 'number' ? existing.puntos : 0,
-    partidas: typeof existing.partidas === 'number' ? existing.partidas : 0,
-    victorias: typeof existing.victorias === 'number' ? existing.victorias : 0,
-    elo: typeof existing.elo === 'number' ? existing.elo : 0,
-    creadoEn: existing.creadoEn || new Date().toISOString(),
-    ultimaConexion: new Date().toISOString(),
-    historialPartidas: existing.historialPartidas || [],
-  };
+function guardarConfig(clave: string, valor: any) {
+  const cfg = leerJson(ARCHIVO_CONFIG, {});
+  cfg[clave] = valor;
+  cfg[`_ts_${clave}`] = Date.now();
+  escribirJson(ARCHIVO_CONFIG, cfg);
 }
 
-// Ensure Supreme Admin public entry exists without storing raw secret key
-let cuentasInit = readJsonFile(CUENTAS_FILE, {});
-cuentasInit['admin'] = buildSupremeProfile(cuentasInit);
-writeJsonFile(CUENTAS_FILE, sanitizeCuentas(cuentasInit));
-
-let salasPublicas: Record<string, any> = readJsonFile(SALAS_FILE, {});
-const salasActivas: Map<string, any> = new Map(Object.entries(salasPublicas));
-let ultimoCambioDatabase = Date.now();
-
-function normalizeSalaCode(raw: string): string {
-  return String(raw || '')
-    .toUpperCase()
-    .trim()
-    .replace(/[^A-Z0-9]/g, '');
+function eliminarConfig(clave: string) {
+  const cfg = leerJson(ARCHIVO_CONFIG, {});
+  delete cfg[clave];
+  delete cfg[`_ts_${clave}`];
+  escribirJson(ARCHIVO_CONFIG, cfg);
 }
 
-function syncPublicSalasFile() {
-  const pub: Record<string, any> = {};
-  for (const [code, r] of salasActivas.entries()) {
-    if (
-      r &&
-      r.publica !== false &&
-      !r.enPartida &&
-      (r.jugadoresConectados || 1) < (r.maxJugadores || 2)
-    ) {
-      pub[code] = {
-        codigo: r.codigo,
-        nombre: r.nombre,
-        anfitrion: r.anfitrion,
-        color: r.color,
-        hat: r.hat,
-        maxJugadores: r.maxJugadores,
-        publica: true,
-        enPartida: false,
-        jugadoresConectados: r.jugadoresConectados || 1,
-        creadoEn: r.creadoEn,
-        ultimoCambio: r.ultimoCambio,
-      };
-    }
-  }
-  salasPublicas = pub;
-  writeJsonFile(SALAS_FILE, pub);
+function tocarUltimaActualizacion(): number {
+  const ahora = Date.now();
+  guardarConfig('last_update', ahora);
+  return ahora;
 }
 
-function cleanExpiredRooms() {
-  const now = Date.now();
-  let changed = false;
-  for (const [code, r] of salasActivas.entries()) {
-    const age = now - (r.creadoEn || 0);
-    const idle = now - (r.ultimoCambio || r.creadoEn || 0);
-    const maxIdle = r.enPartida ? 15 * 60 * 1000 : 5 * 60 * 1000;
-    if (age > 60 * 60 * 1000 || idle > maxIdle) {
-      salasActivas.delete(code);
-      changed = true;
-    }
-  }
-  if (changed) {
-    syncPublicSalasFile();
-  }
-}
-
-app.get('/api/ping', (_req, res) => {
-  cleanExpiredRooms();
-  const cuentasData = readJsonFile(CUENTAS_FILE, {});
-  const adminUserConfigured = Boolean(process.env.ADMIN_USERNAME || process.env.ADMIN_USER);
-  const adminKeyConfigured = Boolean(
-    process.env.ADMIN_SECRET_KEY || process.env.ADMIN_KEY || process.env.ADMIN_PASSWORD
-  );
-  res.setHeader('X-DB-Bound', 'true');
-  res.setHeader('X-Database-Bound', 'true');
-  res.json({
-    ok: true,
-    dbBound: true,
-    d1Bound: true,
-    dbType: 'D1 (Database Local / Dev)',
-    adminUserConfigured,
-    adminKeyConfigured,
-    source: 'local_database_store',
-    timestamp: Date.now(),
-    lastUpdate: ultimoCambioDatabase,
-    salasCount: Object.keys(salasPublicas).length,
-    cuentasCount: Object.keys(cuentasData).length,
+function registrarNotificacionStaff(actor: any, accion: string, detalle: string) {
+  const lista = leerConfig('notificaciones_staff', []);
+  const arr = Array.isArray(lista) ? lista : [];
+  arr.unshift({
+    id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    actorId: actor?.id || 'admin',
+    actorNombre: actor?.nombre || 'Staff',
+    actorRol: actor?.rol || 'dev',
+    accion,
+    detalle,
+    ts: Date.now(),
   });
-});
+  guardarConfig('notificaciones_staff', arr.slice(0, 30));
+}
 
-const textEncoder = new TextEncoder();
-const toBase64 = (buf: ArrayBuffer | Uint8Array) =>
+// ==========================================
+// CRYPTO & SESIONES (MAX 2 SESIONES POR ID)
+// ==========================================
+
+const codificadorTexto = new TextEncoder();
+const aBase64 = (buf: ArrayBuffer | Uint8Array) =>
   Buffer.from(buf instanceof Uint8Array ? buf : new Uint8Array(buf)).toString('base64');
-const fromBase64 = (str: string) => Buffer.from(str, 'base64');
+const desdeBase64 = (str: string) => Buffer.from(str, 'base64');
 
-async function hashClavePBKDF2(clave: string, saltB64?: string, iterations = 100000) {
-  const salt = saltB64 ? fromBase64(saltB64) : globalThis.crypto.getRandomValues(new Uint8Array(16));
-  const importedKey = await globalThis.crypto.subtle.importKey(
+async function hashClavePBKDF2(clave: string, saltB64?: string, iteraciones = 100000) {
+  const salt = saltB64 ? desdeBase64(saltB64) : globalThis.crypto.getRandomValues(new Uint8Array(16));
+  const llaveImportada = await globalThis.crypto.subtle.importKey(
     'raw',
-    textEncoder.encode(clave),
+    codificadorTexto.encode(clave),
     'PBKDF2',
     false,
     ['deriveBits']
   );
-  const derivedBits = await globalThis.crypto.subtle.deriveBits(
-    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations },
-    importedKey,
+  const bitsDerivados = await globalThis.crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: iteraciones },
+    llaveImportada,
     256
   );
   return {
-    claveHash: toBase64(derivedBits),
-    claveSalt: toBase64(salt),
-    claveIter: iterations,
+    claveHash: aBase64(bitsDerivados),
+    claveSalt: aBase64(salt),
+    claveIter: iteraciones,
   };
 }
 
-function timeConstantCompare(a: string, b: string) {
+function compararTiempoConstante(a: string, b: string) {
   if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) {
@@ -211,52 +166,49 @@ function timeConstantCompare(a: string, b: string) {
 }
 
 async function sha256Hex(str: string) {
-  const buf = await globalThis.crypto.subtle.digest('SHA-256', textEncoder.encode(str));
+  const buf = await globalThis.crypto.subtle.digest('SHA-256', codificadorTexto.encode(str));
   return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function verificarClaveCuenta(cuenta: any, candidateClave: string) {
-  if (!cuenta || typeof candidateClave !== 'string') return false;
+async function verificarClaveCuenta(cuenta: any, claveCandidata: string) {
+  if (!cuenta || typeof claveCandidata !== 'string') return false;
   if (cuenta.claveHash && cuenta.claveSalt) {
-    const computed = await hashClavePBKDF2(candidateClave, cuenta.claveSalt, cuenta.claveIter || 100000);
-    return timeConstantCompare(computed.claveHash, cuenta.claveHash);
-  }
-  if (typeof cuenta.clave === 'string' && cuenta.clave.length > 0 && cuenta.clave !== '***SUPREMO***') {
-    return timeConstantCompare(cuenta.clave, candidateClave);
+    const calculado = await hashClavePBKDF2(claveCandidata, cuenta.claveSalt, cuenta.claveIter || 100000);
+    return compararTiempoConstante(calculado.claveHash, cuenta.claveHash);
   }
   return false;
 }
 
-const localSessions = new Map<string, { usuarioId: string; rol: string; expiraEn: number; creadoEn: number }>();
+async function crearSesionLocal(userId: string, rol: string, duracionHoras = 720) {
+  const ahora = Date.now();
+  const rolFinal = userId === 'admin' ? 'dev' : (rol || 'jugador');
+  const sesiones = leerJson(ARCHIVO_SESIONES, {}) as Record<string, any>;
 
-async function crearSesionLocal(usuarioId: string, rol: string, duracionHoras = 720) {
-  const now = Date.now();
-  // 1. Limpiar sesiones expiradas
-  for (const [hash, s] of localSessions.entries()) {
-    if (s.expiraEn <= now) {
-      localSessions.delete(hash);
+  // 1. Limpiar expiradas
+  for (const [hash, s] of Object.entries(sesiones)) {
+    if (!s || Number(s.expiraEn) <= ahora) {
+      delete sesiones[hash];
     }
   }
 
-  // 2. Máximo 2 sesiones activas por cuenta: si ya tiene 2 o más, cerrar todas las sesiones antiguas
-  const userSessionHashes: string[] = [];
-  for (const [hash, s] of localSessions.entries()) {
-    if (s.usuarioId === usuarioId) {
-      userSessionHashes.push(hash);
-    }
-  }
-  if (userSessionHashes.length >= 2) {
-    for (const h of userSessionHashes) {
-      localSessions.delete(h);
+  // 2. Máximo 2 sesiones activas por id; en la 3ª se cierran todas las anteriores
+  const hashesUser = Object.entries(sesiones)
+    .filter(([, s]) => s && s.id === userId)
+    .map(([hash]) => hash);
+  if (hashesUser.length >= 2) {
+    for (const h of hashesUser) {
+      delete sesiones[h];
     }
   }
 
-  const rawBytes = globalThis.crypto.getRandomValues(new Uint8Array(32));
-  const token = Array.from(rawBytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  const bytesAleatorios = globalThis.crypto.getRandomValues(new Uint8Array(32));
+  const token = Array.from(bytesAleatorios, (b) => b.toString(16).padStart(2, '0')).join('');
   const tokenHash = await sha256Hex(token);
-  const expiraEn = now + duracionHoras * 3600 * 1000;
-  localSessions.set(tokenHash, { usuarioId, rol, expiraEn, creadoEn: now });
-  return { token, tokenHash, expiraEn, usuarioId, rol };
+  const expiraEn = ahora + duracionHoras * 3600 * 1000;
+
+  sesiones[tokenHash] = { id: userId, tokenHash, rol: rolFinal, creadoEn: ahora, expiraEn };
+  escribirJson(ARCHIVO_SESIONES, sesiones);
+  return { token, tokenHash, expiraEn, userId, rol: rolFinal };
 }
 
 async function resolverSesionLocal(req: express.Request) {
@@ -265,169 +217,640 @@ async function resolverSesionLocal(req: express.Request) {
   if (authHeader.startsWith('Bearer ')) {
     token = authHeader.slice(7).trim();
   }
-  const adminTokenHeader = String(req.header('X-Admin-Token') || '').trim();
-  const { pass: ADMIN_PASS } = getAdminCredentials();
+  const headerAdminToken = String(req.header('X-Admin-Token') || '').trim();
+  const { pass: ADMIN_PASS } = obtenerCredencialesAdmin();
 
-  if (adminTokenHeader && (adminTokenHeader === ADMIN_PASS || adminTokenHeader === 'muros2026')) {
-    return { usuarioId: 'admin', rol: 'dev', token: adminTokenHeader };
+  if (headerAdminToken && (compararTiempoConstante(headerAdminToken, ADMIN_PASS) || headerAdminToken === 'muros2026')) {
+    return { userId: 'admin', rol: 'dev', token: headerAdminToken, porClaveMaestra: true };
   }
 
-  if (!token) {
-    token = adminTokenHeader;
-  }
+  if (!token) token = headerAdminToken;
   if (!token) return null;
 
-  if (token === ADMIN_PASS || token === 'muros2026') {
-    return { usuarioId: 'admin', rol: 'dev', token };
+  if (compararTiempoConstante(token, ADMIN_PASS) || token === 'muros2026') {
+    return { userId: 'admin', rol: 'dev', token, porClaveMaestra: true };
   }
 
   const tokenHash = await sha256Hex(token);
-  const s = localSessions.get(tokenHash);
-  if (s && s.expiraEn > Date.now()) {
-    return { ...s, token };
+  const sesiones = leerJson(ARCHIVO_SESIONES, {}) as Record<string, any>;
+  const s = sesiones[tokenHash];
+  if (s && Number(s.expiraEn) > Date.now()) {
+    return { userId: s.id, rol: s.id === 'admin' ? 'dev' : s.rol, tokenHash, token };
+  }
+  return { revocada: true, userId: null, rol: null };
+}
+
+// ==========================================
+// HIDRATACIÓN DESDE LAS TABLAS LOCALES
+// ==========================================
+
+function construirPerfilSupremo(previo: any = {}) {
+  return {
+    id: 'admin',
+    nombre: previo.nombre || 'Admin Supremo',
+    rol: 'dev' as const,
+    esSupremo: true,
+    avatarColor: previo.avatarColor || '#ffd43b',
+    avatarHat: previo.avatarHat || 'corona',
+    avatarRopa: previo.avatarRopa || 'capa',
+    avatarRopaColor: previo.avatarRopaColor || '#c92a2a',
+    avatarAura: previo.avatarAura || 'dorada',
+    inventario: previo.inventario || { personajes: [] },
+    temaTablero: previo.temaTablero || 'madera',
+    puntos: typeof previo.puntos === 'number' ? previo.puntos : 0,
+    partidas: typeof previo.partidas === 'number' ? previo.partidas : 0,
+    victorias: typeof previo.victorias === 'number' ? previo.victorias : 0,
+    derrotas: typeof previo.derrotas === 'number' ? previo.derrotas : 0,
+    empates: typeof previo.empates === 'number' ? previo.empates : 0,
+    creadoEn: previo.creadoEn || new Date().toISOString(),
+    ultimaConexion: previo.ultimaConexion || new Date().toISOString(),
+    historialPartidas: Array.isArray(previo.historialPartidas) ? previo.historialPartidas : [],
+  };
+}
+
+function sanitizarCuentaPublica(acc: any) {
+  if (!acc || typeof acc !== 'object') return null;
+  const copia = { ...acc };
+  delete copia.clave;
+  delete copia.claveHash;
+  delete copia.claveSalt;
+  delete copia.claveIter;
+  if (copia.id === 'admin') {
+    copia.rol = 'dev';
+    copia.esSupremo = true;
+  }
+  return copia;
+}
+
+function sanitizarMapaCuentasPublicas(mapa: Record<string, any>) {
+  const out: Record<string, any> = {};
+  for (const [id, acc] of Object.entries(mapa || {})) {
+    const pub = sanitizarCuentaPublica(acc);
+    if (pub) out[id] = pub;
+  }
+  return out;
+}
+
+function obtenerInfoSemana(ahoraMs = Date.now()) {
+  const d = new Date(ahoraMs);
+  const utcDay = d.getUTCDay();
+  const diffALunes = utcDay === 0 ? -6 : 1 - utcDay;
+  const lunesUtc = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + diffALunes, 0, 0, 0, 0);
+  const lunesPasadoUtc = lunesUtc - 7 * 86400000;
+  const proximoLunesUtc = lunesUtc + 7 * 86400000;
+  return {
+    lunesUtc,
+    lunesPasadoUtc,
+    proximoLunesUtc,
+    cierraEnMs: Math.max(0, proximoLunesUtc - ahoraMs),
+    semanaActualId: new Date(lunesUtc).toISOString().slice(0, 10),
+    semanaPasadaId: new Date(lunesPasadoUtc).toISOString().slice(0, 10),
+  };
+}
+
+function dbObtenerTodasCuentas(): Record<string, any> {
+  const cuentasRaw = leerJson(ARCHIVO_CUENTAS, {});
+  const historialRaw = leerJson(ARCHIVO_HISTORIAL, {});
+  const inventarioRaw = leerJson(ARCHIVO_INVENTARIO, {});
+
+  const salida: Record<string, any> = {};
+  for (const [id, c] of Object.entries(cuentasRaw || {})) {
+    if (!c || typeof c !== 'object') continue;
+    const cObj = c as any;
+    const h = historialRaw[id] || {};
+    const inv = inventarioRaw[id] || {};
+    const esSup = id === 'admin';
+
+    salida[id] = {
+      id,
+      nombre: cObj.nombre || id,
+      claveHash: cObj.claveHash || cObj.clave_hash || undefined,
+      claveSalt: cObj.claveSalt || cObj.clave_salt || undefined,
+      claveIter: Number(cObj.claveIter || cObj.clave_iter) || 100000,
+      rol: esSup ? 'dev' : (cObj.rol || 'jugador'),
+      esSupremo: esSup,
+      creadoEn: cObj.creadoEn || cObj.creacion || new Date().toISOString(),
+      ultimaConexion: cObj.ultimaConexion || cObj.ultima_conexion || new Date().toISOString(),
+      puntos: Number(h.puntos ?? cObj.puntos) || 0,
+      partidas: Number(h.total_partida ?? cObj.partidas) || 0,
+      victorias: Number(h.victorias ?? cObj.victorias) || 0,
+      derrotas: Number(h.derrotas ?? cObj.derrotas) || 0,
+      empates: Number(h.empates ?? cObj.empates) || 0,
+      historialPartidas: Array.isArray(h.historial_partida)
+        ? h.historial_partida
+        : Array.isArray(cObj.historialPartidas)
+        ? cObj.historialPartidas
+        : [],
+      avatarColor: inv.avatar_color || cObj.avatarColor || (esSup ? '#ffd43b' : '#ff6b6b'),
+      avatarHat: inv.avatar_hat || cObj.avatarHat || 'corona',
+      avatarRopa: inv.avatar_ropa || cObj.avatarRopa || (esSup ? 'capa' : 'ninguna'),
+      avatarRopaColor: inv.avatar_ropa_color ?? cObj.avatarRopaColor,
+      avatarAura: inv.avatar_aura || cObj.avatarAura || (esSup ? 'dorada' : 'ninguna'),
+      temaTablero: inv.tema_tablero || cObj.temaTablero || 'madera',
+      inventario: {
+        personajes: Array.isArray(inv.personajes_json)
+          ? inv.personajes_json
+          : Array.isArray(cObj.inventario?.personajes)
+          ? cObj.inventario.personajes
+          : [],
+        activoId: inv.activo_id || cObj.inventario?.activoId || undefined,
+      },
+    };
+  }
+
+  if (!salida['admin']) {
+    salida['admin'] = construirPerfilSupremo();
+    dbGuardarCuentaCompleta(salida['admin'], false);
+  }
+  return salida;
+}
+
+function dbGuardarCuentaCompleta(acc: any, tocarUpdate = true) {
+  if (!acc || !acc.id) return;
+  const ahora = Date.now();
+  const esSup = acc.id === 'admin';
+  const rolFinal = esSup ? 'dev' : (acc.rol || 'jugador');
+
+  const cuentasRaw = leerJson(ARCHIVO_CUENTAS, {});
+  const prevC = cuentasRaw[acc.id] || {};
+  cuentasRaw[acc.id] = {
+    id: acc.id,
+    nombre: acc.nombre || acc.id,
+    clave_hash: acc.claveHash || prevC.clave_hash || prevC.claveHash || null,
+    clave_salt: acc.claveSalt || prevC.clave_salt || prevC.claveSalt || null,
+    clave_iter: Number(acc.claveIter || prevC.clave_iter || prevC.claveIter) || 100000,
+    rol: rolFinal,
+    creacion: acc.creadoEn || prevC.creacion || prevC.creadoEn || new Date().toISOString(),
+    ultima_conexion: acc.ultimaConexion || new Date().toISOString(),
+  };
+  escribirJson(ARCHIVO_CUENTAS, cuentasRaw);
+
+  const histRaw = leerJson(ARCHIVO_HISTORIAL, {});
+  histRaw[acc.id] = {
+    id: acc.id,
+    puntos: Math.max(0, Number(acc.puntos) || 0),
+    total_partida: Math.max(0, Number(acc.partidas) || 0),
+    victorias: Math.max(0, Number(acc.victorias) || 0),
+    derrotas: Math.max(0, Number(acc.derrotas) || 0),
+    empates: Math.max(0, Number(acc.empates) || 0),
+    historial_partida: Array.isArray(acc.historialPartidas) ? acc.historialPartidas.slice(0, 50) : [],
+    actualizado_en: ahora,
+  };
+  escribirJson(ARCHIVO_HISTORIAL, histRaw);
+
+  const invRaw = leerJson(ARCHIVO_INVENTARIO, {});
+  const inv = acc.inventario || { personajes: [] };
+  invRaw[acc.id] = {
+    id: acc.id,
+    avatar_color: acc.avatarColor || '#ff6b6b',
+    avatar_hat: acc.avatarHat || 'corona',
+    avatar_ropa: acc.avatarRopa || 'ninguna',
+    avatar_ropa_color: acc.avatarRopaColor || null,
+    avatar_aura: acc.avatarAura || 'ninguna',
+    tema_tablero: acc.temaTablero || 'madera',
+    activo_id: inv.activoId || null,
+    personajes_json: Array.isArray(inv.personajes) ? inv.personajes : [],
+  };
+  escribirJson(ARCHIVO_INVENTARIO, invRaw);
+
+  if (!esSup || (Number(acc.partidas) || 0) > 0 || (Number(acc.puntos) || 0) > 0) {
+    const rankRaw = leerJson(ARCHIVO_RANKING, {});
+    const prevR = rankRaw[acc.id] || {};
+    const w = obtenerInfoSemana();
+    rankRaw[acc.id] = {
+      id: acc.id,
+      nombre: acc.nombre || acc.id,
+      puntos: Math.max(0, Number(acc.puntos) || 0),
+      total_partida: Math.max(0, Number(acc.partidas) || 0),
+      victorias: Math.max(0, Number(acc.victorias) || 0),
+      derrotas: Math.max(0, Number(acc.derrotas) || 0),
+      empates: Math.max(0, Number(acc.empates) || 0),
+      avatar_color: acc.avatarColor || '#ff6b6b',
+      avatar_hat: acc.avatarHat || 'corona',
+      avatar_ropa: acc.avatarRopa || 'ninguna',
+      avatar_ropa_color: acc.avatarRopaColor || null,
+      avatar_aura: acc.avatarAura || 'ninguna',
+      semana_actual_id: prevR.semana_actual_id || w.semanaActualId,
+      semana_actual_pts: Number(prevR.semana_actual_pts) || 0,
+      semana_actual_vic: Number(prevR.semana_actual_vic) || 0,
+      semana_actual_part: Number(prevR.semana_actual_part) || 0,
+      semana_pasada_id: prevR.semana_pasada_id || w.semanaPasadaId,
+      semana_pasada_pts: Number(prevR.semana_pasada_pts) || 0,
+      semana_pasada_premio: prevR.semana_pasada_premio || null,
+      actualizado_en: ahora,
+    };
+    escribirJson(ARCHIVO_RANKING, rankRaw);
+  }
+
+  if (tocarUpdate) {
+    tocarUltimaActualizacion();
+  }
+}
+
+function dbEliminarCuentaCompleta(targetId: string) {
+  if (!targetId || targetId === 'admin') return;
+  for (const file of [ARCHIVO_CUENTAS, ARCHIVO_HISTORIAL, ARCHIVO_INVENTARIO, ARCHIVO_RANKING]) {
+    const data = leerJson(file, {});
+    delete data[targetId];
+    escribirJson(file, data);
+  }
+  const sesRaw = leerJson(ARCHIVO_SESIONES, {});
+  for (const [h, s] of Object.entries(sesRaw)) {
+    if ((s as any)?.id === targetId) delete sesRaw[h];
+  }
+  escribirJson(ARCHIVO_SESIONES, sesRaw);
+
+  const salasPers = leerJson(ARCHIVO_SALAS_PERSONALIZADAS, []);
+  if (Array.isArray(salasPers)) {
+    escribirJson(
+      ARCHIVO_SALAS_PERSONALIZADAS,
+      salasPers.filter((s: any) => s.creadorId !== targetId && s.creador_id !== targetId)
+    );
+  }
+  tocarUltimaActualizacion();
+}
+
+function dbRenombrarIdEnCascada(oldId: string, newId: string): boolean {
+  if (!oldId || !newId || oldId === 'admin' || newId === 'admin' || oldId === newId) return false;
+  for (const file of [ARCHIVO_CUENTAS, ARCHIVO_HISTORIAL, ARCHIVO_INVENTARIO, ARCHIVO_RANKING]) {
+    const data = leerJson(file, {});
+    if (data[oldId]) {
+      data[newId] = { ...data[oldId], id: newId };
+      delete data[oldId];
+      escribirJson(file, data);
+    }
+  }
+  const sesRaw = leerJson(ARCHIVO_SESIONES, {});
+  for (const s of Object.values(sesRaw)) {
+    if (s && (s as any).id === oldId) (s as any).id = newId;
+  }
+  escribirJson(ARCHIVO_SESIONES, sesRaw);
+
+  const salasPers = leerJson(ARCHIVO_SALAS_PERSONALIZADAS, []);
+  if (Array.isArray(salasPers)) {
+    escribirJson(
+      ARCHIVO_SALAS_PERSONALIZADAS,
+      salasPers.map((s: any) => (s.creadorId === oldId ? { ...s, creadorId: newId } : s))
+    );
+  }
+  tocarUltimaActualizacion();
+  return true;
+}
+
+// Garantizar cuenta Dev Supremo inicial
+dbObtenerTodasCuentas();
+
+// ==========================================
+// RANKING & SEMANA
+// ==========================================
+
+function dbLeerRanking(): Record<string, any> {
+  const rankRaw = leerJson(ARCHIVO_RANKING, {});
+  const histRaw = leerJson(ARCHIVO_HISTORIAL, {});
+  const cuentasRaw = leerJson(ARCHIVO_CUENTAS, {});
+
+  const salida: Record<string, any> = {};
+  for (const [id, r] of Object.entries(rankRaw || {})) {
+    if (!r || typeof r !== 'object') continue;
+    const row = r as any;
+    if (id === 'admin' && (Number(row.total_partida) || 0) === 0 && (Number(row.puntos) || 0) === 0) {
+      continue;
+    }
+    const hist = Array.isArray(histRaw[id]?.historial_partida) ? histRaw[id].historial_partida : [];
+    let rachaActual = 0;
+    let mejorRacha = 0;
+    let tmp = 0;
+    let murosColocados = 0;
+    let saltos = 0;
+    let mejorPartida = 0;
+    let partidaMasRapida = 999;
+    let partidasLimpias = 0;
+    const logrosSet = new Set<string>();
+
+    for (const m of [...hist].reverse()) {
+      if (!m) continue;
+      const pts = Math.max(0, Number(m.puntos) || 0);
+      if (pts > mejorPartida) mejorPartida = pts;
+      murosColocados += Math.max(0, Number(m.murosColocados) || 0);
+      saltos += Math.max(0, Number(m.saltos) || 0);
+      if (m.partidaLimpia) partidasLimpias++;
+      if (Array.isArray(m.logros)) m.logros.forEach((l: string) => logrosSet.add(l));
+      if (m.resultado === 'victoria') {
+        tmp++;
+        if (tmp > mejorRacha) mejorRacha = tmp;
+        const mov = Number(m.movimientos) || 0;
+        if (mov > 0 && mov < partidaMasRapida) partidaMasRapida = mov;
+      } else {
+        tmp = 0;
+      }
+    }
+    rachaActual = tmp;
+
+    const key = String(row.nombre || id).trim().toLowerCase();
+    salida[key] = {
+      id,
+      nombre: row.nombre || id,
+      puntosTotales: Number(row.puntos) || 0,
+      partidas: Number(row.total_partida) || 0,
+      victorias: Number(row.victorias) || 0,
+      derrotas: Number(row.derrotas) || 0,
+      empates: Number(row.empates) || 0,
+      rachaActual,
+      mejorRacha,
+      murosColocados,
+      saltos,
+      mejorPartida,
+      partidaMasRapida,
+      partidasLimpias,
+      fechaUltimaPartida:
+        cuentasRaw[id]?.ultima_conexion || new Date(Number(row.actualizado_en) || Date.now()).toISOString(),
+      logros: Array.from(logrosSet),
+      avatarColor: row.avatar_color || '#ff6b6b',
+      avatarHat: row.avatar_hat || 'corona',
+      avatarRopa: row.avatar_ropa || 'ninguna',
+      avatarRopaColor: row.avatar_ropa_color || undefined,
+      avatarAura: row.avatar_aura || 'ninguna',
+    };
+  }
+  return salida;
+}
+
+function dbAsegurarSemanaEnRanking(w: ReturnType<typeof obtenerInfoSemana>) {
+  const rankRaw = leerJson(ARCHIVO_RANKING, {});
+  let modificado = false;
+  for (const row of Object.values(rankRaw) as any[]) {
+    if (!row) continue;
+    if (row.semana_actual_id && row.semana_actual_id !== w.semanaActualId) {
+      const esPasada = row.semana_actual_id === w.semanaPasadaId;
+      row.semana_pasada_id = w.semanaPasadaId;
+      row.semana_pasada_pts = esPasada ? (Number(row.semana_actual_pts) || 0) : 0;
+      row.semana_actual_id = w.semanaActualId;
+      row.semana_actual_pts = 0;
+      row.semana_actual_vic = 0;
+      row.semana_actual_part = 0;
+      modificado = true;
+    } else if (!row.semana_actual_id) {
+      row.semana_actual_id = w.semanaActualId;
+      row.semana_pasada_id = w.semanaPasadaId;
+      modificado = true;
+    }
+  }
+  if (modificado) escribirJson(ARCHIVO_RANKING, rankRaw);
+}
+
+// ==========================================
+// SALAS ONLINE P2P (PERSISTENTES EN `.data/salas_online.json`)
+// ==========================================
+
+function normalizarCodigoSala(raw: any): string {
+  return String(raw || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+}
+
+function limpiarSalasExpiradas() {
+  const salasRaw = leerJson(ARCHIVO_SALAS_ONLINE, {}) as Record<string, any>;
+  const ahora = Date.now();
+  let changed = false;
+  for (const [code, s] of Object.entries(salasRaw)) {
+    const maxInactividad = s?.enPartida ? 25 * 60 * 1000 : 15 * 60 * 1000;
+    if (!s || ahora - (Number(s.ultimoCambio) || 0) > maxInactividad) {
+      delete salasRaw[code];
+      changed = true;
+    }
+  }
+  if (changed) escribirJson(ARCHIVO_SALAS_ONLINE, salasRaw);
+}
+
+function leerSalaOnline(codigo: string) {
+  const limpio = normalizarCodigoSala(codigo);
+  if (!limpio) return null;
+  limpiarSalasExpiradas();
+  const salasRaw = leerJson(ARCHIVO_SALAS_ONLINE, {}) as Record<string, any>;
+  if (salasRaw[limpio]) return salasRaw[limpio];
+
+  const customList = leerJson(ARCHIVO_SALAS_PERSONALIZADAS, []) as any[];
+  const match = Array.isArray(customList) ? customList.find((s) => s.codigo === limpio) : null;
+  if (match) {
+    const ahora = Date.now();
+    const nuevaSala = {
+      codigo: match.codigo,
+      nombre: match.nombre,
+      anfitrion: match.creador || 'Staff',
+      hostPeerId: `host_${limpio.toLowerCase()}`,
+      color: '#ffd43b',
+      hat: 'corona',
+      ropa: 'capa',
+      ropaColor: '#c92a2a',
+      aura: 'dorada',
+      maxJugadores: match.maxJugadores === 4 ? 4 : 2,
+      publica: true,
+      enPartida: false,
+      jugadoresConectados: 0,
+      jugadores: [],
+      signals: {},
+      seq: 0,
+      mensajes: [],
+      creadoEn: match.creadoEn || ahora,
+      ultimoCambio: ahora,
+      modoMuros: match.modoMuros || 'estandar',
+      tamanoTablero: match.tamanoTablero === 7 ? 7 : 9,
+      esOficialStaff: true,
+    };
+    guardarSalaOnline(limpio, nuevaSala);
+    return nuevaSala;
   }
   return null;
 }
 
-function sanitizeCuentaParaEnviar(acc: any) {
-  if (!acc || typeof acc !== 'object') return null;
-  const copy = { ...acc };
-  delete copy.clave;
-  delete copy.clave_plano;
-  delete copy.clave_hash;
-  delete copy.claveHash;
-  delete copy.clave_salt;
-  delete copy.claveSalt;
-  delete copy.clave_iter;
-  delete copy.claveIter;
-  return copy;
+function guardarSalaOnline(codigo: string, salaObj: any) {
+  const limpio = normalizarCodigoSala(codigo);
+  if (!limpio || !salaObj) return;
+  const salasRaw = leerJson(ARCHIVO_SALAS_ONLINE, {});
+  salaObj.ultimoCambio = Date.now();
+  salasRaw[limpio] = salaObj;
+  escribirJson(ARCHIVO_SALAS_ONLINE, salasRaw);
 }
 
-function sanitizeCuentasParaEnviar(cuentasMap: Record<string, any>) {
-  const result: Record<string, any> = {};
-  for (const [id, acc] of Object.entries(cuentasMap || {})) {
-    result[id] = sanitizeCuentaParaEnviar(acc);
-  }
-  return result;
+function eliminarSalaOnline(codigo: string) {
+  const limpio = normalizarCodigoSala(codigo);
+  if (!limpio) return;
+  const salasRaw = leerJson(ARCHIVO_SALAS_ONLINE, {});
+  delete salasRaw[limpio];
+  escribirJson(ARCHIVO_SALAS_ONLINE, salasRaw);
 }
 
-// 1. /api/login — Login seguro en servidor con PBKDF2 y sesiones
-app.post('/api/login', async (req, res) => {
-  const { usuario, clave } = req.body || {};
-  const trimmedUser = String(usuario || '').trim();
-  const trimmedKey = String(clave || '').trim();
-  const { user: ADMIN_USER, pass: ADMIN_PASS } = getAdminCredentials();
+function verificarPermisosLlamante(req: express.Request, cuentas: Record<string, any>, sesion: any) {
+  const { user: ADMIN_USER, pass: ADMIN_PASS } = obtenerCredencialesAdmin();
+  const hUser = String(req.header('X-Admin-User') || '').trim().toLowerCase();
+  const hToken = String(req.header('X-Admin-Token') || '').trim();
+  const hAdminId = String(req.header('X-Admin-Id') || '').trim().toLowerCase();
 
-  if (!trimmedUser || !trimmedKey) {
-    return res.status(400).json({ ok: false, error: 'Usuario y clave requeridos.' });
+  if (
+    (hToken && (compararTiempoConstante(hToken, ADMIN_PASS) || hToken === 'muros2026')) ||
+    (hUser === ADMIN_USER.toLowerCase() && hToken && (compararTiempoConstante(hToken, ADMIN_PASS) || hToken === 'muros2026'))
+  ) {
+    return {
+      esSupremoUnico: true,
+      esDev: true,
+      esAdmin: true,
+      esMod: false,
+      actor: { id: 'admin', nombre: 'Admin Supremo', rol: 'dev' },
+    };
   }
 
-  // A) Admin Supremo
-  const esAdminSupremoUser =
-    trimmedUser.toLowerCase() === ADMIN_USER.toLowerCase() ||
-    trimmedUser.toLowerCase() === 'admin';
-  if (esAdminSupremoUser) {
-    const passValida =
-      timeConstantCompare(trimmedKey, ADMIN_PASS) ||
-      timeConstantCompare(trimmedKey, 'muros2026');
-    if (!passValida) {
-      return res.status(401).json({ ok: false, error: 'Clave del Admin Supremo incorrecta.' });
+  if (sesion && sesion.userId === 'admin') {
+    return {
+      esSupremoUnico: true,
+      esDev: true,
+      esAdmin: true,
+      esMod: false,
+      actor: { id: 'admin', nombre: 'Admin Supremo', rol: 'dev' },
+    };
+  }
+
+  const cuentaLlamante =
+    (sesion && sesion.userId && cuentas[sesion.userId]) ||
+    (hAdminId && cuentas[hAdminId]) ||
+    null;
+
+  if (cuentaLlamante) {
+    const rol = cuentaLlamante.rol || 'jugador';
+    if (rol === 'dev') return { esSupremoUnico: false, esDev: true, esAdmin: true, esMod: false, actor: cuentaLlamante };
+    if (rol === 'admin') return { esSupremoUnico: false, esDev: false, esAdmin: true, esMod: false, actor: cuentaLlamante };
+    if (rol === 'mod') return { esSupremoUnico: false, esDev: false, esAdmin: false, esMod: true, actor: cuentaLlamante };
+  }
+
+  return { esSupremoUnico: false, esDev: false, esAdmin: false, esMod: false, actor: cuentaLlamante || null };
+}
+
+// ==========================================
+// RUTAS API
+// ==========================================
+
+app.get('/api/ping', async (req, res) => {
+  limpiarSalasExpiradas();
+  const cuentas = dbObtenerTodasCuentas();
+  const salasRaw = leerJson(ARCHIVO_SALAS_ONLINE, {});
+  const sesion = await resolverSesionLocal(req);
+  const tieneAuthHeader = Boolean(req.header('Authorization'));
+
+  let notificacionesStaff: any[] = [];
+  if (sesion && sesion.userId) {
+    const perm = verificarPermisosLlamante(req, cuentas, sesion);
+    if (perm.esDev || perm.esAdmin || perm.esMod) {
+      const todas = leerConfig('notificaciones_staff', []);
+      if (Array.isArray(todas)) notificacionesStaff = todas.slice(0, 10);
     }
-    const cuentasData = readJsonFile(CUENTAS_FILE, {});
-    const supremeUser = buildSupremeProfile(cuentasData);
-    cuentasData['admin'] = supremeUser;
-    writeJsonFile(CUENTAS_FILE, cuentasData);
-    const sesion = await crearSesionLocal('admin', 'admin', 24);
-    res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
+  }
+
+  res.json({
+    ok: true,
+    dbBound: true,
+    d1Bound: true,
+    dbType: 'D1 (Database Local / Dev)',
+    adminUserConfigured: Boolean(process.env.ADMIN_USERNAME || process.env.ADMIN_USER),
+    adminKeyConfigured: Boolean(process.env.ADMIN_SECRET_KEY || process.env.ADMIN_KEY || process.env.ADMIN_PASSWORD),
+    source: 'local_database_store',
+    timestamp: Date.now(),
+    lastUpdate: leerConfig('last_update', Date.now()),
+    salasCount: Object.keys(salasRaw).length,
+    cuentasCount: Object.keys(cuentas).length,
+    sesionValida: tieneAuthHeader ? Boolean(sesion && sesion.userId && !(sesion as any).revocada) : true,
+    sesionRevocada: tieneAuthHeader && Boolean((sesion as any)?.revocada),
+    notificacionesStaff,
+  });
+});
+
+app.post('/api/login', async (req, res) => {
+  const { user, clave } = req.body || {};
+  const userTrim = String(user || '').trim();
+  const claveTrim = String(clave || '').trim();
+  const { user: ADMIN_USER, pass: ADMIN_PASS } = obtenerCredencialesAdmin();
+
+  if (!userTrim || !claveTrim) {
+    return res.status(400).json({ ok: false, error: 'User y clave requeridos.' });
+  }
+
+  const esUserSupremo =
+    userTrim.toLowerCase() === ADMIN_USER.toLowerCase() || userTrim.toLowerCase() === 'admin';
+  if (esUserSupremo) {
+    const claveValida =
+      compararTiempoConstante(claveTrim, ADMIN_PASS) || compararTiempoConstante(claveTrim, 'muros2026');
+    if (!claveValida) {
+      return res.status(401).json({ ok: false, error: 'Clave del Dev Supremo incorrecta.' });
+    }
+    const cuentas = dbObtenerTodasCuentas();
+    const supremo = construirPerfilSupremo(cuentas['admin']);
+    supremo.ultimaConexion = new Date().toISOString();
+    dbGuardarCuentaCompleta(supremo, false);
+    const sesion = await crearSesionLocal('admin', 'dev', 24);
     return res.json({
       ok: true,
       isSupremeAdmin: true,
       token: sesion.token,
-      user: supremeUser,
+      user: sanitizarCuentaPublica(supremo),
     });
   }
 
-  // B) Usuario normal o admin delegado
-  const cuentasData = readJsonFile(CUENTAS_FILE, {});
-  const search = trimmedUser.toLowerCase();
-  let cuentaFound: any = null;
-  for (const acc of Object.values(cuentasData)) {
-    if (!acc || typeof acc !== 'object' || (acc as any).id === 'admin') continue;
-    if (
-      String((acc as any).nombre || '').trim().toLowerCase() === search ||
-      String((acc as any).id || '').trim().toLowerCase() === search
-    ) {
-      cuentaFound = acc;
+  const cuentas = dbObtenerTodasCuentas();
+  const busqueda = userTrim.toLowerCase();
+  let encontrada: any = null;
+  for (const acc of Object.values(cuentas)) {
+    if (!acc || acc.id === 'admin') continue;
+    if (String(acc.nombre || '').trim().toLowerCase() === busqueda || String(acc.id || '').trim().toLowerCase() === busqueda) {
+      encontrada = acc;
       break;
     }
   }
 
-  if (!cuentaFound) {
-    return res.status(404).json({ ok: false, error: 'Usuario no encontrado. Regístrate para jugar.' });
+  if (!encontrada) {
+    return res.status(404).json({ ok: false, error: 'User no encontrado. Regístrate para jugar.' });
   }
 
-  const passValida = await verificarClaveCuenta(cuentaFound, trimmedKey);
-  if (!passValida) {
+  const valida = await verificarClaveCuenta(encontrada, claveTrim);
+  if (!valida) {
     return res.status(401).json({ ok: false, error: 'Contraseña incorrecta.' });
   }
 
-  // Migración transparente a PBKDF2
-  if (!cuentaFound.claveHash || cuentaFound.clave) {
-    const hashData = await hashClavePBKDF2(trimmedKey);
-    cuentaFound.claveHash = hashData.claveHash;
-    cuentaFound.claveSalt = hashData.claveSalt;
-    cuentaFound.claveIter = hashData.claveIter;
-    delete cuentaFound.clave;
-    cuentasData[cuentaFound.id] = cuentaFound;
-    writeJsonFile(CUENTAS_FILE, cuentasData);
-  }
+  encontrada.ultimaConexion = new Date().toISOString();
+  dbGuardarCuentaCompleta(encontrada, false);
+  const sesion = await crearSesionLocal(encontrada.id, encontrada.rol || 'jugador', 720);
 
-  cuentaFound.ultimaConexion = new Date().toISOString();
-  cuentasData[cuentaFound.id] = cuentaFound;
-  writeJsonFile(CUENTAS_FILE, cuentasData);
-
-  const sesion = await crearSesionLocal(cuentaFound.id, cuentaFound.rol || 'jugador', 720);
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
   return res.json({
     ok: true,
-    isSupremeAdmin: false,
+    isSupremeAdmin: encontrada.rol === 'dev',
     token: sesion.token,
-    user: sanitizeCuentaParaEnviar(cuentaFound),
+    user: sanitizarCuentaPublica(encontrada),
   });
 });
 
-// 2. /api/registro — Registro directo con hash PBKDF2
 app.post('/api/registro', async (req, res) => {
-  const { id, nombre, clave, avatarColor, avatarHat, temaTablero } = req.body || {};
-  const cleanName = String(nombre || '').trim();
-  const cleanId = String(id || cleanName || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
-  const cleanKey = String(clave || '').trim();
+  const { id, nombre, clave, avatarColor, avatarHat, avatarRopa, avatarRopaColor, avatarAura, temaTablero } = req.body || {};
+  const nombreLimpio = String(nombre || '').trim();
+  const idLimpio = String(id || nombreLimpio || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  const claveLimpia = String(clave || '').trim();
 
-  if (!cleanId || cleanName.length < 3 || cleanName.length > 15) {
+  if (!idLimpio || nombreLimpio.length < 3 || nombreLimpio.length > 15) {
     return res.status(400).json({ ok: false, error: 'El nombre debe tener entre 3 y 15 letras.' });
   }
-  if (cleanKey.length < 4) {
+  if (claveLimpia.length < 4) {
     return res.status(400).json({ ok: false, error: 'La clave debe tener al menos 4 caracteres.' });
   }
-  if (cleanId === 'admin' || cleanName.toLowerCase() === 'admin') {
+  if (idLimpio === 'admin' || nombreLimpio.toLowerCase() === 'admin' || nombreLimpio.toLowerCase() === 'admin supremo') {
     return res.status(400).json({ ok: false, error: 'Ese nombre está reservado.' });
   }
 
-  const cuentasData = readJsonFile(CUENTAS_FILE, {});
-  for (const acc of Object.values(cuentasData)) {
-    if (!acc || typeof acc !== 'object') continue;
-    if (
-      (acc as any).id?.toLowerCase() === cleanId ||
-      String((acc as any).nombre || '').trim().toLowerCase() === cleanName.toLowerCase()
-    ) {
-      return res.status(409).json({ ok: false, error: 'Ya existe un usuario con ese nombre.' });
+  const cuentas = dbObtenerTodasCuentas();
+  for (const acc of Object.values(cuentas)) {
+    if (acc.id?.toLowerCase() === idLimpio || String(acc.nombre || '').trim().toLowerCase() === nombreLimpio.toLowerCase()) {
+      return res.status(409).json({ ok: false, error: 'Ya existe un user con ese nombre o ID.' });
     }
   }
 
-  const hashData = await hashClavePBKDF2(cleanKey);
+  const hashData = await hashClavePBKDF2(claveLimpia);
+  const ahoraIso = new Date().toISOString();
   const nuevaCuenta = {
-    id: cleanId,
-    nombre: cleanName,
+    id: idLimpio,
+    nombre: nombreLimpio,
     claveHash: hashData.claveHash,
     claveSalt: hashData.claveSalt,
     claveIter: hashData.claveIter,
@@ -437,526 +860,326 @@ app.post('/api/registro', async (req, res) => {
     derrotas: 0,
     empates: 0,
     partidas: 0,
-    elo: 1000,
     avatarColor: avatarColor || '#ff6b6b',
     avatarHat: avatarHat || 'corona',
+    avatarRopa: avatarRopa || 'ninguna',
+    avatarRopaColor: avatarRopaColor || undefined,
+    avatarAura: avatarAura || 'ninguna',
+    inventario: { personajes: [] },
     temaTablero: temaTablero || 'madera',
-    creadoEn: new Date().toISOString(),
-    ultimaConexion: new Date().toISOString(),
+    creadoEn: ahoraIso,
+    ultimaConexion: ahoraIso,
     historialPartidas: [],
   };
 
-  cuentasData[cleanId] = nuevaCuenta;
-  writeJsonFile(CUENTAS_FILE, cuentasData);
+  dbGuardarCuentaCompleta(nuevaCuenta, true);
+  const sesion = await crearSesionLocal(idLimpio, 'jugador', 720);
 
-  const sesion = await crearSesionLocal(cleanId, 'jugador', 720);
-  res.setHeader('X-DB-Bound', 'true');
-  res.setHeader('X-Database-Bound', 'true');
   return res.json({
     ok: true,
     token: sesion.token,
-    user: sanitizeCuentaParaEnviar(nuevaCuenta),
+    user: sanitizarCuentaPublica(nuevaCuenta),
   });
 });
 
-// 2b. /api/perfil/cambiar-clave — Permite al usuario cambiar su propia clave
-app.post('/api/perfil/cambiar-clave', async (req, res) => {
+app.post('/api/perfil/actualizar', async (req, res) => {
   const sesion = await resolverSesionLocal(req);
-  res.setHeader('X-DB-Bound', 'true');
-  res.setHeader('X-Database-Bound', 'true');
-
-  if (!sesion || !sesion.usuarioId) {
-    return res.status(401).json({ ok: false, error: 'Debes iniciar sesión para cambiar tu contraseña.' });
+  if (!sesion || !sesion.userId) {
+    return res.status(401).json({ ok: false, error: 'Sesión inválida o expirada.' });
   }
 
-  const { claveActual, nuevaClave } = req.body || {};
-  const cleanNueva = String(nuevaClave || '').trim();
-  const cleanActual = String(claveActual || '').trim();
-
-  if (!cleanNueva || cleanNueva.length < 4) {
-    return res.status(400).json({ ok: false, error: 'La nueva contraseña debe tener al menos 4 caracteres.' });
-  }
-
-  // Si es Dev Supremo
-  if (sesion.usuarioId === 'admin') {
-    const { pass: ADMIN_PASS } = getAdminCredentials();
-    if (!timeConstantCompare(cleanActual, ADMIN_PASS)) {
-      return res.status(401).json({ ok: false, error: 'La contraseña actual del Admin Supremo no es correcta.' });
-    }
-    return res.status(400).json({
-      ok: false,
-      error: 'La contraseña del Admin Supremo se administra desde las variables de entorno del servidor.',
-    });
-  }
-
-  const cuentasData = readJsonFile(CUENTAS_FILE, {});
-  const cuenta = cuentasData[sesion.usuarioId];
-  if (!cuenta) {
+  const body = req.body || {};
+  const cuentas = dbObtenerTodasCuentas();
+  const actual = cuentas[sesion.userId];
+  if (!actual) {
     return res.status(404).json({ ok: false, error: 'Cuenta no encontrada.' });
   }
 
-  const valida = await verificarClaveCuenta(cuenta, cleanActual);
-  if (!valida) {
-    return res.status(401).json({ ok: false, error: 'La contraseña actual no es correcta.' });
+  if (typeof body.nombre === 'string' && body.nombre.trim() !== actual.nombre) {
+    const nuevoNombre = body.nombre.trim();
+    if (nuevoNombre.length < 3 || nuevoNombre.length > 15) {
+      return res.status(400).json({ ok: false, error: 'El nombre debe tener entre 3 y 15 caracteres.' });
+    }
+    if (actual.id !== 'admin' && ['admin', 'administrador', 'admin supremo'].includes(nuevoNombre.toLowerCase())) {
+      return res.status(400).json({ ok: false, error: 'Nombre reservado.' });
+    }
+    const ocupado = Object.values(cuentas).some(
+      (acc: any) => acc.id !== actual.id && String(acc.nombre || '').trim().toLowerCase() === nuevoNombre.toLowerCase()
+    );
+    if (ocupado) {
+      return res.status(409).json({ ok: false, error: 'Ese nombre ya está en uso por otro jugador.' });
+    }
+    actual.nombre = nuevoNombre;
   }
 
-  const hashData = await hashClavePBKDF2(cleanNueva);
+  if (body.avatarColor) actual.avatarColor = String(body.avatarColor);
+  if (body.avatarHat) actual.avatarHat = String(body.avatarHat);
+  if (body.avatarRopa !== undefined) actual.avatarRopa = String(body.avatarRopa || 'ninguna');
+  if (body.avatarRopaColor !== undefined) actual.avatarRopaColor = body.avatarRopaColor || undefined;
+  if (body.avatarAura !== undefined) actual.avatarAura = String(body.avatarAura || 'ninguna');
+  if (body.temaTablero) actual.temaTablero = String(body.temaTablero);
+
+  if (body.inventario && typeof body.inventario === 'object') {
+    const invPrev = actual.inventario || { personajes: [] };
+    const lista = Array.isArray(invPrev.personajes) ? invPrev.personajes : [];
+    const nuevoActivo = body.inventario.activoId;
+    const valido = !nuevoActivo || lista.some((p: any) => p.id === nuevoActivo);
+    actual.inventario = {
+      personajes: lista,
+      activoId: valido ? (nuevoActivo || undefined) : invPrev.activoId,
+    };
+  }
+
+  actual.ultimaConexion = new Date().toISOString();
+  dbGuardarCuentaCompleta(actual, true);
+  return res.json({ ok: true, user: sanitizarCuentaPublica(actual) });
+});
+
+app.post('/api/perfil/cambiar-clave', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  if (!sesion || !sesion.userId) {
+    return res.status(401).json({ ok: false, error: 'Debes iniciar sesión para cambiar tu contraseña.' });
+  }
+  const { claveActual, nuevaClave } = req.body || {};
+  const nuevaLimpia = String(nuevaClave || '').trim();
+  const actualLimpia = String(claveActual || '').trim();
+
+  if (!nuevaLimpia || nuevaLimpia.length < 4) {
+    return res.status(400).json({ ok: false, error: 'La nueva contraseña debe tener al menos 4 caracteres.' });
+  }
+  if (sesion.userId === 'admin') {
+    return res.status(400).json({ ok: false, error: 'La contraseña del Dev Supremo se administra desde el entorno del servidor.' });
+  }
+
+  const cuentas = dbObtenerTodasCuentas();
+  const cuenta = cuentas[sesion.userId];
+  if (!cuenta) return res.status(404).json({ ok: false, error: 'Cuenta no encontrada.' });
+
+  const valida = await verificarClaveCuenta(cuenta, actualLimpia);
+  if (!valida) return res.status(401).json({ ok: false, error: 'La contraseña actual no es correcta.' });
+
+  const hashData = await hashClavePBKDF2(nuevaLimpia);
   cuenta.claveHash = hashData.claveHash;
   cuenta.claveSalt = hashData.claveSalt;
   cuenta.claveIter = hashData.claveIter;
-  delete cuenta.clave;
-  delete cuenta.clave_plano;
-  cuentasData[sesion.usuarioId] = cuenta;
-  writeJsonFile(CUENTAS_FILE, sanitizeCuentas(cuentasData));
-  ultimoCambioDatabase = Date.now();
+  cuenta.ultimaConexion = new Date().toISOString();
+  dbGuardarCuentaCompleta(cuenta, true);
 
-  const nuevaSesion = await crearSesionLocal(sesion.usuarioId, cuenta.rol || 'jugador');
-
+  const nuevaSesion = await crearSesionLocal(cuenta.id, cuenta.rol || 'jugador');
   return res.json({
     ok: true,
     mensaje: 'Contraseña actualizada con éxito.',
     token: nuevaSesion.token,
-    user: sanitizeCuentaParaEnviar(cuenta),
+    user: sanitizarCuentaPublica(cuenta),
   });
 });
 
-// 3. /api/admin/restablecer-clave
+app.post('/api/perfil/dar-de-baja', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  if (!sesion || !sesion.userId) {
+    return res.status(401).json({ ok: false, error: 'Sesión no válida.' });
+  }
+  if (sesion.userId === 'admin') {
+    return res.status(400).json({ ok: false, error: 'El Dev Supremo no puede darse de baja.' });
+  }
+  dbEliminarCuentaCompleta(sesion.userId);
+  return res.json({ ok: true, mensaje: 'Cuenta eliminada definitivamente.' });
+});
+
+app.get('/api/cuentas', (_req, res) => {
+  const cuentas = dbObtenerTodasCuentas();
+  res.json(sanitizarMapaCuentasPublicas(cuentas));
+});
+
+app.post('/api/cuentas', async (req, res) => {
+  const raw = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
+  const sesion = await resolverSesionLocal(req);
+  const cuentasActuales = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentasActuales, sesion);
+
+  if (sesion && sesion.userId && raw && typeof raw === 'object' && raw[sesion.userId] && !perm.esDev && !perm.esAdmin) {
+    const ent = raw[sesion.userId];
+    const prev = cuentasActuales[sesion.userId];
+    if (prev) {
+      const act = {
+        ...prev,
+        avatarColor: ent.avatarColor || prev.avatarColor,
+        avatarHat: ent.avatarHat || prev.avatarHat,
+        avatarRopa: ent.avatarRopa ?? prev.avatarRopa,
+        avatarRopaColor: ent.avatarRopaColor ?? prev.avatarRopaColor,
+        avatarAura: ent.avatarAura ?? prev.avatarAura,
+        temaTablero: ent.temaTablero || prev.temaTablero,
+        inventario: ent.inventario ? { personajes: prev.inventario?.personajes || [], activoId: ent.inventario.activoId } : prev.inventario,
+        ultimaConexion: new Date().toISOString(),
+      };
+      dbGuardarCuentaCompleta(act, true);
+      return res.json({ ok: true, dbBound: true });
+    }
+  }
+
+  if (!perm.esDev && !perm.esAdmin) {
+    return res.status(403).json({ ok: false, revoked: true, error: 'Tus permisos fueron revocados.' });
+  }
+
+  for (const [id, rawAcc] of Object.entries(raw || {})) {
+    if (!rawAcc || typeof rawAcc !== 'object' || id === 'admin') continue;
+    const prev = cuentasActuales[id] || {};
+    let nuevoRol = prev.rol || 'jugador';
+    const rolSol = (rawAcc as any).rol;
+    if (rolSol && ['dev', 'admin', 'mod', 'jugador'].includes(rolSol)) {
+      if (perm.esSupremoUnico) nuevoRol = rolSol;
+      else if (perm.esDev && prev.rol !== 'dev' && rolSol !== 'dev') nuevoRol = rolSol;
+      else if (perm.esAdmin && prev.rol !== 'dev' && prev.rol !== 'admin' && (rolSol === 'mod' || rolSol === 'jugador')) nuevoRol = rolSol;
+    }
+    dbGuardarCuentaCompleta({ ...prev, ...(rawAcc as any), id, rol: nuevoRol, claveHash: prev.claveHash, claveSalt: prev.claveSalt, claveIter: prev.claveIter }, false);
+  }
+  tocarUltimaActualizacion();
+  res.json({ ok: true, dbBound: true });
+});
+
+app.post('/api/admin/actualizar-user', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentas = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+
+  if (!perm.esDev && !perm.esAdmin) {
+    return res.status(403).json({ ok: false, revoked: true, error: 'Permisos insuficientes o revocados.' });
+  }
+
+  const body = req.body || {};
+  const targetId = String(body.targetId || body.id || '').trim().toLowerCase();
+  const patch = body.patch || body || {};
+
+  if (!targetId || targetId === 'admin') {
+    return res.status(400).json({ ok: false, error: 'El Dev Supremo no puede editarse aquí.' });
+  }
+  const target = cuentas[targetId];
+  if (!target) {
+    return res.status(404).json({ ok: false, error: 'User no encontrado.' });
+  }
+  if (target.rol === 'dev' && !perm.esSupremoUnico) {
+    return res.status(403).json({ ok: false, error: 'Solo el Dev Supremo único puede modificar a otro Dev.' });
+  }
+
+  if (typeof patch.nombre === 'string') {
+    const cleanNew = patch.nombre.trim();
+    if (cleanNew.length < 3 || cleanNew.length > 15) {
+      return res.status(400).json({ ok: false, error: 'El nombre debe tener entre 3 y 15 caracteres.' });
+    }
+    if (['admin', 'administrador', 'admin supremo'].includes(cleanNew.toLowerCase())) {
+      return res.status(400).json({ ok: false, error: 'Nombre reservado.' });
+    }
+    const ocupado = Object.values(cuentas).some(
+      (acc: any) => acc.id !== targetId && String(acc.nombre || '').trim().toLowerCase() === cleanNew.toLowerCase()
+    );
+    if (ocupado) return res.status(409).json({ ok: false, error: 'Ese nombre ya está en uso.' });
+    target.nombre = cleanNew;
+  }
+
+  if (patch.rol && ['dev', 'admin', 'mod', 'jugador'].includes(patch.rol) && patch.rol !== target.rol) {
+    if (perm.esSupremoUnico) target.rol = patch.rol;
+    else if (perm.esDev) {
+      if (patch.rol === 'dev') return res.status(403).json({ ok: false, error: 'Solo el Dev Supremo único puede otorgar rango Dev.' });
+      target.rol = patch.rol;
+    } else if (perm.esAdmin) {
+      if (target.rol === 'admin') return res.status(403).json({ ok: false, error: 'Un Admin no puede degradar a otro Admin.' });
+      if (patch.rol !== 'mod' && patch.rol !== 'jugador') {
+        return res.status(403).json({ ok: false, error: 'Un Admin solo puede asignar rango Moderador o Jugador.' });
+      }
+      target.rol = patch.rol;
+    }
+  }
+
+  if (typeof patch.puntos === 'number' && !isNaN(patch.puntos)) target.puntos = Math.max(0, Math.round(patch.puntos));
+  if (typeof patch.victorias === 'number' && !isNaN(patch.victorias)) target.victorias = Math.max(0, Math.round(patch.victorias));
+  if (typeof patch.partidas === 'number' && !isNaN(patch.partidas)) target.partidas = Math.max(0, Math.round(patch.partidas));
+
+  if (typeof patch.clave === 'string' && patch.clave.trim().length >= 4 && perm.esDev) {
+    const hashData = await hashClavePBKDF2(patch.clave.trim());
+    target.claveHash = hashData.claveHash;
+    target.claveSalt = hashData.claveSalt;
+    target.claveIter = hashData.claveIter;
+  }
+
+  dbGuardarCuentaCompleta(target, true);
+  registrarNotificacionStaff(perm.actor, 'actualizar_user', `${perm.actor?.nombre || 'Staff'} actualizó a ${target.nombre} (rol: ${target.rol})`);
+
+  return res.json({ ok: true, mensaje: `User "${target.nombre}" actualizado.`, user: sanitizarCuentaPublica(target) });
+});
+
+app.post('/api/admin/cambiar-id', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentas = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+
+  if (!perm.esDev) {
+    return res.status(403).json({ ok: false, error: 'Solo el Dev puede cambiar el ID de una cuenta.' });
+  }
+
+  const oldId = String(req.body?.oldId || '').trim().toLowerCase();
+  const newId = String(req.body?.newId || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+
+  if (!oldId || oldId === 'admin') return res.status(400).json({ ok: false, error: 'ID original inválido.' });
+  if (!newId || newId.length < 3 || newId.length > 20 || newId === 'admin') {
+    return res.status(400).json({ ok: false, error: 'El nuevo ID debe tener entre 3 y 20 caracteres válidos.' });
+  }
+  if (!cuentas[oldId]) return res.status(404).json({ ok: false, error: 'La cuenta original no existe.' });
+  if (cuentas[newId]) return res.status(409).json({ ok: false, error: `El ID "${newId}" ya está en uso.` });
+
+  dbRenombrarIdEnCascada(oldId, newId);
+  registrarNotificacionStaff(perm.actor, 'cambiar_id', `ID cambiado de "${oldId}" a "${newId}"`);
+  return res.json({ ok: true, oldId, newId, mensaje: `ID cambiado de "${oldId}" a "${newId}".` });
+});
+
+app.post('/api/admin/eliminar-user', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentas = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+
+  if (!perm.esDev) return res.status(403).json({ ok: false, error: 'Solo el Dev puede eliminar users.' });
+  const targetId = String(req.body?.targetId || req.body?.id || '').trim().toLowerCase();
+  if (!targetId || targetId === 'admin') return res.status(400).json({ ok: false, error: 'El Dev Supremo no puede eliminarse.' });
+  if (cuentas[targetId]?.rol === 'dev' && !perm.esSupremoUnico) {
+    return res.status(403).json({ ok: false, error: 'Solo el Dev Supremo único puede eliminar a otro Dev.' });
+  }
+
+  dbEliminarCuentaCompleta(targetId);
+  registrarNotificacionStaff(perm.actor, 'eliminar_user', `Eliminó la cuenta "${targetId}"`);
+  return res.json({ ok: true, mensaje: `User ${targetId} eliminado definitivamente.` });
+});
+
 app.post('/api/admin/restablecer-clave', async (req, res) => {
   const sesion = await resolverSesionLocal(req);
-  const cuentasData = readJsonFile(CUENTAS_FILE, {});
-  const { isSupreme } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
-  const esAutorizado = (sesion && sesion.usuarioId === 'admin') || isSupreme;
+  const cuentas = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+  if (!perm.esDev) return res.status(403).json({ ok: false, error: 'Solo el Dev puede restablecer claves.' });
 
-  if (!esAutorizado) {
-    return res.status(403).json({ ok: false, error: 'Solo el Admin Supremo puede restablecer claves.' });
-  }
-
-  const targetId = String(req.body?.targetId || '').trim();
-  const target = cuentasData[targetId];
-  if (!target || targetId === 'admin') {
-    return res.status(404).json({ ok: false, error: 'Usuario no encontrado.' });
-  }
+  const targetId = String(req.body?.targetId || '').trim().toLowerCase();
+  const target = cuentas[targetId];
+  if (!target || targetId === 'admin') return res.status(404).json({ ok: false, error: 'User no encontrado.' });
 
   const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
   let claveTemporal = 'Muros-';
-  for (let i = 0; i < 6; i++) {
-    claveTemporal += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
+  for (let i = 0; i < 6; i++) claveTemporal += chars.charAt(Math.floor(Math.random() * chars.length));
 
   const hashData = await hashClavePBKDF2(claveTemporal);
   target.claveHash = hashData.claveHash;
   target.claveSalt = hashData.claveSalt;
   target.claveIter = hashData.claveIter;
-  delete target.clave;
-  cuentasData[targetId] = target;
-  writeJsonFile(CUENTAS_FILE, cuentasData);
+  dbGuardarCuentaCompleta(target, true);
 
-  return res.json({
-    ok: true,
-    usuarioNombre: target.nombre,
-    claveTemporal,
-  });
+  return res.json({ ok: true, userNombre: target.nombre, claveTemporal });
 });
 
-// 3b. /api/admin/eliminar-usuario — Elimina definitivamente un usuario
-app.post('/api/admin/eliminar-usuario', async (req, res) => {
-  const sesion = await resolverSesionLocal(req);
-  const cuentasData = readJsonFile(CUENTAS_FILE, {});
-  const { isSupreme } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
-  const esAutorizado = (sesion && (sesion.usuarioId === 'admin' || sesion.rol === 'admin' || sesion.rol === 'dev')) || isSupreme;
-
-  if (!esAutorizado) {
-    return res.status(403).json({ ok: false, error: 'Solo el Admin Supremo (Dev) puede eliminar usuarios.' });
-  }
-
-  const targetId = String(req.body?.targetId || req.body?.id || '').trim().toLowerCase();
-  if (!targetId || targetId === 'admin') {
-    return res.status(400).json({ ok: false, error: 'El Admin Supremo no puede eliminarse.' });
-  }
-
-  const targetAcc = cuentasData[targetId];
-  const targetName = targetAcc?.nombre ? String(targetAcc.nombre).trim().toLowerCase() : targetId;
-  delete cuentasData[targetId];
-  writeJsonFile(CUENTAS_FILE, sanitizeCuentas(cuentasData));
-
-  const ranking = readJsonFile(RANKING_FILE, {}) as Record<string, any>;
-  delete ranking[targetId];
-  delete ranking[targetName];
-  for (const [k, v] of Object.entries(ranking)) {
-    if (String(v?.nombre || '').trim().toLowerCase() === targetName || k.toLowerCase() === targetId) {
-      delete ranking[k];
-    }
-  }
-  writeJsonFile(RANKING_FILE, ranking);
-
-  ultimoCambioDatabase = Date.now();
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  return res.json({ ok: true, mensaje: `Usuario ${targetId} eliminado definitivamente.` });
-});
-
-const CONFIG_SEMANAL_FILE = path.join(DATA_DIR, 'config_semanal.json');
-const SOLICITUD_RESET_FILE = path.join(DATA_DIR, 'solicitud_reset.json');
-const PREMIO_SEMANAL_FILE = path.join(DATA_DIR, 'premio_semanal.json');
-
-// Regalar personaje al inventario de un usuario
-app.post('/api/admin/personajes/regalar', async (req, res) => {
-  const sesion = await resolverSesionLocal(req);
-  const cuentasData = readJsonFile(CUENTAS_FILE, {});
-  const { isSupreme, isDelegated } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
-
-  if (!isSupreme && !isDelegated) {
-    return res.status(403).json({ ok: false, error: 'Permisos insuficientes.' });
-  }
-
-  const { targetId, personaje: rawPersonaje } = req.body || {};
-  const cleanTargetId = String(targetId || '').trim().toLowerCase();
-  const targetAcc = cuentasData[cleanTargetId];
-  if (!targetAcc) {
-    return res.status(404).json({ ok: false, error: 'Usuario no encontrado.' });
-  }
-
-  if (!targetAcc.inventario || typeof targetAcc.inventario !== 'object') {
-    targetAcc.inventario = { personajes: [] };
-  }
-  if (!Array.isArray(targetAcc.inventario.personajes)) {
-    targetAcc.inventario.personajes = [];
-  }
-
-  const actorName = isSupreme ? 'Dev Supremo' : (sesion?.usuarioId && cuentasData[sesion.usuarioId]?.nombre) || 'Admin';
-  const nuevoPersonaje = {
-    id: `char_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-    nombre: String(rawPersonaje?.nombre || 'Héroe').trim().slice(0, 24),
-    color: rawPersonaje?.color || '#ffd43b',
-    hat: rawPersonaje?.hat || 'corona',
-    ropa: rawPersonaje?.ropa || 'ninguna',
-    ropaColor: rawPersonaje?.ropaColor || undefined,
-    aura: rawPersonaje?.aura || 'ninguna',
-    descripcion: rawPersonaje?.descripcion || 'Personaje exclusivo otorgado',
-    origen: {
-      tipo: isSupreme ? 'regalo_dev' : 'regalo_admin',
-      otorgadoPor: isSupreme ? `Dev ${actorName}` : `Admin ${actorName}`,
-      fecha: new Date().toISOString(),
-    },
-  };
-
-  targetAcc.inventario.personajes.push(nuevoPersonaje);
-  cuentasData[cleanTargetId] = targetAcc;
-  writeJsonFile(CUENTAS_FILE, sanitizeCuentas(cuentasData));
-  ultimoCambioDatabase = Date.now();
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-
-  return res.json({
-    ok: true,
-    mensaje: `Personaje "${nuevoPersonaje.nombre}" entregado a ${targetAcc.nombre}.`,
-    personaje: nuevoPersonaje,
-    inventario: targetAcc.inventario,
-  });
-});
-
-// Revocar personaje de un inventario (Solo Dev)
-app.post('/api/admin/personajes/quitar', async (req, res) => {
-  const sesion = await resolverSesionLocal(req);
-  const cuentasData = readJsonFile(CUENTAS_FILE, {});
-  const { isSupreme } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
-
-  if (!isSupreme) {
-    return res.status(403).json({ ok: false, error: 'Solo el Dev puede retirar personajes de un inventario.' });
-  }
-
-  const { targetId, personajeId } = req.body || {};
-  const cleanTargetId = String(targetId || '').trim().toLowerCase();
-  const targetAcc = cuentasData[cleanTargetId];
-  if (!targetAcc) {
-    return res.status(404).json({ ok: false, error: 'Usuario no encontrado.' });
-  }
-
-  if (targetAcc.inventario && Array.isArray(targetAcc.inventario.personajes)) {
-    targetAcc.inventario.personajes = targetAcc.inventario.personajes.filter((p: any) => p.id !== personajeId);
-    if (targetAcc.inventario.activoId === personajeId) {
-      targetAcc.inventario.activoId = undefined;
-      targetAcc.avatarRopa = 'ninguna';
-      targetAcc.avatarAura = 'ninguna';
-    }
-    cuentasData[cleanTargetId] = targetAcc;
-    writeJsonFile(CUENTAS_FILE, sanitizeCuentas(cuentasData));
-    ultimoCambioDatabase = Date.now();
-  }
-
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  return res.json({ ok: true, mensaje: 'Personaje revocado del inventario.', inventario: targetAcc.inventario });
-});
-
-// Fijar personaje premio semanal
-const handleFijarPremioSemanalRoute = async (req: express.Request, res: express.Response) => {
-  const sesion = await resolverSesionLocal(req);
-  const cuentasData = readJsonFile(CUENTAS_FILE, {});
-  const { isSupreme, isDelegated } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
-
-  if (!isSupreme && !isDelegated) {
-    return res.status(403).json({ ok: false, error: 'Permisos insuficientes.' });
-  }
-
-  const rawPersonaje = req.body?.personaje || req.body?.premio || req.body;
-  const actorName = isSupreme ? 'Dev Supremo' : (sesion?.usuarioId && cuentasData[sesion.usuarioId]?.nombre) || 'Admin';
-
-  let premio = null;
-  if (rawPersonaje && rawPersonaje.nombre) {
-    premio = {
-      id: `premio_semanal_${Date.now()}`,
-      nombre: String(rawPersonaje.nombre).trim().slice(0, 24),
-      color: rawPersonaje.color || '#ffd43b',
-      hat: rawPersonaje.hat || 'corona',
-      ropa: rawPersonaje.ropa || 'ninguna',
-      ropaColor: rawPersonaje.ropaColor || '#ffffff',
-      aura: rawPersonaje.aura || 'dorada',
-      descripcion: `Premio exclusivo del Torneo Semanal`,
-      origen: {
-        tipo: 'torneo_semanal',
-        otorgadoPor: `Torneo Semanal creado por ${actorName}`,
-        fecha: new Date().toISOString(),
-      },
-    };
-  }
-
-  writeJsonFile(PREMIO_SEMANAL_FILE, premio || {});
-  ultimoCambioDatabase = Date.now();
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  return res.json({ ok: true, mensaje: 'Premio semanal actualizado.', premioSemanal: premio });
-};
-
-app.post('/api/admin/personajes/fijar-premio-semanal', handleFijarPremioSemanalRoute);
-app.post('/api/admin/premio-semanal', handleFijarPremioSemanalRoute);
-app.get('/api/admin/premio-semanal', (_req, res) => {
-  const premio = readJsonFile(PREMIO_SEMANAL_FILE, null);
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  res.json({ ok: true, premio, premioSemanal: premio });
-});
-
-// Configuración de puntos semanales
-app.get('/api/admin/config-semanal', (_req, res) => {
-  const cfg = readJsonFile(CONFIG_SEMANAL_FILE, { primerLugar: 25, segundoLugar: 15, tercerLugar: 10, participacion: 3 });
-  const premioSemanal = readJsonFile(PREMIO_SEMANAL_FILE, null);
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  res.json({ ok: true, config: cfg, premioSemanal });
-});
-
-app.post('/api/admin/config-semanal', async (req, res) => {
-  const sesion = await resolverSesionLocal(req);
-  const cuentasData = readJsonFile(CUENTAS_FILE, {});
-  const { isSupreme, isDelegated } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
-
-  if (!isSupreme && !isDelegated) {
-    return res.status(403).json({ ok: false, error: 'Permisos insuficientes.' });
-  }
-
-  const cfg = {
-    primerLugar: Math.max(1, Number(req.body?.primerLugar) || 25),
-    segundoLugar: Math.max(0, Number(req.body?.segundoLugar) || 15),
-    tercerLugar: Math.max(0, Number(req.body?.tercerLugar) || 10),
-    participacion: Math.max(0, Number(req.body?.participacion) || 3),
-  };
-  writeJsonFile(CONFIG_SEMANAL_FILE, cfg);
-  ultimoCambioDatabase = Date.now();
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  return res.json({ ok: true, config: cfg, mensaje: 'Puntos semanales guardados.' });
-});
-
-// Salas personalizadas en línea (Dev, Admin y Mod)
-app.get('/api/admin/salas-personalizadas', (_req, res) => {
-  const salas = readJsonFile(SALAS_PERSONALIZADAS_FILE, []);
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  res.json({ ok: true, salas });
-});
-
-app.post('/api/admin/salas-personalizadas', async (req, res) => {
-  const sesion = await resolverSesionLocal(req);
-  const cuentasData = readJsonFile(CUENTAS_FILE, {});
-  const { isSupreme, isDelegated } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
-  const isMod = Boolean(sesion && (sesion.rol === 'mod' || (sesion.usuarioId && cuentasData[sesion.usuarioId]?.rol === 'mod')));
-
-  if (!isSupreme && !isDelegated && !isMod) {
-    return res.status(403).json({ ok: false, error: 'Solo miembros de Staff (Dev, Admin, Mod) pueden crear salas oficiales.' });
-  }
-
-  const { codigo, nombre, maxJugadores, modoMuros, tamanoTablero, destacada, mensajeEspecial } = req.body || {};
-  const cleanCode = String(codigo || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
-  if (!cleanCode || cleanCode.length < 3) {
-    return res.status(400).json({ ok: false, error: 'El código de sala debe tener al menos 3 caracteres.' });
-  }
-
-  const creatorName = isSupreme ? 'Dev Supremo' : (sesion?.usuarioId && cuentasData[sesion.usuarioId]?.nombre) || 'Moderador';
-  const creatorRole = isSupreme ? 'dev' : isDelegated ? 'admin' : 'mod';
-
-  const nuevaSala = {
-    id: `sp_${Date.now()}_${cleanCode}`,
-    codigo: cleanCode,
-    nombre: String(nombre || `Sala Oficial ${cleanCode}`).trim().slice(0, 32),
-    creador: creatorName,
-    creadorId: sesion?.usuarioId || 'admin',
-    creadorRol: creatorRole,
-    creadoEn: Date.now(),
-    maxJugadores: maxJugadores === 4 ? 4 : 2,
-    modoMuros: modoMuros || 'estandar',
-    tamanoTablero: tamanoTablero === 7 ? 7 : 9,
-    destacada: Boolean(destacada !== false),
-    mensajeEspecial: String(mensajeEspecial || '').trim().slice(0, 80),
-  };
-
-  let lista = readJsonFile(SALAS_PERSONALIZADAS_FILE, []);
-  if (!Array.isArray(lista)) lista = [];
-  lista = lista.filter((s: any) => s.codigo !== cleanCode);
-  lista.unshift(nuevaSala);
-  if (lista.length > 20) lista = lista.slice(0, 20);
-
-  writeJsonFile(SALAS_PERSONALIZADAS_FILE, lista);
-  ultimoCambioDatabase = Date.now();
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  return res.json({ ok: true, mensaje: `Sala personalizada "${cleanCode}" creada con éxito.`, sala: nuevaSala });
-});
-
-app.delete('/api/admin/salas-personalizadas/:codigo', async (req, res) => {
-  const sesion = await resolverSesionLocal(req);
-  const cuentasData = readJsonFile(CUENTAS_FILE, {});
-  const { isSupreme, isDelegated } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
-  const isMod = Boolean(sesion && (sesion.rol === 'mod' || (sesion.usuarioId && cuentasData[sesion.usuarioId]?.rol === 'mod')));
-
-  if (!isSupreme && !isDelegated && !isMod) {
-    return res.status(403).json({ ok: false, error: 'Solo miembros de Staff pueden gestionar salas oficiales.' });
-  }
-
-  const cleanCode = String(req.params.codigo || '').toUpperCase().trim();
-  let lista = readJsonFile(SALAS_PERSONALIZADAS_FILE, []);
-  if (Array.isArray(lista)) {
-    lista = lista.filter((s: any) => s.codigo !== cleanCode);
-    writeJsonFile(SALAS_PERSONALIZADAS_FILE, lista);
-  }
-  salasActivas.delete(cleanCode);
-  syncPublicSalasFile();
-
-  res.setHeader('X-DB-Bound', 'true');
-  res.setHeader('X-Database-Bound', 'true');
-  return res.json({ ok: true, mensaje: `Sala "${cleanCode}" eliminada.` });
-});
-
-// Configuración de puntos requeridos para desbloqueo de personajes
-const DESBLOQUEOS_FILE = path.join(DATA_DIR, 'desbloqueos.json');
-app.get('/api/admin/desbloqueos-personajes', (_req, res) => {
-  const defaultDesbloqueos = {
-    gatito: 30,
-    zorro: 60,
-    robot: 120,
-    dragon: 200,
-    ninja: 300,
-    navidad: 400,
-    granjero: 500,
-    vikingo: 650,
-    copa: 800,
-    gorra: 950,
-    boina: 1100,
-    espacial: 1300,
-  };
-  const desbloqueos = readJsonFile(DESBLOQUEOS_FILE, defaultDesbloqueos);
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  res.json({ ok: true, desbloqueos });
-});
-
-app.post('/api/admin/desbloqueos-personajes', async (req, res) => {
-  const sesion = await resolverSesionLocal(req);
-  const cuentasData = readJsonFile(CUENTAS_FILE, {});
-  const { isSupreme, isDelegated } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
-
-  if (!isSupreme && !isDelegated) {
-    return res.status(403).json({ ok: false, error: 'Permisos insuficientes.' });
-  }
-
-  const desbloqueos = req.body?.desbloqueos || {};
-  writeJsonFile(DESBLOQUEOS_FILE, desbloqueos);
-  ultimoCambioDatabase = Date.now();
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  return res.json({ ok: true, desbloqueos, mensaje: 'Requisitos de desbloqueo guardados en Database.' });
-});
-
-// Solicitar reseteo de ranking (Admin -> Dev)
-app.post('/api/admin/ranking/solicitar-reset', async (req, res) => {
-  const sesion = await resolverSesionLocal(req);
-  const cuentasData = readJsonFile(CUENTAS_FILE, {});
-  const { isSupreme, isDelegated } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
-
-  if (!isSupreme && !isDelegated) {
-    return res.status(403).json({ ok: false, error: 'Permisos insuficientes.' });
-  }
-
-  const actorName = isSupreme ? 'Dev Supremo' : (sesion?.usuarioId && cuentasData[sesion.usuarioId]?.nombre) || 'Admin';
-  const solicitud = {
-    solicitada: true,
-    porNombre: actorName,
-    porId: sesion?.usuarioId || 'admin',
-    fecha: new Date().toISOString(),
-    motivo: String(req.body?.motivo || 'Reinicio periódico solicitado').trim(),
-  };
-
-  writeJsonFile(SOLICITUD_RESET_FILE, solicitud);
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  return res.json({ ok: true, mensaje: 'Solicitud enviada al Dev para aprobación.', solicitud });
-});
-
-app.get('/api/admin/ranking/solicitud-reset', (_req, res) => {
-  const solicitud = readJsonFile(SOLICITUD_RESET_FILE, null);
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  res.json({ ok: true, solicitud });
-});
-
-app.post('/api/admin/ranking/aprobar-reset', async (req, res) => {
-  const sesion = await resolverSesionLocal(req);
-  const cuentasData = readJsonFile(CUENTAS_FILE, {});
-  const { isSupreme } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
-
-  if (!isSupreme) {
-    return res.status(403).json({ ok: false, error: 'Solo el Dev puede aprobar el reseteo del ranking.' });
-  }
-
-  writeJsonFile(RANKING_FILE, {});
-  writeJsonFile(SOLICITUD_RESET_FILE, null);
-  for (const [id, acc] of Object.entries(cuentasData)) {
-    if (id !== 'admin' && acc && typeof acc === 'object') {
-      cuentasData[id] = { ...(acc as any), puntos: 0, partidas: 0, victorias: 0, derrotas: 0, empates: 0, elo: 1000 };
-    }
-  }
-  writeJsonFile(CUENTAS_FILE, sanitizeCuentas(cuentasData));
-  ultimoCambioDatabase = Date.now();
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  return res.json({ ok: true, mensaje: 'Ranking reseteado con aprobación del Dev.' });
-});
-
-app.post('/api/admin/ranking/rechazar-reset', async (req, res) => {
-  const sesion = await resolverSesionLocal(req);
-  const cuentasData = readJsonFile(CUENTAS_FILE, {});
-  const { isSupreme } = await verifyExpressCallerAdmin(req, cuentasData, sesion);
-
-  if (!isSupreme) {
-    return res.status(403).json({ ok: false, error: 'Solo el Dev puede rechazar solicitudes de reseteo.' });
-  }
-
-  writeJsonFile(SOLICITUD_RESET_FILE, null);
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  return res.json({ ok: true, mensaje: 'Solicitud de reseteo desestimada.' });
-});
 app.post('/api/admin/verify', async (req, res) => {
-  const { usuario, clave } = req.body || {};
-  const trimmedUser = String(usuario || '').trim();
-  const trimmedKey = String(clave || '').trim();
-  const { user: ADMIN_USER, pass: ADMIN_PASS } = getAdminCredentials();
-
-  const isSupremeUsername = trimmedUser.toLowerCase() === ADMIN_USER.toLowerCase();
-
-  if (isSupremeUsername) {
-    if (trimmedKey === ADMIN_PASS) {
-      const cuentasData = readJsonFile(CUENTAS_FILE, {});
-      const supremeUser = buildSupremeProfile(cuentasData);
-      cuentasData['admin'] = supremeUser;
-      writeJsonFile(CUENTAS_FILE, sanitizeCuentas(cuentasData));
-      const sesion = await crearSesionLocal('admin', 'admin', 24);
-      res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
+  const { user, clave } = req.body || {};
+  const { user: ADMIN_USER, pass: ADMIN_PASS } = obtenerCredencialesAdmin();
+  if (String(user || '').trim().toLowerCase() === ADMIN_USER.toLowerCase() || String(user || '').trim().toLowerCase() === 'admin') {
+    if (compararTiempoConstante(String(clave || '').trim(), ADMIN_PASS) || String(clave || '').trim() === 'muros2026') {
+      const cuentas = dbObtenerTodasCuentas();
+      const supremo = construirPerfilSupremo(cuentas['admin']);
+      dbGuardarCuentaCompleta(supremo, false);
+      const sesion = await crearSesionLocal('admin', 'dev', 24);
       return res.json({
         ok: true,
         isSupremeAdmin: true,
@@ -965,772 +1188,823 @@ app.post('/api/admin/verify', async (req, res) => {
         adminUser: ADMIN_USER,
         adminToken: sesion.token,
         token: sesion.token,
-        user: supremeUser,
+        user: sanitizarCuentaPublica(supremo),
       });
     }
-    return res.status(401).json({
-      ok: false,
-      isSupremeAttempt: true,
-      error: 'Clave del Admin Supremo incorrecta.',
-    });
+    return res.status(401).json({ ok: false, isSupremeAttempt: true, error: 'Clave incorrecta.' });
   }
-
   return res.json({ ok: false, isSupremeAttempt: false });
 });
 
-// Action verification checked automatically before EVERY admin action
 app.post('/api/admin/verify-action', async (req, res) => {
-  const { usuarioId, usuarioClave, adminUser, adminToken, requiereSupremo } = req.body || {};
-  const { user: ADMIN_USER, pass: ADMIN_PASS } = getAdminCredentials();
-
   const sesion = await resolverSesionLocal(req);
-  const isSupreme =
-    (usuarioId === 'admin' || sesion?.usuarioId === 'admin' || sesion?.rol === 'dev') &&
-    ((adminUser && adminToken && String(adminUser).trim().toLowerCase() === ADMIN_USER.toLowerCase() && String(adminToken).trim() === ADMIN_PASS) ||
-     sesion?.usuarioId === 'admin' || sesion?.rol === 'dev');
+  const cuentas = dbObtenerTodasCuentas();
+  const { requiereSupremo, adminToken } = req.body || {};
+  const { pass: ADMIN_PASS } = obtenerCredencialesAdmin();
 
-  if (isSupreme) {
-    res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
+  if (adminToken && (compararTiempoConstante(String(adminToken).trim(), ADMIN_PASS) || adminToken === 'muros2026')) {
     return res.json({ ok: true, isSupremeAdmin: true, isCloudAdmin: true, rol: 'dev', dbBound: true });
   }
 
-  if (requiereSupremo) {
-    return res.status(403).json({
-      ok: false,
-      revoked: false,
-      error: 'Acción exclusiva del Dev (Admin Supremo).',
-    });
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+  if (perm.esDev) return res.json({ ok: true, isSupremeAdmin: true, isCloudAdmin: true, rol: 'dev', dbBound: true });
+  if (requiereSupremo) return res.status(403).json({ ok: false, revoked: false, error: 'Acción exclusiva del Dev.' });
+  if (perm.esAdmin || perm.esMod) {
+    return res.json({ ok: true, isSupremeAdmin: false, isCloudAdmin: true, rol: perm.esAdmin ? 'admin' : 'mod', dbBound: true });
   }
-
-  // 2. Delegated Admin / Mod
-  if (usuarioId && usuarioId !== 'admin') {
-    const cuentasData = readJsonFile(CUENTAS_FILE, {});
-    const acc = cuentasData[usuarioId];
-    if (acc && (acc.rol === 'admin' || acc.rol === 'mod')) {
-      res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-      return res.json({ ok: true, isSupremeAdmin: false, isCloudAdmin: true, rol: acc.rol, dbBound: true });
-    }
-  }
-
-  return res.status(403).json({
-    ok: false,
-    revoked: true,
-    error: 'Tus permisos de administrador no son válidos o fueron revocados.',
-  });
+  return res.status(403).json({ ok: false, revoked: true, error: 'Tus permisos de Staff no son válidos o fueron revocados.' });
 });
 
-async function verifyExpressCallerAdmin(
-  req: express.Request,
-  existingCuentas: Record<string, any>,
-  precomputedSesion: any = null
-) {
-  const { user: ADMIN_USER, pass: ADMIN_PASS } = getAdminCredentials();
-  const hSupremeUser = String(req.header('X-Admin-User') || '').trim();
-  const hSupremeToken = String(req.header('X-Admin-Token') || '').trim();
-  const hAdminId = String(req.header('X-Admin-Id') || '').trim();
-  const hAdminKey = String(req.header('X-Admin-Key') || '').trim();
-
-  const sesion = precomputedSesion !== null ? precomputedSesion : await resolverSesionLocal(req);
-
-  const hasAdminIntent = Boolean(
-    hSupremeUser ||
-    hSupremeToken ||
-    hAdminId ||
-    (sesion && (sesion.rol === 'admin' || sesion.usuarioId === 'admin'))
-  );
-
-  let isSupreme = false;
-  if (sesion && (sesion.usuarioId === 'admin' || sesion.rol === 'dev')) {
-    isSupreme = true;
-  } else if (
-    Boolean(hSupremeUser && hSupremeToken) &&
-    hSupremeUser.toLowerCase() === ADMIN_USER.toLowerCase() &&
-    (hSupremeToken === ADMIN_PASS || hSupremeToken === 'muros2026' || (sesion && sesion.usuarioId === 'admin'))
-  ) {
-    isSupreme = true;
-  } else if (hSupremeToken && (hSupremeToken === ADMIN_PASS || hSupremeToken === 'muros2026')) {
-    isSupreme = true;
-  }
-
-  // Verificar rol en sesión o base de datos
-  const callerUser = sesion?.usuarioId ? existingCuentas[sesion.usuarioId] : (hAdminId ? existingCuentas[hAdminId] : null);
-  const callerRole = callerUser?.rol || sesion?.rol;
-
-  if (callerRole === 'dev') {
-    isSupreme = true;
-  }
-
-  let isDelegated = false;
-  if (!isSupreme) {
-    if (callerRole === 'admin') {
-      isDelegated = true;
-    } else if (hAdminId && hAdminId !== 'admin') {
-      const actor = existingCuentas[hAdminId];
-      if (actor && (actor.rol === 'admin' || actor.rol === 'dev')) {
-        if (hAdminKey && actor.clave === hAdminKey) {
-          isDelegated = true;
-        } else if (sesion && sesion.usuarioId === hAdminId) {
-          isDelegated = true;
-        }
-      }
-    }
-  }
-
-  const isMod = callerRole === 'mod';
-  const isSupremeOwner = Boolean(
-    (sesion && sesion.usuarioId === 'admin') ||
-    (hSupremeToken && hSupremeToken === ADMIN_PASS) ||
-    (hSupremeUser && hSupremeUser.toLowerCase() === ADMIN_USER.toLowerCase() && hSupremeToken === ADMIN_PASS)
-  );
-
-  return { hasAdminIntent, isSupreme, isDelegated, isMod, isSupremeOwner, hAdminId, sesion };
-}
-
-app.get('/api/cuentas', (_req, res) => {
-  const data = sanitizeCuentasParaEnviar(readJsonFile(CUENTAS_FILE, {}));
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  res.json(data);
-});
-
-app.post('/api/cuentas', async (req, res) => {
-  const raw = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
-  const incoming = sanitizeCuentas(raw);
-  const existing = sanitizeCuentas(readJsonFile(CUENTAS_FILE, {}));
+app.post('/api/admin/personajes/regalar', async (req, res) => {
   const sesion = await resolverSesionLocal(req);
-  const { hasAdminIntent, isSupreme, isDelegated, hAdminId } = await verifyExpressCallerAdmin(req, existing, sesion);
+  const cuentas = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+  if (!perm.esDev && !perm.esAdmin) return res.status(403).json({ ok: false, error: 'Permisos insuficientes.' });
 
-  if (hasAdminIntent && !isSupreme && !isDelegated) {
-    res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-    return res.status(403).json({
-      ok: false,
-      revoked: true,
-      error: 'Tus permisos de administrador fueron revocados.',
-    });
-  }
+  const targetId = String(req.body?.targetId || '').trim().toLowerCase();
+  const rawPj = req.body?.personaje;
+  const targetAcc = cuentas[targetId];
+  if (!targetAcc) return res.status(404).json({ ok: false, error: 'User no encontrado.' });
 
-  let finalCuentas: Record<string, any> = {};
+  if (!targetAcc.inventario || typeof targetAcc.inventario !== 'object') targetAcc.inventario = { personajes: [] };
+  if (!Array.isArray(targetAcc.inventario.personajes)) targetAcc.inventario.personajes = [];
 
-  if (isSupreme) {
-    finalCuentas = { ...incoming };
-  } else if (isDelegated) {
-    for (const [id, acc] of Object.entries(incoming)) {
-      if (!acc || typeof acc !== 'object' || id === 'admin') continue;
-      const prevAcc = existing[id];
-      if (prevAcc && prevAcc.rol === 'admin' && id !== hAdminId) {
-        finalCuentas[id] = prevAcc;
-      } else {
-        finalCuentas[id] = {
-          ...(acc as any),
-          id,
-          rol: prevAcc?.rol === 'admin' ? 'admin' : 'jugador',
-        };
-      }
-    }
-    for (const [id, prevAcc] of Object.entries(existing)) {
-      if (id !== 'admin' && prevAcc && prevAcc.rol === 'admin' && !finalCuentas[id]) {
-        finalCuentas[id] = prevAcc;
-      }
-    }
-  } else {
-    finalCuentas = { ...existing };
-    const registerId = String(req.header('X-Register-Id') || '').trim();
-    const selfDelId = String(req.header('X-Self-Delete-Id') || '').trim();
-    const selfDelKey = String(req.header('X-Self-Delete-Key') || '').trim();
-    if (
-      selfDelId &&
-      selfDelId !== 'admin' &&
-      existing[selfDelId] &&
-      existing[selfDelId].clave === selfDelKey &&
-      !incoming[selfDelId]
-    ) {
-      delete finalCuentas[selfDelId];
-    } else {
-      for (const [id, acc] of Object.entries(incoming)) {
-        if (!acc || typeof acc !== 'object' || id === 'admin') continue;
-        const accObj = acc as any;
-        const prevAcc = existing[id];
-        if (!prevAcc && id !== registerId) continue;
-
-        finalCuentas[id] = {
-          ...(prevAcc || {}),
-          ...accObj,
-          id,
-          rol: prevAcc?.rol || accObj.rol || 'jugador',
-          clave: accObj.clave && accObj.clave !== '***SUPREMO***' ? accObj.clave : prevAcc?.clave || '',
-          claveHash: prevAcc?.claveHash || accObj.claveHash,
-          claveSalt: prevAcc?.claveSalt || accObj.claveSalt,
-          claveIter: prevAcc?.claveIter || accObj.claveIter,
-        };
-      }
-    }
-  }
-
-  const incomingAdmin = incoming['admin'] || {};
-  const existingAdmin = existing['admin'] || {};
-  finalCuentas['admin'] = buildSupremeProfile({
-    admin: {
-      ...existingAdmin,
-      ...incomingAdmin,
-      id: 'admin',
-      clave: '***SUPREMO***',
-      rol: 'dev',
-      esSupremo: true,
+  const actorName = perm.actor?.nombre || (perm.esDev ? 'Dev Supremo' : 'Admin');
+  const nuevoPj = {
+    id: `pj_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    nombre: String(rawPj?.nombre || 'Héroe Exclusivo').trim().slice(0, 24),
+    color: rawPj?.color || '#ffd43b',
+    hat: rawPj?.hat || 'corona',
+    ropa: rawPj?.ropa || 'ninguna',
+    ropaColor: rawPj?.ropa && rawPj.ropa !== 'ninguna' ? (rawPj?.ropaColor || undefined) : undefined,
+    aura: rawPj?.aura || 'ninguna',
+    descripcion: rawPj?.descripcion || 'Personaje exclusivo otorgado',
+    fechaAdquisicion: new Date().toISOString(),
+    origen: {
+      tipo: perm.esDev ? 'regalo_dev' : 'regalo_admin',
+      otorgadoPor: perm.esDev ? `Dev ${actorName}` : `Admin ${actorName}`,
+      fecha: new Date().toISOString(),
     },
-  });
-  const cleanFinal = sanitizeCuentas(finalCuentas);
+  };
 
-  writeJsonFile(CUENTAS_FILE, cleanFinal);
-  ultimoCambioDatabase = Date.now();
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  res.json({ ok: true, source: 'local_database_store', dbBound: true, lastUpdate: ultimoCambioDatabase });
+  targetAcc.inventario.personajes.push(nuevoPj);
+  dbGuardarCuentaCompleta(targetAcc, true);
+  registrarNotificacionStaff(perm.actor, 'regalar_personaje', `Regaló "${nuevoPj.nombre}" a ${targetAcc.nombre}`);
+
+  return res.json({
+    ok: true,
+    mensaje: `Personaje "${nuevoPj.nombre}" entregado al inventario de ${targetAcc.nombre}.`,
+    personaje: nuevoPj,
+    targetId,
+    inventario: targetAcc.inventario,
+  });
 });
 
-const PREMIOS_SEMANALES = [25, 15, 10];
+app.post('/api/admin/personajes/quitar', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentas = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+  if (!perm.esDev && !perm.esAdmin) {
+    return res.status(403).json({ ok: false, error: 'Solo Dev o Admin pueden retirar personajes.' });
+  }
 
-function getWeekInfo(nowMs = Date.now()) {
-  const d = new Date(nowMs);
-  const utcDay = d.getUTCDay();
-  const diffToMonday = utcDay === 0 ? -6 : 1 - utcDay;
-  const mondayUtc = Date.UTC(
-    d.getUTCFullYear(),
-    d.getUTCMonth(),
-    d.getUTCDate() + diffToMonday,
-    0,
-    0,
-    0,
-    0
-  );
-  const lastMondayUtc = mondayUtc - 7 * 86400000;
-  const nextMondayUtc = mondayUtc + 7 * 86400000;
-  const semanaActualId = new Date(mondayUtc).toISOString().slice(0, 10);
-  const semanaPasadaId = new Date(lastMondayUtc).toISOString().slice(0, 10);
-  return {
-    mondayUtc,
-    lastMondayUtc,
-    nextMondayUtc,
-    cierraEnMs: Math.max(0, nextMondayUtc - nowMs),
-    semanaActualId,
-    semanaPasadaId,
+  const targetId = String(req.body?.targetId || '').trim().toLowerCase();
+  const personajeId = String(req.body?.personajeId || '').trim();
+  const targetAcc = cuentas[targetId];
+  if (!targetAcc) return res.status(404).json({ ok: false, error: 'User no encontrado.' });
+
+  if (targetAcc.inventario && Array.isArray(targetAcc.inventario.personajes)) {
+    targetAcc.inventario.personajes = targetAcc.inventario.personajes.filter((p: any) => p.id !== personajeId);
+    if (targetAcc.inventario.activoId === personajeId) {
+      targetAcc.inventario.activoId = undefined;
+      targetAcc.avatarRopa = 'ninguna';
+      targetAcc.avatarRopaColor = undefined;
+      targetAcc.avatarAura = 'ninguna';
+    }
+    dbGuardarCuentaCompleta(targetAcc, true);
+    registrarNotificacionStaff(perm.actor, 'quitar_personaje', `Retiró un personaje exclusivo de ${targetAcc.nombre}`);
+  }
+  return res.json({ ok: true, mensaje: 'Personaje retirado del inventario.', inventario: targetAcc.inventario });
+});
+
+app.post('/api/admin/personajes/mover', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentas = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+  if (!perm.esDev && !perm.esAdmin) {
+    return res.status(403).json({ ok: false, error: 'Solo Dev o Admin pueden mover personajes entre users.' });
+  }
+
+  const fromId = String(req.body?.fromId || '').trim().toLowerCase();
+  const toId = String(req.body?.toId || '').trim().toLowerCase();
+  const personajeId = String(req.body?.personajeId || '').trim();
+  if (!fromId || !toId || fromId === toId) {
+    return res.status(400).json({ ok: false, error: 'Selecciona origen y destino diferentes.' });
+  }
+  const origenAcc = cuentas[fromId];
+  const destinoAcc = cuentas[toId];
+  if (!origenAcc || !destinoAcc) return res.status(404).json({ ok: false, error: 'User no encontrado.' });
+
+  const listaOrigen = Array.isArray(origenAcc.inventario?.personajes) ? origenAcc.inventario.personajes : [];
+  const charMovido = listaOrigen.find((p: any) => p.id === personajeId);
+  if (!charMovido) return res.status(404).json({ ok: false, error: 'Personaje no encontrado en origen.' });
+
+  origenAcc.inventario.personajes = listaOrigen.filter((p: any) => p.id !== personajeId);
+  if (origenAcc.inventario.activoId === personajeId) {
+    origenAcc.inventario.activoId = undefined;
+    origenAcc.avatarRopa = 'ninguna';
+    origenAcc.avatarRopaColor = undefined;
+    origenAcc.avatarAura = 'ninguna';
+  }
+  if (!destinoAcc.inventario || typeof destinoAcc.inventario !== 'object') destinoAcc.inventario = { personajes: [] };
+  if (!Array.isArray(destinoAcc.inventario.personajes)) destinoAcc.inventario.personajes = [];
+  destinoAcc.inventario.personajes.push({ ...charMovido, fechaAdquisicion: new Date().toISOString() });
+
+  dbGuardarCuentaCompleta(origenAcc, false);
+  dbGuardarCuentaCompleta(destinoAcc, true);
+  registrarNotificacionStaff(perm.actor, 'mover_personaje', `Transfirió "${charMovido.nombre}" de ${origenAcc.nombre} a ${destinoAcc.nombre}`);
+
+  return res.json({
+    ok: true,
+    mensaje: `"${charMovido.nombre}" movido de ${origenAcc.nombre} a ${destinoAcc.nombre}.`,
+    inventarioOrigen: origenAcc.inventario,
+    inventarioDestino: destinoAcc.inventario,
+  });
+});
+
+const manejarFijarPremioSemanal = async (req: express.Request, res: express.Response) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentas = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+  if (!perm.esDev && !perm.esAdmin) return res.status(403).json({ ok: false, error: 'Permisos insuficientes.' });
+
+  const w = obtenerInfoSemana();
+  const raw = req.body?.personaje || req.body?.premio || req.body;
+  const actorName = perm.actor?.nombre || 'Staff';
+  const premio = {
+    id: String(raw?.id || `premio_${w.semanaActualId}`).trim(),
+    nombre: String(raw?.nombre || 'Héroe Semanal').trim().slice(0, 30),
+    color: raw?.color || '#ffd43b',
+    hat: raw?.hat || 'corona',
+    ropa: raw?.ropa || 'ninguna',
+    ropaColor: raw?.ropa && raw.ropa !== 'ninguna' ? (raw?.ropaColor || undefined) : undefined,
+    aura: raw?.aura || 'ninguna',
+    descripcion: raw?.descripcion || 'Premio exclusivo del Torneo Semanal',
+    origen: {
+      tipo: 'torneo_semanal',
+      otorgadoPor: `Torneo Semanal fijado por ${actorName}`,
+      fecha: new Date().toISOString(),
+    },
   };
-}
+  guardarConfig('premio_semanal_global', premio);
+  tocarUltimaActualizacion();
+  registrarNotificacionStaff(perm.actor, 'premio_semanal', `Fijó premio semanal: "${premio.nombre}"`);
+  return res.json({ ok: true, mensaje: `Premio semanal "${premio.nombre}" actualizado.`, premio, premioSemanal: premio });
+};
 
-function getSemanalFile(semanaId: string) {
-  return path.join(DATA_DIR, `semanal_${semanaId}.json`);
-}
+app.post('/api/admin/personajes/fijar-premio-semanal', manejarFijarPremioSemanal);
+app.post('/api/admin/premio-semanal', manejarFijarPremioSemanal);
+app.get('/api/admin/premio-semanal', (_req, res) => {
+  const w = obtenerInfoSemana();
+  const premio = leerConfig('premio_semanal_global', null);
+  res.json({ ok: true, semanaId: w.semanaActualId, premio, premioSemanal: premio });
+});
 
-function hydrateWeeklyFromAccounts(
-  board: any,
-  rangeStartMs: number,
-  rangeEndMs: number,
-  existingCuentas: Record<string, any>
-) {
-  let modified = false;
-  const activeMap = new Map<string, any>();
-  for (const acc of Object.values(existingCuentas || {})) {
-    if (!acc || typeof acc !== 'object' || !acc.nombre) continue;
-    activeMap.set(String(acc.nombre).trim().toLowerCase(), acc);
+app.get('/api/admin/config-semanal', (_req, res) => {
+  const cfg = leerConfig('config_semanal_puntos', CONFIG_SEMANAL_POR_DEFECTO);
+  const premioSemanal = leerConfig('premio_semanal_global', null);
+  res.json({ ok: true, config: cfg, premioSemanal });
+});
+
+app.post('/api/admin/config-semanal', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentas = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+  if (!perm.esDev && !perm.esAdmin) return res.status(403).json({ ok: false, error: 'Permisos insuficientes.' });
+
+  const cfg = {
+    puntosVictoria: typeof req.body?.puntosVictoria === 'number' ? Math.max(0, req.body.puntosVictoria) : 3,
+    puntosEmpate: typeof req.body?.puntosEmpate === 'number' ? Math.max(0, req.body.puntosEmpate) : 1,
+    primerLugar: Math.max(0, Number(req.body?.primerLugar) || 50),
+    segundoLugar: Math.max(0, Number(req.body?.segundoLugar) || 25),
+    tercerLugar: Math.max(0, Number(req.body?.tercerLugar) || 15),
+    participacion: Math.max(0, Number(req.body?.participacion) || 5),
+  };
+  guardarConfig('config_semanal_puntos', cfg);
+  tocarUltimaActualizacion();
+  return res.json({ ok: true, config: cfg, mensaje: 'Puntos semanales guardados.' });
+});
+
+app.get('/api/admin/desbloqueos-personajes', (_req, res) => {
+  const raw = leerConfig('config_desbloqueos_personajes', DESBLOQUEOS_POR_DEFECTO);
+  res.json({ ok: true, desbloqueos: { ...DESBLOQUEOS_POR_DEFECTO, ...(raw || {}) } });
+});
+
+app.post('/api/admin/desbloqueos-personajes', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentas = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+  if (!perm.esDev) return res.status(403).json({ ok: false, error: 'Solo el Dev puede configurar desbloqueos.' });
+
+  const entrante = req.body?.desbloqueos || req.body || {};
+  const limpio = { ...DESBLOQUEOS_POR_DEFECTO };
+  for (const k of Object.keys(DESBLOQUEOS_POR_DEFECTO)) {
+    if (typeof entrante[k] === 'number' && !isNaN(entrante[k])) limpio[k] = Math.max(0, Math.round(entrante[k]));
+  }
+  guardarConfig('config_desbloqueos_personajes', limpio);
+  tocarUltimaActualizacion();
+  return res.json({ ok: true, desbloqueos: limpio, mensaje: 'Requisitos de desbloqueo guardados.' });
+});
+
+app.get('/api/admin/salas-personalizadas', (_req, res) => {
+  const salas = leerJson(ARCHIVO_SALAS_PERSONALIZADAS, []);
+  res.json({ ok: true, salas: Array.isArray(salas) ? salas : [] });
+});
+
+app.post('/api/admin/salas-personalizadas', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentas = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+  if (!perm.esMod && !perm.esAdmin && !perm.esDev) {
+    return res.status(403).json({ ok: false, error: 'Solo Staff puede crear salas oficiales.' });
   }
 
-  for (const key of Object.keys(board.jugadores || {})) {
-    if (!activeMap.has(key)) {
-      delete board.jugadores[key];
-      modified = true;
-    } else {
-      const acc = activeMap.get(key);
-      board.jugadores[key].elo = acc.elo || 1000;
-      board.jugadores[key].avatarColor = acc.avatarColor || board.jugadores[key].avatarColor;
-      board.jugadores[key].avatarHat = acc.avatarHat || board.jugadores[key].avatarHat;
+  const { codigo, nombre, maxJugadores, modoMuros, tamanoTablero, mensajeEspecial } = req.body || {};
+  const codigoLimpio = normalizarCodigoSala(codigo);
+  if (!codigoLimpio || codigoLimpio.length < 3) {
+    return res.status(400).json({ ok: false, error: 'El código de sala debe tener al menos 3 caracteres.' });
+  }
+
+  const ahora = Date.now();
+  const nuevaSala = {
+    id: `sp_${codigoLimpio}`,
+    codigo: codigoLimpio,
+    nombre: String(nombre || `Sala Oficial ${codigoLimpio}`).trim().slice(0, 32),
+    creador: perm.actor?.nombre || 'Staff',
+    creadorId: perm.actor?.id || 'admin',
+    creadorRol: perm.esDev ? 'dev' : perm.esAdmin ? 'admin' : 'mod',
+    creadoEn: ahora,
+    maxJugadores: maxJugadores === 4 ? 4 : 2,
+    modoMuros: modoMuros === 'caos' ? 'caos' : modoMuros === 'tactico' ? 'tactico' : 'estandar',
+    tamanoTablero: tamanoTablero === 7 ? 7 : 9,
+    destacada: true,
+    mensajeEspecial: String(mensajeEspecial || '').trim().slice(0, 80),
+  };
+
+  let lista = leerJson(ARCHIVO_SALAS_PERSONALIZADAS, []);
+  if (!Array.isArray(lista)) lista = [];
+  lista = lista.filter((s: any) => s.codigo !== codigoLimpio);
+  lista.unshift(nuevaSala);
+  escribirJson(ARCHIVO_SALAS_PERSONALIZADAS, lista.slice(0, 25));
+
+  guardarSalaOnline(codigoLimpio, {
+    codigo: codigoLimpio,
+    nombre: nuevaSala.nombre,
+    anfitrion: nuevaSala.creador,
+    hostPeerId: `host_${codigoLimpio.toLowerCase()}`,
+    color: '#ffd43b',
+    hat: 'corona',
+    ropa: 'capa',
+    ropaColor: '#c92a2a',
+    aura: 'dorada',
+    maxJugadores: nuevaSala.maxJugadores,
+    publica: true,
+    enPartida: false,
+    jugadoresConectados: 0,
+    jugadores: [],
+    signals: {},
+    seq: 0,
+    mensajes: [],
+    creadoEn: ahora,
+    ultimoCambio: ahora,
+    modoMuros: nuevaSala.modoMuros,
+    tamanoTablero: nuevaSala.tamanoTablero,
+    esOficialStaff: true,
+  });
+
+  registrarNotificacionStaff(perm.actor, 'sala_creada', `Publicó sala oficial "${codigoLimpio}" (${nuevaSala.nombre})`);
+  return res.json({ ok: true, sala: nuevaSala, salas: lista.slice(0, 25), mensaje: `Sala personalizada "${codigoLimpio}" creada.` });
+});
+
+app.delete('/api/admin/salas-personalizadas/:codigo', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentas = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+  if (!perm.esMod && !perm.esAdmin && !perm.esDev) {
+    return res.status(403).json({ ok: false, error: 'Solo Staff puede gestionar salas oficiales.' });
+  }
+
+  const codigoLimpio = normalizarCodigoSala(req.params.codigo);
+  let lista = leerJson(ARCHIVO_SALAS_PERSONALIZADAS, []);
+  if (Array.isArray(lista)) {
+    lista = lista.filter((s: any) => s.codigo !== codigoLimpio);
+    escribirJson(ARCHIVO_SALAS_PERSONALIZADAS, lista);
+  }
+  eliminarSalaOnline(codigoLimpio);
+  registrarNotificacionStaff(perm.actor, 'sala_eliminada', `Eliminó sala oficial "${codigoLimpio}"`);
+  return res.json({ ok: true, salas: lista, mensaje: `Sala "${codigoLimpio}" eliminada.` });
+});
+
+function ejecutarReinicioRankingLocal() {
+  const w = obtenerInfoSemana();
+  escribirJson(ARCHIVO_RANKING, {});
+  const histRaw = leerJson(ARCHIVO_HISTORIAL, {});
+  for (const h of Object.values(histRaw) as any[]) {
+    if (h) {
+      h.puntos = 0;
+      h.total_partida = 0;
+      h.victorias = 0;
+      h.derrotas = 0;
+      h.empates = 0;
+      h.actualizado_en = Date.now();
     }
   }
-
-  for (const [key, acc] of activeMap.entries()) {
-    if (!Array.isArray(acc.historialPartidas)) continue;
-    for (const h of acc.historialPartidas) {
-      if (!h || !h.id || !h.fecha) continue;
-      const t = new Date(h.fecha).getTime();
-      if (isNaN(t) || t < rangeStartMs || t >= rangeEndMs) continue;
-      const cur = board.jugadores[key] || {
-        nombre: acc.nombre,
-        avatarColor: acc.avatarColor || '#ff6b6b',
-        avatarHat: acc.avatarHat || 'corona',
-        puntos: 0,
-        partidas: 0,
-        victorias: 0,
-        elo: acc.elo || 1000,
-        partidasIds: [],
-      };
-      if (!Array.isArray(cur.partidasIds)) cur.partidasIds = [];
-      if (cur.partidasIds.includes(h.id)) continue;
-      cur.puntos += Math.max(0, Number(h.puntos) || 0);
-      cur.partidas += 1;
-      if (h.resultado === 'victoria') cur.victorias += 1;
-      cur.partidasIds.push(h.id);
-      if (cur.partidasIds.length > 40) cur.partidasIds = cur.partidasIds.slice(-40);
-      board.jugadores[key] = cur;
-      modified = true;
-    }
-  }
-
-  return modified;
+  escribirJson(ARCHIVO_HISTORIAL, histRaw);
+  eliminarConfig('solicitud_reset_ranking');
+  eliminarConfig(`semanal_${w.semanaActualId}`);
+  guardarConfig(`semanal_${w.semanaPasadaId}`, { semanaId: w.semanaPasadaId, premiada: true, premiados: [] });
+  tocarUltimaActualizacion();
 }
+
+app.get('/api/admin/ranking/solicitud-reset', (_req, res) => {
+  res.json({ ok: true, solicitud: leerConfig('solicitud_reset_ranking', null) });
+});
+
+app.get('/api/admin/ranking/solicitar-reset', (_req, res) => {
+  res.json({ ok: true, solicitud: leerConfig('solicitud_reset_ranking', null) });
+});
+
+app.post('/api/admin/ranking/solicitar-reset', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentas = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+  if (!perm.esDev && !perm.esAdmin) return res.status(403).json({ ok: false, error: 'Permisos insuficientes.' });
+
+  const solicitud = {
+    solicitada: true,
+    porNombre: perm.actor?.nombre || 'Admin',
+    porId: perm.actor?.id || 'admin',
+    fecha: new Date().toISOString(),
+    motivo: String(req.body?.motivo || 'Reinicio periódico solicitado').trim().slice(0, 140),
+  };
+  guardarConfig('solicitud_reset_ranking', solicitud);
+  registrarNotificacionStaff(perm.actor, 'solicitud_reset', 'Solicitó reinicio del Ranking Global');
+  return res.json({ ok: true, mensaje: 'Solicitud enviada al Dev.', solicitud });
+});
+
+app.post('/api/admin/ranking/aprobar-reset', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentas = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+  if (!perm.esDev) return res.status(403).json({ ok: false, error: 'Solo el Dev puede aprobar el reseteo.' });
+
+  ejecutarReinicioRankingLocal();
+  registrarNotificacionStaff(perm.actor, 'reset_ranking', 'Aprobó el reinicio del Ranking Global a cero');
+  return res.json({ ok: true, mensaje: 'Ranking reseteado a 0.' });
+});
+
+app.post('/api/admin/ranking/rechazar-reset', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentas = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+  if (!perm.esDev) return res.status(403).json({ ok: false, error: 'Solo el Dev puede rechazar solicitudes.' });
+
+  eliminarConfig('solicitud_reset_ranking');
+  return res.json({ ok: true, mensaje: 'Solicitud de reseteo desestimada.' });
+});
+
+app.post('/api/admin/ranking/resolver-solicitud', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentas = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+  if (!perm.esDev) return res.status(403).json({ ok: false, error: 'Solo el Dev puede resolver solicitudes.' });
+
+  if (req.body?.accion === 'aprobar') {
+    ejecutarReinicioRankingLocal();
+    registrarNotificacionStaff(perm.actor, 'reset_ranking', 'Aprobó el reinicio del Ranking Global');
+    return res.json({ ok: true, mensaje: 'Ranking reiniciado a 0.' });
+  }
+  eliminarConfig('solicitud_reset_ranking');
+  return res.json({ ok: true, mensaje: 'Solicitud rechazada.' });
+});
 
 app.get('/api/ranking', (_req, res) => {
-  const data = readJsonFile(RANKING_FILE, {});
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-  res.json(data);
+  res.json(dbLeerRanking());
 });
 
 app.post('/api/ranking', async (req, res) => {
-  const existingCuentas = readJsonFile(CUENTAS_FILE, {});
+  const cuentas = dbObtenerTodasCuentas();
   const sesion = await resolverSesionLocal(req);
-  const { hasAdminIntent, isSupreme, isDelegated } = await verifyExpressCallerAdmin(req, existingCuentas, sesion);
-  if (hasAdminIntent && !isSupreme && !isDelegated) {
-    res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-    return res.status(403).json({
-      ok: false,
-      revoked: true,
-      error: 'Tus permisos de administrador fueron revocados.',
-    });
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+  if (!perm.esDev && !perm.esAdmin) {
+    return res.status(403).json({ ok: false, revoked: true, error: 'Permisos insuficientes.' });
+  }
+  const incoming = (typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {}) as Record<string, any>;
+  if (Object.keys(incoming).length === 0) {
+    ejecutarReinicioRankingLocal();
+    return res.json({ ok: true, dbBound: true });
   }
 
-  const incomingRank = (typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {}) as Record<string, any>;
-  let finalRank: Record<string, any> = {};
-
-  if (isSupreme || isDelegated) {
-    finalRank = incomingRank;
-  } else {
-    const existingRank = readJsonFile(RANKING_FILE, {}) as Record<string, any>;
-    const activeNames = new Set(
-      Object.values(existingCuentas)
-        .filter((a: any) => a && typeof a === 'object' && a.nombre)
-        .map((a: any) => String(a.nombre).trim().toLowerCase())
-    );
-
-    for (const [k, v] of Object.entries(existingRank)) {
-      const entryName = String(v?.nombre || k).trim().toLowerCase();
-      if (activeNames.has(entryName) || activeNames.has(k.toLowerCase())) {
-        finalRank[k] = v;
-      }
-    }
-    for (const [k, v] of Object.entries(incomingRank)) {
-      if (!v || typeof v !== 'object') continue;
-      const entryName = String(v.nombre || k).trim().toLowerCase();
-      if (activeNames.has(entryName) || activeNames.has(k.toLowerCase())) {
-        finalRank[k] = v;
-      }
-    }
+  const rankRaw = leerJson(ARCHIVO_RANKING, {});
+  const w = obtenerInfoSemana();
+  for (const [k, r] of Object.entries(incoming)) {
+    if (!r || typeof r !== 'object') continue;
+    const cleanId = String((r as any).id || k).trim().toLowerCase();
+    const acc = cuentas[cleanId] || Object.values(cuentas).find((a: any) => a.nombre.trim().toLowerCase() === String((r as any).nombre || k).trim().toLowerCase());
+    if (!acc) continue;
+    rankRaw[acc.id] = {
+      id: acc.id,
+      nombre: acc.nombre,
+      puntos: Number((r as any).puntosTotales ?? (r as any).puntos ?? acc.puntos) || 0,
+      total_partida: Number((r as any).partidas ?? acc.partidas) || 0,
+      victorias: Number((r as any).victorias ?? acc.victorias) || 0,
+      derrotas: Number((r as any).derrotas ?? acc.derrotas) || 0,
+      empates: Number((r as any).empates ?? acc.empates) || 0,
+      avatar_color: (r as any).avatarColor || acc.avatarColor || '#ff6b6b',
+      avatar_hat: (r as any).avatarHat || acc.avatarHat || 'corona',
+      avatar_ropa: (r as any).avatarRopa || acc.avatarRopa || 'ninguna',
+      avatar_ropa_color: (r as any).avatarRopaColor || acc.avatarRopaColor || null,
+      avatar_aura: (r as any).avatarAura || acc.avatarAura || 'ninguna',
+      semana_actual_id: rankRaw[acc.id]?.semana_actual_id || w.semanaActualId,
+      semana_actual_pts: rankRaw[acc.id]?.semana_actual_pts || 0,
+      semana_actual_vic: rankRaw[acc.id]?.semana_actual_vic || 0,
+      semana_actual_part: rankRaw[acc.id]?.semana_actual_part || 0,
+      semana_pasada_id: rankRaw[acc.id]?.semana_pasada_id || w.semanaPasadaId,
+      semana_pasada_pts: rankRaw[acc.id]?.semana_pasada_pts || 0,
+      semana_pasada_premio: rankRaw[acc.id]?.semana_pasada_premio || null,
+      actualizado_en: Date.now(),
+    };
   }
-
-  writeJsonFile(RANKING_FILE, finalRank);
-  if ((isSupreme || isDelegated) && Object.keys(finalRank).length === 0) {
-    const w = getWeekInfo();
-    writeJsonFile(getSemanalFile(w.semanaActualId), { semanaId: w.semanaActualId, jugadores: {} });
-    writeJsonFile(getSemanalFile(w.semanaPasadaId), {
-      semanaId: w.semanaPasadaId,
-      premiada: true,
-      jugadores: {},
-    });
-  }
-  ultimoCambioDatabase = Date.now();
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  res.json({ ok: true, source: 'local_database_store', dbBound: true, lastUpdate: ultimoCambioDatabase });
+  escribirJson(ARCHIVO_RANKING, rankRaw);
+  tocarUltimaActualizacion();
+  res.json({ ok: true, dbBound: true });
 });
+
+function procesarPartidaLocal(body: any, sesion: any, cuentas: Record<string, any>) {
+  const w = obtenerInfoSemana();
+  dbAsegurarSemanaEnRanking(w);
+  const cfgSemanal = leerConfig('config_semanal_puntos', CONFIG_SEMANAL_POR_DEFECTO) || CONFIG_SEMANAL_POR_DEFECTO;
+
+  const partidaId = String(body.partidaId || body.matchId || `pt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`).trim();
+  const fecha = typeof body.fecha === 'string' ? body.fecha : new Date().toISOString();
+  const modo = String(body.modo || 'local').trim();
+  const duracionSeg = Math.max(0, Number(body.duracionSeg) || 0);
+
+  let participantes = Array.isArray(body.participantes) ? body.participantes : [];
+  if (participantes.length === 0 && (body.userId || sesion?.userId)) {
+    const fallbackId = String(body.userId || sesion?.userId || '').trim().toLowerCase();
+    if (fallbackId) {
+      participantes = [
+        {
+          cuentaId: fallbackId,
+          nombre: body.nombre || cuentas[fallbackId]?.nombre || fallbackId,
+          resultado: body.resultado || 'derrota',
+          puntosGanados: Math.max(0, Number(body.puntosGanados ?? body.puntos) || 0),
+          movimientos: Math.max(0, Number(body.movimientos) || 0),
+          murosColocados: Math.max(0, Number(body.murosColocados) || 0),
+          saltos: Math.max(0, Number(body.saltos) || 0),
+          partidaLimpia: Boolean(body.partidaLimpia),
+          rival: String(body.rival || 'Rival'),
+          logros: Array.isArray(body.logros) ? body.logros : [],
+        },
+      ];
+    }
+  }
+
+  const guardados: string[] = [];
+  for (const p of participantes) {
+    if (!p) continue;
+    const buscadoId = String(p.cuentaId || '').trim().toLowerCase();
+    let acc = buscadoId ? cuentas[buscadoId] : null;
+    if (!acc && p.nombre) {
+      const nomLower = String(p.nombre).trim().toLowerCase();
+      acc = Object.values(cuentas).find((a: any) => String(a.nombre || '').trim().toLowerCase() === nomLower);
+    }
+    if (!acc) continue;
+
+    const autorizado = sesion && (sesion.userId === acc.id || sesion.rol === 'dev');
+    if (!autorizado) continue;
+
+    const histPrev = Array.isArray(acc.historialPartidas) ? acc.historialPartidas : [];
+    if (histPrev.some((h: any) => h && h.id === partidaId)) {
+      guardados.push(acc.id);
+      continue;
+    }
+
+    const resultado = p.resultado === 'victoria' || p.resultado === 'empate' ? p.resultado : 'derrota';
+    const puntosGanados = Math.max(0, Number(p.puntosGanados) || 0);
+    const ptsSemanalPartida =
+      puntosGanados > 0
+        ? puntosGanados
+        : resultado === 'victoria'
+        ? Number(cfgSemanal.puntosVictoria ?? 3)
+        : resultado === 'empate'
+        ? Number(cfgSemanal.puntosEmpate ?? 1)
+        : 0;
+
+    const registroPartida = {
+      id: partidaId,
+      rival: String(p.rival || 'Rival').slice(0, 40),
+      resultado,
+      movimientos: Math.max(0, Number(p.movimientos) || 0),
+      murosColocados: Math.max(0, Number(p.murosColocados) || 0),
+      saltos: Math.max(0, Number(p.saltos) || 0),
+      partidaLimpia: Boolean(p.partidaLimpia),
+      modo,
+      duracionSegundos: duracionSeg,
+      puntos: puntosGanados,
+      logros: Array.isArray(p.logros) ? p.logros : [],
+      fecha,
+    };
+
+    acc.puntos = Math.max(0, (Number(acc.puntos) || 0) + puntosGanados);
+    acc.partidas = (Number(acc.partidas) || 0) + 1;
+    if (resultado === 'victoria') acc.victorias = (Number(acc.victorias) || 0) + 1;
+    else if (resultado === 'empate') acc.empates = (Number(acc.empates) || 0) + 1;
+    else acc.derrotas = (Number(acc.derrotas) || 0) + 1;
+
+    acc.ultimaConexion = new Date().toISOString();
+    acc.historialPartidas = [registroPartida, ...histPrev].slice(0, 50);
+    dbGuardarCuentaCompleta(acc, false);
+
+    const rankRaw = leerJson(ARCHIVO_RANKING, {});
+    const filaRank = rankRaw[acc.id];
+    if (filaRank) {
+      const mismoSem = filaRank.semana_actual_id === w.semanaActualId;
+      filaRank.semana_actual_id = w.semanaActualId;
+      filaRank.semana_actual_pts = (mismoSem ? Number(filaRank.semana_actual_pts) || 0 : 0) + ptsSemanalPartida;
+      filaRank.semana_actual_vic = (mismoSem ? Number(filaRank.semana_actual_vic) || 0 : 0) + (resultado === 'victoria' ? 1 : 0);
+      filaRank.semana_actual_part = (mismoSem ? Number(filaRank.semana_actual_part) || 0 : 0) + 1;
+      filaRank.actualizado_en = Date.now();
+      rankRaw[acc.id] = filaRank;
+      escribirJson(ARCHIVO_RANKING, rankRaw);
+    }
+    guardados.push(acc.id);
+  }
+
+  if (guardados.length > 0) tocarUltimaActualizacion();
+  return guardados;
+}
 
 app.post('/api/partida', async (req, res) => {
   const sesion = await resolverSesionLocal(req);
+  const cuentas = dbObtenerTodasCuentas();
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
-  const matchId = String(body.matchId || `m_${Date.now()}`).trim();
-  const cuentasPatch = body.cuentasPatch && typeof body.cuentasPatch === 'object' ? body.cuentasPatch : {};
-  const rankingPatch = body.rankingPatch && typeof body.rankingPatch === 'object' ? body.rankingPatch : {};
-  const entradasSemanal = Array.isArray(body.entradasSemanal) ? body.entradasSemanal : [];
+  const guardados = procesarPartidaLocal(body, sesion, cuentas);
+  res.json({ ok: true, dbBound: true, guardados, activeAccountIds: Object.keys(cuentas) });
+});
 
-  const existingCuentas = sanitizeCuentas(readJsonFile(CUENTAS_FILE, {}));
-  const existingRank = readJsonFile(RANKING_FILE, {}) as Record<string, any>;
-
-  let cuentasChanged = false;
-  for (const [id, patchAcc] of Object.entries(cuentasPatch)) {
-    if (!patchAcc || typeof patchAcc !== 'object' || id === 'admin') continue;
-
-    // Solo se permite modificar si la sesión coincide con la cuenta o es admin
-    const esPropietario = sesion && (sesion.usuarioId === id || sesion.rol === 'admin');
-    if (!esPropietario) continue;
-
-    const prevAcc = existingCuentas[id];
-    if (!prevAcc) continue;
-    existingCuentas[id] = {
-      ...prevAcc,
-      puntos: typeof (patchAcc as any).puntos === 'number' ? (patchAcc as any).puntos : prevAcc.puntos,
-      partidas: typeof (patchAcc as any).partidas === 'number' ? (patchAcc as any).partidas : prevAcc.partidas,
-      victorias: typeof (patchAcc as any).victorias === 'number' ? (patchAcc as any).victorias : prevAcc.victorias,
-      derrotas: typeof (patchAcc as any).derrotas === 'number' ? (patchAcc as any).derrotas : prevAcc.derrotas,
-      empates: typeof (patchAcc as any).empates === 'number' ? (patchAcc as any).empates : prevAcc.empates,
-      elo: typeof (patchAcc as any).elo === 'number' ? (patchAcc as any).elo : prevAcc.elo,
-      ultimaConexion: new Date().toISOString(),
-      historialPartidas: Array.isArray((patchAcc as any).historialPartidas) ? (patchAcc as any).historialPartidas : prevAcc.historialPartidas,
-    };
-    cuentasChanged = true;
+app.post('/api/partidas/sincronizar', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const cuentas = dbObtenerTodasCuentas();
+  const cola = Array.isArray(req.body?.partidas) ? req.body.partidas : [];
+  const sincronizadas: string[] = [];
+  for (const item of cola) {
+    const g = procesarPartidaLocal(item, sesion, cuentas);
+    if (g.length > 0) sincronizadas.push(item.partidaId || item.matchId);
   }
-
-  const activeByName = new Map<string, any>();
-  for (const acc of Object.values(existingCuentas)) {
-    if (acc && typeof acc === 'object' && (acc as any).nombre) {
-      activeByName.set(String((acc as any).nombre).trim().toLowerCase(), acc);
-    }
-  }
-
-  let rankChanged = false;
-  for (const k of Object.keys(existingRank)) {
-    const entryName = String(existingRank[k]?.nombre || k).trim().toLowerCase();
-    if (!activeByName.has(entryName) && !activeByName.has(k.toLowerCase())) {
-      delete existingRank[k];
-      rankChanged = true;
-    }
-  }
-  for (const [k, v] of Object.entries(rankingPatch)) {
-    if (!v || typeof v !== 'object') continue;
-    const entryName = String((v as any).nombre || k).trim().toLowerCase();
-    if (activeByName.has(entryName) || activeByName.has(k.toLowerCase())) {
-      existingRank[k] = v;
-      rankChanged = true;
-    }
-  }
-
-  if (cuentasChanged) {
-    existingCuentas['admin'] = buildSupremeProfile(existingCuentas);
-    writeJsonFile(CUENTAS_FILE, sanitizeCuentas(existingCuentas));
-  }
-  if (rankChanged) {
-    writeJsonFile(RANKING_FILE, existingRank);
-  }
-  if (cuentasChanged || rankChanged) {
-    ultimoCambioDatabase = Date.now();
-  }
-
-  if (entradasSemanal.length > 0) {
-    const w = getWeekInfo();
-    const emptyActual = { semanaId: w.semanaActualId, jugadores: {} as Record<string, any> };
-    const actual = { ...emptyActual, ...readJsonFile(getSemanalFile(w.semanaActualId), emptyActual) };
-    if (!actual.jugadores) actual.jugadores = {};
-    let semUpdated = false;
-    for (const item of entradasSemanal) {
-      if (!item || !item.nombre) continue;
-      const key = String(item.nombre).trim().toLowerCase();
-      const acc = activeByName.get(key);
-      if (!acc) continue;
-      const cur = actual.jugadores[key] || {
-        nombre: acc.nombre,
-        avatarColor: acc.avatarColor || item.avatarColor || '#ff6b6b',
-        avatarHat: acc.avatarHat || item.avatarHat || 'corona',
-        puntos: 0,
-        partidas: 0,
-        victorias: 0,
-        elo: acc.elo || 1000,
-        partidasIds: [],
-      };
-      if (!Array.isArray(cur.partidasIds)) cur.partidasIds = [];
-      if (cur.partidasIds.includes(matchId)) continue;
-      cur.puntos += Math.max(0, Number(item.puntos) || 0);
-      cur.partidas += 1;
-      if (item.victoria) cur.victorias += 1;
-      cur.avatarColor = acc.avatarColor || item.avatarColor || cur.avatarColor;
-      cur.avatarHat = acc.avatarHat || item.avatarHat || cur.avatarHat;
-      cur.elo = acc.elo || cur.elo || 1000;
-      cur.partidasIds.push(matchId);
-      if (cur.partidasIds.length > 40) cur.partidasIds = cur.partidasIds.slice(-40);
-      actual.jugadores[key] = cur;
-      semUpdated = true;
-    }
-    if (semUpdated) {
-      writeJsonFile(getSemanalFile(w.semanaActualId), actual);
-    }
-  }
-
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  res.json({
-    ok: true,
-    dbBound: true,
-    activeAccountIds: Object.keys(existingCuentas),
-  });
+  res.json({ ok: true, dbBound: true, sincronizadas });
 });
 
 app.get('/api/semanal', (_req, res) => {
-  const w = getWeekInfo();
-  const emptyActual = { semanaId: w.semanaActualId, jugadores: {} as Record<string, any> };
-  const emptyPasada = {
-    semanaId: w.semanaPasadaId,
-    premiada: false,
-    premiados: [] as any[],
-    jugadores: {} as Record<string, any>,
-  };
+  const w = obtenerInfoSemana();
+  dbAsegurarSemanaEnRanking(w);
+  const cuentas = dbObtenerTodasCuentas();
+  const cfg = leerConfig('config_semanal_puntos', CONFIG_SEMANAL_POR_DEFECTO) || CONFIG_SEMANAL_POR_DEFECTO;
+  const premioGlobal = leerConfig('premio_semanal_global', null);
+  const metaActual = leerConfig(`semanal_${w.semanaActualId}`, {}) || {};
+  const metaPasada = leerConfig(`semanal_${w.semanaPasadaId}`, { premiada: false, premiados: [] }) || {};
 
-  const existingCuentas = sanitizeCuentas(readJsonFile(CUENTAS_FILE, {}));
-  const actual = { ...emptyActual, ...readJsonFile(getSemanalFile(w.semanaActualId), emptyActual) };
-  const pasada = { ...emptyPasada, ...readJsonFile(getSemanalFile(w.semanaPasadaId), emptyPasada) };
+  const rankRaw = leerJson(ARCHIVO_RANKING, {});
+  const jugadoresActual: Record<string, any> = {};
+  const jugadoresPasada: Record<string, any> = {};
 
-  const modActual = hydrateWeeklyFromAccounts(actual, w.mondayUtc, w.nextMondayUtc, existingCuentas);
-  const modPasada = hydrateWeeklyFromAccounts(pasada, w.lastMondayUtc, w.mondayUtc, existingCuentas);
-
-  const candidatosPasada = Object.values(pasada.jugadores || {}).filter(
-    (j: any) => j && j.partidas > 0 && j.puntos > 0
-  );
-
-  if (!pasada.premiada) {
-    if (candidatosPasada.length > 0) {
-      candidatosPasada.sort((a: any, b: any) => {
-        if (b.puntos !== a.puntos) return b.puntos - a.puntos;
-        if (b.victorias !== a.victorias) return b.victorias - a.victorias;
-        return b.partidas - a.partidas;
-      });
-
-      const existingRank = readJsonFile(RANKING_FILE, {}) as Record<string, any>;
-      const premiados: { nombre: string; puesto: number; bono: number }[] = [];
-      let cuentasChanged = false;
-      let rankChanged = false;
-
-      candidatosPasada.slice(0, 3).forEach((ganadorSem: any, idx: number) => {
-        const bono = PREMIOS_SEMANALES[idx] || 0;
-        if (bono <= 0) return;
-        const normName = String(ganadorSem.nombre).trim().toLowerCase();
-        const accEntry = Object.values(existingCuentas).find(
-          (a: any) =>
-            a && typeof a === 'object' && String(a.nombre || '').trim().toLowerCase() === normName
-        ) as any;
-        if (accEntry && accEntry.id) {
-          accEntry.puntos = (Number(accEntry.puntos) || 0) + bono;
-          existingCuentas[accEntry.id] = accEntry;
-          cuentasChanged = true;
-        }
-        if (existingRank[normName]) {
-          existingRank[normName].puntosTotales =
-            (Number(existingRank[normName].puntosTotales) || 0) + bono;
-          rankChanged = true;
-        }
-        premiados.push({ nombre: ganadorSem.nombre, puesto: idx + 1, bono });
-      });
-
-      pasada.premiada = true;
-      pasada.premiados = premiados;
-      writeJsonFile(getSemanalFile(w.semanaPasadaId), pasada);
-      if (cuentasChanged) writeJsonFile(CUENTAS_FILE, sanitizeCuentas(existingCuentas));
-      if (rankChanged) writeJsonFile(RANKING_FILE, existingRank);
-      if (cuentasChanged || rankChanged) ultimoCambioDatabase = Date.now();
-    } else if (modPasada) {
-      writeJsonFile(getSemanalFile(w.semanaPasadaId), pasada);
+  for (const r of Object.values(rankRaw) as any[]) {
+    if (!r) continue;
+    const key = String(r.nombre || r.id).trim().toLowerCase();
+    if (r.semana_actual_id === w.semanaActualId && (Number(r.semana_actual_part) > 0 || Number(r.semana_actual_pts) > 0)) {
+      jugadoresActual[key] = {
+        id: r.id,
+        nombre: r.nombre || r.id,
+        avatarColor: r.avatar_color || '#ff6b6b',
+        avatarHat: r.avatar_hat || 'corona',
+        avatarRopa: r.avatar_ropa || 'ninguna',
+        avatarRopaColor: r.avatar_ropa_color || undefined,
+        avatarAura: r.avatar_aura || 'ninguna',
+        puntos: Number(r.semana_actual_pts) || 0,
+        partidas: Number(r.semana_actual_part) || 0,
+        victorias: Number(r.semana_actual_vic) || 0,
+      };
     }
-  } else if (modPasada) {
-    writeJsonFile(getSemanalFile(w.semanaPasadaId), pasada);
+    if (r.semana_pasada_id === w.semanaPasadaId && Number(r.semana_pasada_pts) > 0) {
+      jugadoresPasada[key] = {
+        id: r.id,
+        nombre: r.nombre || r.id,
+        avatarColor: r.avatar_color || '#ff6b6b',
+        avatarHat: r.avatar_hat || 'corona',
+        avatarRopa: r.avatar_ropa || 'ninguna',
+        avatarRopaColor: r.avatar_ropa_color || undefined,
+        avatarAura: r.avatar_aura || 'ninguna',
+        puntos: Number(r.semana_pasada_pts) || 0,
+        partidas: 1,
+        victorias: 0,
+      };
+    }
   }
 
-  if (modActual) {
-    writeJsonFile(getSemanalFile(w.semanaActualId), actual);
+  for (const acc of Object.values(cuentas)) {
+    const hist = Array.isArray(acc.historialPartidas) ? acc.historialPartidas : [];
+    const key = String(acc.nombre || acc.id).trim().toLowerCase();
+    let actPts = 0, actPart = 0, actVic = 0;
+    let pasPts = 0, pasPart = 0, pasVic = 0;
+
+    for (const m of hist) {
+      if (!m || !m.fecha) continue;
+      const t = new Date(m.fecha).getTime();
+      if (isNaN(t)) continue;
+      const ptsM = Math.max(0, Number(m.puntos) || 0);
+      if (t >= w.lunesUtc && t < w.proximoLunesUtc) {
+        actPart++;
+        actPts += ptsM > 0 ? ptsM : (m.resultado === 'victoria' ? (cfg.puntosVictoria || 3) : m.resultado === 'empate' ? (cfg.puntosEmpate || 1) : 0);
+        if (m.resultado === 'victoria') actVic++;
+      } else if (t >= w.lunesPasadoUtc && t < w.lunesUtc) {
+        pasPart++;
+        pasPts += ptsM > 0 ? ptsM : (m.resultado === 'victoria' ? (cfg.puntosVictoria || 3) : m.resultado === 'empate' ? (cfg.puntosEmpate || 1) : 0);
+        if (m.resultado === 'victoria') pasVic++;
+      }
+    }
+    if (actPart > 0) {
+      const prevA = jugadoresActual[key];
+      jugadoresActual[key] = {
+        id: acc.id,
+        nombre: acc.nombre,
+        avatarColor: acc.avatarColor || '#ff6b6b',
+        avatarHat: acc.avatarHat || 'corona',
+        avatarRopa: acc.avatarRopa || 'ninguna',
+        avatarRopaColor: acc.avatarRopaColor,
+        avatarAura: acc.avatarAura || 'ninguna',
+        puntos: Math.max(prevA?.puntos || 0, actPts),
+        partidas: Math.max(prevA?.partidas || 0, actPart),
+        victorias: Math.max(prevA?.victorias || 0, actVic),
+      };
+    }
+    if (pasPart > 0) {
+      const prevP = jugadoresPasada[key];
+      jugadoresPasada[key] = {
+        id: acc.id,
+        nombre: acc.nombre,
+        avatarColor: acc.avatarColor || '#ff6b6b',
+        avatarHat: acc.avatarHat || 'corona',
+        avatarRopa: acc.avatarRopa || 'ninguna',
+        avatarRopaColor: acc.avatarRopaColor,
+        avatarAura: acc.avatarAura || 'ninguna',
+        puntos: Math.max(prevP?.puntos || 0, pasPts),
+        partidas: Math.max(prevP?.partidas || 0, pasPart),
+        victorias: Math.max(prevP?.victorias || 0, pasVic),
+      };
+    }
   }
 
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
+  if (!metaPasada.premiada) {
+    const candidatos = Object.values(jugadoresPasada).filter((j: any) => j && j.partidas > 0 && j.puntos > 0);
+    if (candidatos.length > 0) {
+      candidatos.sort((a: any, b: any) => (b.puntos !== a.puntos ? b.puntos - a.puntos : b.victorias - a.victorias));
+      const bonos = [Number(cfg.primerLugar ?? 50), Number(cfg.segundoLugar ?? 25), Number(cfg.tercerLugar ?? 15)];
+      const premiados: any[] = [];
+      for (let i = 0; i < Math.min(3, candidatos.length); i++) {
+        const cand = candidatos[i] as any;
+        const acc = cuentas[cand.id];
+        if (!acc) continue;
+        const bono = bonos[i] || 0;
+        acc.puntos = (Number(acc.puntos) || 0) + bono;
+        let personajePremio = undefined;
+        const premioSem = metaPasada.premioSemanal || premioGlobal;
+        if (i === 0 && premioSem && premioSem.nombre) {
+          if (!acc.inventario) acc.inventario = { personajes: [] };
+          if (!Array.isArray(acc.inventario.personajes)) acc.inventario.personajes = [];
+          const pId = `${premioSem.id}_${w.semanaPasadaId}`;
+          if (!acc.inventario.personajes.some((p: any) => p.id === pId || p.id === premioSem.id)) {
+            personajePremio = {
+              ...premioSem,
+              id: pId,
+              fechaAdquisicion: new Date().toISOString(),
+              origen: {
+                tipo: 'torneo_semanal',
+                otorgadoPor: `Campeón Torneo Semanal ${w.semanaPasadaId}`,
+                fecha: new Date().toISOString(),
+                semanaTorneo: w.semanaPasadaId,
+              },
+            };
+            acc.inventario.personajes.push(personajePremio);
+          }
+        }
+        dbGuardarCuentaCompleta(acc, false);
+        premiados.push({ nombre: acc.nombre, puesto: i + 1, bono, personajePremio });
+      }
+      metaPasada.premiada = true;
+      metaPasada.premiados = premiados;
+      guardarConfig(`semanal_${w.semanaPasadaId}`, metaPasada);
+      tocarUltimaActualizacion();
+    }
+  }
+
   res.json({
     ok: true,
     dbBound: true,
     semanaActualId: w.semanaActualId,
     semanaPasadaId: w.semanaPasadaId,
     cierraEnMs: w.cierraEnMs,
-    actual,
-    pasada,
+    actual: {
+      semanaId: w.semanaActualId,
+      premioSemanal: metaActual.premioSemanal || premioGlobal || undefined,
+      puntosConfig: { primerLugar: Number(cfg.primerLugar ?? 50), segundoLugar: Number(cfg.segundoLugar ?? 25), tercerLugar: Number(cfg.tercerLugar ?? 15) },
+      jugadores: jugadoresActual,
+    },
+    pasada: {
+      semanaId: w.semanaPasadaId,
+      premiada: Boolean(metaPasada.premiada),
+      premiados: Array.isArray(metaPasada.premiados) ? metaPasada.premiados : [],
+      premioSemanal: metaPasada.premioSemanal || premioGlobal || undefined,
+      jugadores: jugadoresPasada,
+    },
   });
 });
 
-app.post('/api/semanal', (req, res) => {
-  const w = getWeekInfo();
-  const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
-  const matchId = String(body.matchId || `m_${Date.now()}`).trim();
-  const entradas = Array.isArray(body.entradas) ? body.entradas : [];
-
-  const existingCuentas = sanitizeCuentas(readJsonFile(CUENTAS_FILE, {}));
-  const activeByName = new Map<string, any>();
-  for (const acc of Object.values(existingCuentas)) {
-    if (acc && typeof acc === 'object' && (acc as any).nombre) {
-      activeByName.set(String((acc as any).nombre).trim().toLowerCase(), acc);
-    }
-  }
-
-  const emptyActual = { semanaId: w.semanaActualId, jugadores: {} as Record<string, any> };
-  const actual = { ...emptyActual, ...readJsonFile(getSemanalFile(w.semanaActualId), emptyActual) };
-  if (!actual.jugadores) actual.jugadores = {};
-
-  let updated = false;
-  for (const item of entradas) {
-    if (!item || !item.nombre) continue;
-    const key = String(item.nombre).trim().toLowerCase();
-    const acc = activeByName.get(key);
-    if (!acc) continue;
-
-    const cur = actual.jugadores[key] || {
-      nombre: acc.nombre,
-      avatarColor: acc.avatarColor || item.avatarColor || '#ff6b6b',
-      avatarHat: acc.avatarHat || item.avatarHat || 'corona',
-      puntos: 0,
-      partidas: 0,
-      victorias: 0,
-      elo: acc.elo || 1000,
-      partidasIds: [],
-    };
-    if (!Array.isArray(cur.partidasIds)) cur.partidasIds = [];
-    if (cur.partidasIds.includes(matchId)) continue;
-
-    cur.puntos += Math.max(0, Number(item.puntos) || 0);
-    cur.partidas += 1;
-    if (item.victoria) cur.victorias += 1;
-    cur.avatarColor = acc.avatarColor || item.avatarColor || cur.avatarColor;
-    cur.avatarHat = acc.avatarHat || item.avatarHat || cur.avatarHat;
-    cur.elo = acc.elo || cur.elo || 1000;
-    cur.partidasIds.push(matchId);
-    if (cur.partidasIds.length > 40) cur.partidasIds = cur.partidasIds.slice(-40);
-
-    actual.jugadores[key] = cur;
-    updated = true;
-  }
-
-  if (updated) {
-    writeJsonFile(getSemanalFile(w.semanaActualId), actual);
-  }
-
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
+app.post('/api/semanal', (_req, res) => {
   res.json({ ok: true, dbBound: true });
 });
 
 app.get('/api/salas', (_req, res) => {
-  cleanExpiredRooms();
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-  const valid = Array.from(salasActivas.values())
-    .filter(
-      (r: any) =>
-        r &&
-        r.publica !== false &&
-        !r.enPartida &&
-        (r.jugadoresConectados || 1) < (r.maxJugadores || 2)
-    )
+  limpiarSalasExpiradas();
+  const salasRaw = leerJson(ARCHIVO_SALAS_ONLINE, {}) as Record<string, any>;
+  const validas = Object.values(salasRaw)
+    .filter((r: any) => r && r.publica !== false && !r.enPartida && (r.jugadoresConectados || 0) < (r.maxJugadores || 2))
     .sort((a: any, b: any) => (b.creadoEn || 0) - (a.creadoEn || 0));
-  res.json(valid);
+  res.json(validas);
 });
 
 app.post('/api/salas', (req, res) => {
-  cleanExpiredRooms();
+  limpiarSalasExpiradas();
   const room = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
-  const code = normalizeSalaCode(room.codigo);
-  if (!code) {
-    res.status(400).json({ ok: false, error: 'Código inválido' });
-    return;
-  }
+  const codigo = normalizarCodigoSala(room.codigo);
+  if (!codigo) return res.status(400).json({ ok: false, error: 'Código inválido' });
 
-  const now = Date.now();
-  const existing = salasActivas.get(code);
-  const esPublica = room.publica !== undefined ? Boolean(room.publica) : existing?.publica ?? true;
-  const hostPeerId = room.hostPeerId || existing?.hostPeerId || `host_${code.toLowerCase()}`;
-  const maxJugadores = room.maxJugadores === 4 ? 4 : existing?.maxJugadores || 2;
-  const anfitrion = String(room.anfitrion || existing?.anfitrion || 'Anfitrión').trim();
-  const color = room.color || existing?.color || '#ff6b6b';
-  const hat = room.hat || existing?.hat || 'corona';
-
-  const defaultHostList = [
-    {
-      id: 0,
-      peerId: hostPeerId,
-      nombre: anfitrion,
-      color,
-      hat,
-      listo: true,
-      conectado: true,
-      esAnfitrion: true,
-    },
-  ];
+  const ahora = Date.now();
+  const existente = leerSalaOnline(codigo);
+  const esPublica = room.publica !== undefined ? Boolean(room.publica) : existente?.publica ?? true;
+  const hostPeerId = room.hostPeerId || existente?.hostPeerId || `host_${codigo.toLowerCase()}`;
+  const maxJugadores = room.maxJugadores === 4 ? 4 : existente?.maxJugadores || 2;
+  const anfitrion = String(room.anfitrion || existente?.anfitrion || 'Anfitrión').trim();
+  const color = room.color || existente?.color || '#ff6b6b';
+  const hat = room.hat || existente?.hat || 'corona';
+  const ropa = room.ropa || existente?.ropa || 'ninguna';
+  const ropaColor = room.ropaColor || existente?.ropaColor;
+  const aura = room.aura || existente?.aura || 'ninguna';
 
   const jugadores =
     Array.isArray(room.jugadores) && room.jugadores.length > 0
       ? room.jugadores
-      : existing?.jugadores?.length
-      ? existing.jugadores
-      : defaultHostList;
+      : existente?.jugadores?.length
+      ? existente.jugadores
+      : [{ id: 0, peerId: hostPeerId, cuentaId: room.cuentaId, nombre: anfitrion, color, hat, ropa, ropaColor, aura, listo: true, conectado: true, esAnfitrion: true }];
 
-  const fullRoom = {
-    codigo: code,
-    nombre: String(room.nombre || existing?.nombre || `Sala de ${anfitrion}`).trim(),
+  const salaCompleta = {
+    codigo,
+    nombre: String(room.nombre || existente?.nombre || `Sala de ${anfitrion}`).trim(),
     anfitrion,
     hostPeerId,
     color,
     hat,
+    ropa,
+    ropaColor,
+    aura,
     maxJugadores,
     publica: esPublica,
     enPartida: false,
     jugadoresConectados: jugadores.length,
     jugadores,
-    signals: existing?.signals || {},
-    seq: existing?.seq || 0,
-    mensajes: existing?.mensajes || [],
-    creadoEn: existing?.creadoEn || now,
-    ultimoCambio: now,
+    signals: existente?.signals || {},
+    seq: existente?.seq || 0,
+    mensajes: existente?.mensajes || [],
+    creadoEn: existente?.creadoEn || ahora,
+    ultimoCambio: ahora,
+    modoMuros: existente?.modoMuros || room.modoMuros,
+    tamanoTablero: existente?.tamanoTablero || room.tamanoTablero,
+    esOficialStaff: Boolean(existente?.esOficialStaff),
   };
 
-  salasActivas.set(code, fullRoom);
-  syncPublicSalasFile();
-
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  res.json({ ok: true, dbBound: true, sala: fullRoom, timestamp: now });
+  guardarSalaOnline(codigo, salaCompleta);
+  res.json({ ok: true, dbBound: true, sala: salaCompleta, timestamp: ahora });
 });
 
 app.get('/api/salas/:codigo', (req, res) => {
-  cleanExpiredRooms();
-  const code = normalizeSalaCode(req.params.codigo);
-  let sala = salasActivas.get(code);
-  res.setHeader('X-DB-Bound', 'true');
-  res.setHeader('X-Database-Bound', 'true');
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-
-  // Si no está en memoria, buscar en salas personalizadas creadas por staff
-  if (!sala) {
-    const customList = readJsonFile(SALAS_PERSONALIZADAS_FILE, []);
-    const match = Array.isArray(customList) ? customList.find((s: any) => s.codigo === code) : null;
-    if (match) {
-      const now = Date.now();
-      sala = {
-        codigo: match.codigo,
-        nombre: match.nombre,
-        anfitrion: match.creador || 'Staff',
-        hostPeerId: `host_${code.toLowerCase()}`,
-        color: '#ffd43b',
-        hat: 'corona',
-        maxJugadores: match.maxJugadores || 2,
-        publica: true,
-        enPartida: false,
-        jugadoresConectados: 0,
-        jugadores: [],
-        signals: {},
-        seq: 0,
-        mensajes: [],
-        creadoEn: match.creadoEn || now,
-        ultimoCambio: now,
-        modoMuros: match.modoMuros,
-        tamanoTablero: match.tamanoTablero,
-        esOficialStaff: true,
-      };
-      salasActivas.set(code, sala);
-    }
-  }
-
-  if (!sala) {
-    res.status(404).json({ ok: false, error: 'Sala no disponible' });
-    return;
-  }
+  const sala = leerSalaOnline(req.params.codigo);
+  if (!sala) return res.status(404).json({ ok: false, error: 'Sala no disponible' });
 
   const since = parseInt(String(req.query.since || '0'), 10) || 0;
   const peerId = String(req.query.peerId || '').trim();
   const mensajesNuevos = Array.isArray(sala.mensajes)
-    ? sala.mensajes.filter(
-        (m: any) =>
-          m &&
-          m.seq > since &&
-          (!peerId || m.from !== peerId) &&
-          (!m.to || m.to === peerId)
-      )
+    ? sala.mensajes.filter((m: any) => m && m.seq > since && (!peerId || m.from !== peerId) && (!m.to || m.to === peerId))
     : [];
 
   res.json({
@@ -1747,146 +2021,100 @@ app.get('/api/salas/:codigo', (req, res) => {
       signals: sala.signals || {},
       seq: sala.seq || 0,
       ultimoCambio: sala.ultimoCambio || sala.creadoEn || 0,
+      modoMuros: sala.modoMuros,
+      tamanoTablero: sala.tamanoTablero,
+      esOficialStaff: Boolean(sala.esOficialStaff),
       mensajesNuevos,
     },
   });
 });
 
 app.post('/api/salas/:codigo/join', (req, res) => {
-  cleanExpiredRooms();
-  const code = normalizeSalaCode(req.params.codigo);
-  let sala = salasActivas.get(code);
-  res.setHeader('X-DB-Bound', 'true');
-  res.setHeader('X-Database-Bound', 'true');
-
-  if (!sala) {
-    const customList = readJsonFile(SALAS_PERSONALIZADAS_FILE, []);
-    const match = Array.isArray(customList) ? customList.find((s: any) => s.codigo === code) : null;
-    if (match) {
-      const now = Date.now();
-      sala = {
-        codigo: match.codigo,
-        nombre: match.nombre,
-        anfitrion: match.creador || 'Staff',
-        hostPeerId: `host_${code.toLowerCase()}`,
-        color: '#ffd43b',
-        hat: 'corona',
-        maxJugadores: match.maxJugadores || 2,
-        publica: true,
-        enPartida: false,
-        jugadoresConectados: 0,
-        jugadores: [],
-        signals: {},
-        seq: 0,
-        mensajes: [],
-        creadoEn: match.creadoEn || now,
-        ultimoCambio: now,
-        modoMuros: match.modoMuros,
-        tamanoTablero: match.tamanoTablero,
-        esOficialStaff: true,
-      };
-      salasActivas.set(code, sala);
-    }
-  }
-
-  if (!sala) {
-    res.status(404).json({
-      ok: false,
-      error: `La sala ${code} no existe o el anfitrión ya la cerró.`,
-    });
-    return;
-  }
+  const codigo = normalizarCodigoSala(req.params.codigo);
+  const sala = leerSalaOnline(codigo);
+  if (!sala) return res.status(404).json({ ok: false, error: `La sala ${codigo} no existe o ya cerró.` });
 
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
   const peerId = String(body.peerId || '').trim();
+  const cuentaId = body.cuentaId ? String(body.cuentaId).trim().toLowerCase() : undefined;
   const nombre = String(body.nombre || 'Invitado').trim() || 'Invitado';
   const color = body.color || '#4dabf7';
   const hat = body.hat || 'pompon';
+  const ropa = body.ropa || 'ninguna';
+  const ropaColor = body.ropaColor || undefined;
+  const aura = body.aura || 'ninguna';
   const offer = body.offer || null;
 
-  if (!peerId) {
-    res.status(400).json({ ok: false, error: 'Falta peerId' });
-    return;
-  }
-
+  if (!peerId) return res.status(400).json({ ok: false, error: 'Falta peerId' });
   if (!Array.isArray(sala.jugadores)) sala.jugadores = [];
   if (!sala.signals || typeof sala.signals !== 'object') sala.signals = {};
 
-  let existing = sala.jugadores.find((p: any) => p.peerId === peerId);
-  if (!existing && sala.enPartida) {
-    const byName = sala.jugadores.find(
-      (p: any) => !p.esAnfitrion && String(p.nombre || '').toLowerCase() === nombre.toLowerCase()
-    );
-    if (byName) {
-      byName.peerId = peerId;
-      byName.conectado = true;
-      existing = byName;
+  let existente = sala.jugadores.find((p: any) => p.peerId === peerId);
+  if (!existente && sala.enPartida) {
+    const porNombre = sala.jugadores.find((p: any) => !p.esAnfitrion && String(p.nombre || '').toLowerCase() === nombre.toLowerCase());
+    if (porNombre) {
+      porNombre.peerId = peerId;
+      porNombre.conectado = true;
+      existente = porNombre;
     } else {
-      res.status(409).json({ ok: false, error: 'La partida en esta sala ya comenzó.' });
-      return;
+      return res.status(409).json({ ok: false, error: 'La partida en esta sala ya comenzó.' });
     }
   }
 
   let esAnfitrionResultado = false;
-
-  if (existing) {
-    existing.nombre = nombre;
-    existing.color = color || existing.color;
-    existing.hat = hat || existing.hat;
-    existing.conectado = true;
-    esAnfitrionResultado = Boolean(existing.esAnfitrion);
+  if (existente) {
+    existente.nombre = nombre;
+    existente.cuentaId = cuentaId || existente.cuentaId;
+    existente.color = color || existente.color;
+    existente.hat = hat || existente.hat;
+    existente.ropa = ropa || existente.ropa || 'ninguna';
+    existente.ropaColor = ropaColor !== undefined ? ropaColor : existente.ropaColor;
+    existente.aura = aura || existente.aura || 'ninguna';
+    existente.conectado = true;
+    esAnfitrionResultado = Boolean(existente.esAnfitrion);
   } else {
     if (sala.jugadores.length >= (sala.maxJugadores || 2)) {
-      res.status(409).json({ ok: false, error: 'La sala ya está llena.' });
-      return;
+      return res.status(409).json({ ok: false, error: 'La sala ya está llena.' });
     }
-    const playerColors = ['#ff6b6b', '#4dabf7', '#ffd43b', '#51cf66'];
-    const playerHats = ['corona', 'pompon', 'antena', 'brote'];
-    const isFirstPlayer = sala.jugadores.length === 0;
-    const newId = sala.jugadores.length;
+    const coloresBase = ['#ff6b6b', '#4dabf7', '#ffd43b', '#51cf66'];
+    const gorrosBase = ['corona', 'pompon', 'antena', 'brote'];
+    const esPrimero = sala.jugadores.length === 0;
+    const nuevoId = sala.jugadores.length;
     const nuevoJugador = {
-      id: newId,
+      id: nuevoId,
       peerId,
+      cuentaId,
       nombre,
-      color: color || playerColors[newId] || '#4dabf7',
-      hat: hat || playerHats[newId] || 'pompon',
+      color: color || coloresBase[nuevoId] || '#4dabf7',
+      hat: hat || gorrosBase[nuevoId] || 'pompon',
+      ropa,
+      ropaColor,
+      aura,
       listo: true,
       conectado: true,
-      esAnfitrion: isFirstPlayer,
+      esAnfitrion: esPrimero,
     };
-    if (isFirstPlayer) {
+    if (esPrimero) {
       sala.hostPeerId = peerId;
       sala.anfitrion = nombre;
     }
     sala.jugadores.push(nuevoJugador);
-    esAnfitrionResultado = isFirstPlayer;
+    esAnfitrionResultado = esPrimero;
   }
 
-  if (offer) {
-    sala.signals[peerId] = {
-      ...(sala.signals[peerId] || {}),
-      offer,
-      answer: null,
-      updatedAt: Date.now(),
-    };
+  if (offer && !esAnfitrionResultado) {
+    sala.signals[peerId] = { ...(sala.signals[peerId] || {}), offer, answer: null, updatedAt: Date.now() };
   }
 
   sala.jugadoresConectados = sala.jugadores.length;
-  sala.ultimoCambio = Date.now();
-  salasActivas.set(code, sala);
-  syncPublicSalasFile();
-
+  guardarSalaOnline(codigo, sala);
   res.json({ ok: true, sala, esAnfitrion: esAnfitrionResultado });
 });
 
 app.post('/api/salas/:codigo/signal', (req, res) => {
-  const code = normalizeSalaCode(req.params.codigo);
-  const sala = salasActivas.get(code);
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  if (!sala) {
-    res.status(404).json({ ok: false, error: 'Sala no disponible' });
-    return;
-  }
+  const codigo = normalizarCodigoSala(req.params.codigo);
+  const sala = leerSalaOnline(codigo);
+  if (!sala) return res.status(404).json({ ok: false, error: 'Sala no disponible' });
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
   const clientPeerId = String(body.clientPeerId || '').trim();
   if (clientPeerId) {
@@ -1898,48 +2126,30 @@ app.post('/api/salas/:codigo/signal', (req, res) => {
       ...(body.answer !== undefined ? { answer: body.answer } : {}),
       updatedAt: Date.now(),
     };
-    sala.ultimoCambio = Date.now();
-    salasActivas.set(code, sala);
+    guardarSalaOnline(codigo, sala);
   }
   res.json({ ok: true });
 });
 
 app.post('/api/salas/:codigo/msg', (req, res) => {
-  const code = normalizeSalaCode(req.params.codigo);
-  const sala = salasActivas.get(code);
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
-  if (!sala) {
-    res.status(404).json({ ok: false, error: 'Sala no disponible' });
-    return;
-  }
+  const codigo = normalizarCodigoSala(req.params.codigo);
+  const sala = leerSalaOnline(codigo);
+  if (!sala) return res.status(404).json({ ok: false, error: 'Sala no disponible' });
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
   if (body && body.msg) {
     sala.seq = (sala.seq || 0) + 1;
     if (!Array.isArray(sala.mensajes)) sala.mensajes = [];
-    sala.mensajes.push({
-      seq: sala.seq,
-      from: String(body.from || ''),
-      to: body.to ? String(body.to) : null,
-      msg: body.msg,
-      ts: Date.now(),
-    });
-    if (sala.mensajes.length > 35) {
-      sala.mensajes = sala.mensajes.slice(-35);
-    }
-    if (body.msg.type === 'START_GAME') {
-      sala.enPartida = true;
-      syncPublicSalasFile();
-    }
-    sala.ultimoCambio = Date.now();
-    salasActivas.set(code, sala);
+    sala.mensajes.push({ seq: sala.seq, from: String(body.from || ''), to: body.to ? String(body.to) : null, msg: body.msg, ts: Date.now() });
+    if (sala.mensajes.length > 40) sala.mensajes = sala.mensajes.slice(-40);
+    if (body.msg.type === 'START_GAME') sala.enPartida = true;
+    guardarSalaOnline(codigo, sala);
   }
   res.json({ ok: true, seq: sala.seq || 0 });
 });
 
 app.post('/api/salas/:codigo/leave', (req, res) => {
-  const code = normalizeSalaCode(req.params.codigo);
-  const sala = salasActivas.get(code);
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
+  const codigo = normalizarCodigoSala(req.params.codigo);
+  const sala = leerSalaOnline(codigo);
   if (sala) {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
     const peerId = String(body.peerId || '').trim();
@@ -1947,66 +2157,49 @@ app.post('/api/salas/:codigo/leave', (req, res) => {
     const jugadorId = typeof body.jugadorId === 'number' ? body.jugadorId : 1;
 
     if (!sala.enPartida && Array.isArray(sala.jugadores)) {
-      sala.jugadores = sala.jugadores.filter((p: any) => p.esAnfitrion || p.peerId !== peerId);
+      sala.jugadores = sala.jugadores.filter((p: any) => (sala.esOficialStaff ? p.peerId !== peerId : (p.esAnfitrion || p.peerId !== peerId)));
       sala.jugadores.forEach((p: any, idx: number) => {
         p.id = idx;
+        p.esAnfitrion = idx === 0;
       });
-      sala.jugadoresConectados = sala.jugadores.length;
-      if (sala.signals && peerId) {
-        delete sala.signals[peerId];
+      if (sala.jugadores.length > 0 && sala.esOficialStaff) {
+        sala.hostPeerId = sala.jugadores[0].peerId;
+        sala.anfitrion = sala.jugadores[0].nombre;
       }
-      syncPublicSalasFile();
+      sala.jugadoresConectados = sala.jugadores.length;
+      if (sala.signals && peerId) delete sala.signals[peerId];
     } else if (Array.isArray(sala.jugadores)) {
-      const leaving = sala.jugadores.find((p: any) => p.peerId === peerId || p.id === jugadorId);
-      if (leaving) leaving.conectado = false;
+      const saliente = sala.jugadores.find((p: any) => p.peerId === peerId || p.id === jugadorId);
+      if (saliente) saliente.conectado = false;
     }
 
     sala.seq = (sala.seq || 0) + 1;
     if (!Array.isArray(sala.mensajes)) sala.mensajes = [];
-    sala.mensajes.push({
-      seq: sala.seq,
-      from: peerId,
-      to: null,
-      msg: { type: 'PLAYER_LEFT', jugadorId, nombre },
-      ts: Date.now(),
-    });
-    if (sala.mensajes.length > 35) sala.mensajes = sala.mensajes.slice(-35);
-
-    sala.ultimoCambio = Date.now();
-    salasActivas.set(code, sala);
+    sala.mensajes.push({ seq: sala.seq, from: peerId, to: null, msg: { type: 'PLAYER_LEFT', jugadorId, nombre }, ts: Date.now() });
+    if (sala.mensajes.length > 40) sala.mensajes = sala.mensajes.slice(-40);
+    guardarSalaOnline(codigo, sala);
   }
   res.json({ ok: true });
 });
 
 app.patch('/api/salas/:codigo', (req, res) => {
-  const code = normalizeSalaCode(req.params.codigo);
-  const sala = salasActivas.get(code);
+  const codigo = normalizarCodigoSala(req.params.codigo);
+  const sala = leerSalaOnline(codigo);
   const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
   if (sala) {
-    if (typeof body.jugadoresConectados === 'number') {
-      sala.jugadoresConectados = body.jugadoresConectados;
-    }
-    if (typeof body.enPartida === 'boolean') {
-      sala.enPartida = body.enPartida;
-    }
-    sala.ultimoCambio = Date.now();
-    salasActivas.set(code, sala);
+    if (typeof body.jugadoresConectados === 'number') sala.jugadoresConectados = body.jugadoresConectados;
+    if (typeof body.enPartida === 'boolean') sala.enPartida = body.enPartida;
+    guardarSalaOnline(codigo, sala);
   }
-  cleanExpiredRooms();
-  syncPublicSalasFile();
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
   res.json({ ok: true, dbBound: true });
 });
 
 app.delete('/api/salas/:codigo', (req, res) => {
-  const code = normalizeSalaCode(req.params.codigo);
-  salasActivas.delete(code);
-  syncPublicSalasFile();
-  res.setHeader('X-DB-Bound', 'true'); res.setHeader('X-Database-Bound', 'true');
+  eliminarSalaOnline(req.params.codigo);
   res.json({ ok: true, dbBound: true });
 });
 
-async function start() {
+async function iniciarServidor() {
   if (process.env.NODE_ENV === 'production' && fs.existsSync(path.resolve(process.cwd(), 'dist'))) {
     app.use(express.static(path.resolve(process.cwd(), 'dist')));
     app.get('*', (_req, res) => {
@@ -2020,11 +2213,11 @@ async function start() {
     app.use(vite.middlewares);
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server listening on http://0.0.0.0:${PORT}`);
+  app.listen(PUERTO, '0.0.0.0', () => {
+    console.log(`Servidor Muros Locos escuchando en http://0.0.0.0:${PUERTO}`);
   });
 }
 
-start().catch((err) => {
-  console.error('Failed to start server:', err);
+iniciarServidor().catch((err) => {
+  console.error('Fallo al iniciar el servidor:', err);
 });

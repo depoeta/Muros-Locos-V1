@@ -5,14 +5,14 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { bfsCamino, sounds } from '../game/murosLocosEngine';
-import { AccionRegistro, GameState } from '../types/murosLocos';
+import { AccionRegistro, EstadoDeJuego } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
 
 // =========================================================================
 // 1. PLAYER CARDS (Sin botón duplicado de Aspecto — solo queda el global)
 // =========================================================================
 interface PlayerCardsProps {
-  estado: GameState;
+  estado: EstadoDeJuego;
   mostrarDistancia: boolean;
 }
 
@@ -98,7 +98,7 @@ export const PlayerCards: React.FC<PlayerCardsProps> = ({ estado, mostrarDistanc
 // 2. ACTION BAR
 // =========================================================================
 interface ActionBarProps {
-  estado: GameState;
+  estado: EstadoDeJuego;
   onCambiarModo: (modo: 'mover' | 'muro') => void;
   onRotarMuro: () => void;
   onPedirPista: () => void;

@@ -5,17 +5,17 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  AchievementDef,
-  AppSettings,
-  BoardTheme,
-  GameState,
-  HatType,
-  LevelInfo,
-  MatchConfig,
-  ScoreBreakdown,
-  Screen,
-  TorneoState,
-  UserAccount,
+  AjustesDeApp,
+  AvatarTipoDeGorro,
+  UserCuenta,
+  DefLogro,
+  DesglosePuntos,
+  EstadoDeJuego,
+  EstadoTorneo,
+  InfoNivel,
+  ConfigDePartida,
+  PantallaApp,
+  TemaTablero,
 } from './types/murosLocos';
 import {
   calcularDesglosePuntos,
@@ -32,16 +32,18 @@ import {
   actualizarDespuesDePartida,
   cargarAjustes,
   guardarAjustes,
-  guardarUsuarioActual,
+  guardarUserActual,
   iniciarEscuchaNube,
-  NetworkDiagnostic,
+  DiagnosticoDeRed,
   obtenerDiagnosticoRed,
-  obtenerUsuarioActual,
+  obteneruserActual,
   penalizarAbandono,
   pingServidor,
   sincronizarConNube,
   suscribirCambiosNube,
   suscribirDiagnostico,
+  suscribirNotificacionesStaff,
+  suscribirSesionRevocada,
 } from './game/storage';
 import { onlineService } from './game/onlineService';
 import { ConfigScreen, MenuScreen } from './components/MenuScreens';
@@ -67,7 +69,7 @@ function leerSalaDeUrl(): string | null {
     const raw = new URLSearchParams(window.location.search).get('sala');
     if (!raw) return null;
     const clean = raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-    return clean.length >= 4 ? clean.slice(0, 8) : null;
+    return clean.length >= 3 ? clean.slice(0, 10) : null;
   } catch {
     return null;
   }
@@ -90,27 +92,27 @@ function limpiarSalaDeUrl(): void {
 
 export const App: React.FC = () => {
   const [codigoSalaUrl, setCodigoSalaUrl] = useState<string | null>(() => leerSalaDeUrl());
-  const [screen, setScreen] = useState<Screen>(() =>
+  const [screen, setScreen] = useState<PantallaApp>(() =>
     leerSalaDeUrl() ? 'online_lobby' : 'menu'
   );
   const [esTorneoConfig, setEsTorneoConfig] = useState<boolean>(false);
-  const [usuarioActual, setUsuarioActual] = useState<UserAccount | null>(() =>
-    obtenerUsuarioActual()
+  const [userActual, setuserActual] = useState<UserCuenta | null>(() =>
+    obteneruserActual()
   );
-  const [ajustes, setAjustes] = useState<AppSettings>(() => cargarAjustes());
+  const [ajustes, setAjustes] = useState<AjustesDeApp>(() => cargarAjustes());
   const [modalAspectoAbierto, setModalAspectoAbierto] = useState(false);
 
   // Diagnóstico en tiempo real de conexión a la Database (D1) (aviso permanente en todo momento)
-  const [diagRed, setDiagRed] = useState<NetworkDiagnostic>(() => obtenerDiagnosticoRed());
+  const [diagRed, setDiagRed] = useState<DiagnosticoDeRed>(() => obtenerDiagnosticoRed());
   const [reconectandoDb, setReconectandoDb] = useState(false);
   const prevDbRef = useRef<boolean>(true);
 
   // Estado de partida
-  const [estado, setEstado] = useState<GameState | null>(null);
-  const [desgloses, setDesgloses] = useState<Map<number, ScoreBreakdown>>(new Map());
-  const [nuevosLogros, setNuevosLogros] = useState<Map<string, AchievementDef[]>>(new Map());
+  const [estado, setEstado] = useState<EstadoDeJuego | null>(null);
+  const [desgloses, setDesgloses] = useState<Map<number, DesglosePuntos>>(new Map());
+  const [nuevosLogros, setNuevosLogros] = useState<Map<string, DefLogro[]>>(new Map());
   const [subidasNivel, setSubidasNivel] = useState<
-    Map<string, { anterior: LevelInfo; nuevo: LevelInfo }>
+    Map<string, { anterior: InfoNivel; nuevo: InfoNivel }>
   >(new Map());
 
   // Modales
@@ -231,29 +233,29 @@ export const App: React.FC = () => {
     }
   };
 
-  const usuarioActualRef = useRef<UserAccount | null>(usuarioActual);
-  usuarioActualRef.current = usuarioActual;
+  const userActualRef = useRef<UserCuenta | null>(userActual);
+  userActualRef.current = userActual;
 
   const modalActivoRef = useRef<ModalType>(modalActivo);
   modalActivoRef.current = modalActivo;
 
-  // Sincronización inicial y escucha ligera cada 90s (pausada en segundo plano) contra la Database
+  // Sincronización inicial, sesiones revocadas, notificaciones staff y escucha ligera cada 90s contra la Database
   useEffect(() => {
     sincronizarConNube(false).catch(() => {});
     const stopListener = iniciarEscuchaNube(90000);
     const unsubs = suscribirCambiosNube(({ cuentas }) => {
-      const current = usuarioActualRef.current;
+      const current = userActualRef.current;
       if (current && current.id !== 'admin') {
         if (!cuentas || Object.keys(cuentas).length === 0) {
           return;
         }
         const fresh = cuentas[current.id];
         if (!fresh) {
-          // Solo desconectar si la base de datos descargada contiene usuarios y confirma que este fue borrado
+          // Solo desconectar si la base de datos descargada contiene users y confirma que este fue borrado
           const otrasCuentas = Object.keys(cuentas).filter((k) => k !== 'admin');
           if (otrasCuentas.length > 0) {
-            setUsuarioActual(null);
-            guardarUsuarioActual(null);
+            setuserActual(null);
+            guardarUserActual(null);
             if (modalActivoRef.current === 'admin') {
               setModalActivo(null);
               setModalPrevio(null);
@@ -267,17 +269,23 @@ export const App: React.FC = () => {
           fresh.nombre !== current.nombre ||
           fresh.avatarHat !== current.avatarHat ||
           fresh.avatarColor !== current.avatarColor ||
-          fresh.temaTablero !== current.temaTablero
+          fresh.avatarRopa !== current.avatarRopa ||
+          fresh.avatarRopaColor !== current.avatarRopaColor ||
+          fresh.avatarAura !== current.avatarAura ||
+          fresh.temaTablero !== current.temaTablero ||
+          (fresh.inventario?.personajes?.length || 0) !== (current.inventario?.personajes?.length || 0)
         ) {
-          const perdioAdmin = current.rol === 'admin' && fresh.rol !== 'admin';
-          setUsuarioActual(fresh);
-          guardarUsuarioActual(fresh);
-          if (perdioAdmin) {
+          const teniaStaff = current.rol === 'admin' || current.rol === 'mod' || current.rol === 'dev';
+          const mantieneStaff = fresh.rol === 'admin' || fresh.rol === 'mod' || fresh.rol === 'dev';
+          const perdioStaff = teniaStaff && !mantieneStaff;
+          setuserActual(fresh);
+          guardarUserActual(fresh);
+          if (perdioStaff) {
             if (modalActivoRef.current === 'admin') {
               setModalActivo(null);
               setModalPrevio(null);
             }
-            showToast('⛔ Tus permisos de administrador fueron revocados');
+            showToast('⛔ Tus permisos de Staff fueron revocados');
           } else {
             showToast('☁️ Perfil sincronizado con la Database');
           }
@@ -285,9 +293,29 @@ export const App: React.FC = () => {
       }
     });
 
+    const unsubRevocada = suscribirSesionRevocada((motivo) => {
+      setuserActual(null);
+      if (modalActivoRef.current === 'admin') {
+        setModalActivo(null);
+        setModalPrevio(null);
+      }
+      sounds.playError();
+      showToast(`🔒 ${motivo}`);
+    });
+
+    const unsubStaffNotif = suscribirNotificacionesStaff((notifs) => {
+      const ultima = notifs[notifs.length - 1];
+      if (ultima) {
+        const msgTexto = ultima.detalle || ultima.mensaje || ultima.accion || 'Actividad Staff';
+        showToast(`🔔 ${ultima.actorNombre}: ${msgTexto}`);
+      }
+    });
+
     return () => {
       stopListener();
       unsubs();
+      unsubRevocada();
+      unsubStaffNotif();
     };
   }, [showToast]);
 
@@ -319,7 +347,7 @@ export const App: React.FC = () => {
           );
           const p = jugadoresClonados[prev.turnoActual];
           const nextTurno = (prev.turnoActual + 1) % prev.n;
-          const timeoutState: GameState = {
+          const timeoutState: EstadoDeJuego = {
             ...prev,
             jugadores: jugadoresClonados,
             turnoActual: nextTurno,
@@ -346,7 +374,7 @@ export const App: React.FC = () => {
   const tiempoPartidaRef = useRef<number>(0);
   tiempoPartidaRef.current = tiempoPartida;
 
-  const estadoRef = useRef<GameState | null>(null);
+  const estadoRef = useRef<EstadoDeJuego | null>(null);
   estadoRef.current = estado;
 
   useEffect(() => {
@@ -363,7 +391,7 @@ export const App: React.FC = () => {
   }, [screen, estado?.terminada]);
 
   // Finalizar partida y calcular recompensas una única vez por partida
-  const finalizarPartida = useCallback((estadoFinal: GameState) => {
+  const finalizarPartida = useCallback((estadoFinal: EstadoDeJuego) => {
     if (partidaContabilizadaRef.current) return;
     partidaContabilizadaRef.current = true;
 
@@ -372,7 +400,7 @@ export const App: React.FC = () => {
 
     sounds.playVictory();
     const matchDesgloses = calcularDesglosesPuntuacion(estadoFinal);
-    let estadoParaGuardar: GameState = estadoFinal;
+    let estadoParaGuardar: EstadoDeJuego = estadoFinal;
 
     // Si pertenece a un Torneo, contabilizar de inmediato los puntos de ESTA ronda (incluida la Ronda 1)
     // y sumar +10 puntos extra al campeón global al concluir la última ronda.
@@ -418,7 +446,7 @@ export const App: React.FC = () => {
         }
       }
 
-      const updatedTorneo: TorneoState = {
+      const updatedTorneo: EstadoTorneo = {
         ...t,
         puntosAcumulados: nuevosAcumulados,
         victoriasAcumuladas: nuevasVictorias,
@@ -451,9 +479,9 @@ export const App: React.FC = () => {
     setNuevosLogros(res.nuevosLogrosPorJugador);
     setSubidasNivel(res.subidasNivelPorJugador);
 
-    const refreshedUser = obtenerUsuarioActual();
+    const refreshedUser = obteneruserActual();
     if (refreshedUser) {
-      setUsuarioActual(refreshedUser);
+      setuserActual(refreshedUser);
     }
 
     setMostrarBarraPostPartida(false);
@@ -490,17 +518,17 @@ export const App: React.FC = () => {
       if (nuevoEstado.terminada) {
         finalizarPartida(nuevoEstado);
       }
-    }, 3000);
+    }, 1300);
 
     return () => {
       clearTimeout(timeout);
     };
   }, [screen, estado?.turnoActual, estado?.turnosTotales, estado?.terminada, finalizarPartida]);
 
-  // Tema activo de tablero: config de partida -> terreno predeterminado del usuario -> ajustes
-  const temaTableroActivo: BoardTheme =
+  // Tema activo de tablero: config de partida -> terreno predeterminado del user -> ajustes
+  const temaTableroActivo: TemaTablero =
     estado?.config.temaTablero ||
-    usuarioActual?.temaTablero ||
+    userActual?.temaTablero ||
     ajustes.temaTablero ||
     'madera';
 
@@ -563,7 +591,7 @@ export const App: React.FC = () => {
 
       showToast(motivoToast);
       const miId = actual.miJugadorId ?? 0;
-      const ganadorEstado: GameState = {
+      const ganadorEstado: EstadoDeJuego = {
         ...actual,
         terminada: true,
         ganador: miId,
@@ -836,7 +864,7 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleIniciarPartida = (config: MatchConfig) => {
+  const handleIniciarPartida = (config: ConfigDePartida) => {
     partidaContabilizadaRef.current = false;
     resetEstadoRevanchaOnline();
     setDesconexionSegundos(null);
@@ -858,7 +886,7 @@ export const App: React.FC = () => {
 
   const handlePartidaSorpresa = () => {
     const dificultades = ['bot_facil', 'bot_normal', 'bot_dificil'] as const;
-    const temas: BoardTheme[] = ['madera', 'neon', 'hielo', 'lava'];
+    const temas: TemaTablero[] = ['madera', 'neon', 'hielo', 'lava'];
     const botTipo = dificultades[Math.floor(Math.random() * dificultades.length)];
     const temaAzar = temas[Math.floor(Math.random() * temas.length)];
     const botNombre =
@@ -868,17 +896,18 @@ export const App: React.FC = () => {
         ? 'Bot Astuto'
         : 'Bot Curioso';
 
-    const configSorpresa: MatchConfig = {
+    const configSorpresa: ConfigDePartida = {
       numJugadores: 2,
       jugadores: [
         {
-          nombre: usuarioActual?.nombre || 'Jugador 1',
+          cuentaId: userActual?.id,
+          nombre: userActual?.nombre || 'Jugador 1',
           tipo: 'humano',
-          color: usuarioActual?.avatarColor || '#ff6b6b',
-          hat: usuarioActual?.avatarHat || 'corona',
-          ropa: usuarioActual?.avatarRopa || 'ninguna',
-          ropaColor: usuarioActual?.avatarRopaColor,
-          aura: usuarioActual?.avatarAura || 'ninguna',
+          color: userActual?.avatarColor || '#ff6b6b',
+          hat: userActual?.avatarHat || 'corona',
+          ropa: userActual?.avatarRopa || 'ninguna',
+          ropaColor: userActual?.avatarRopaColor,
+          aura: userActual?.avatarAura || 'ninguna',
         },
         {
           nombre: botNombre,
@@ -917,31 +946,32 @@ export const App: React.FC = () => {
     setDesconexionSegundos(null);
 
     const defaultColors = ['#ff6b6b', '#4dabf7', '#ffd43b', '#51cf66'];
-    const defaultHats: HatType[] = ['corona', 'pompon', 'antena', 'brote'];
+    const defaultHats: AvatarTipoDeGorro[] = ['corona', 'pompon', 'antena', 'brote'];
 
     const configJugadores = Array.from({ length: num }).map((_, idx) => {
       const p = lobby[idx];
       const isMe = idx === myId;
       return {
+        cuentaId: p?.cuentaId ?? (isMe ? userActual?.id : undefined),
         nombre: p ? p.nombre : idx === 0 ? 'Anfitrión' : `Jugador ${idx + 1}`,
         tipo: 'humano' as const,
         color: p ? p.color : defaultColors[idx] || '#ff6b6b',
         hat: p ? p.hat : defaultHats[idx] || 'corona',
-        ropa: isMe ? usuarioActual?.avatarRopa : undefined,
-        ropaColor: isMe ? usuarioActual?.avatarRopaColor : undefined,
-        aura: isMe ? usuarioActual?.avatarAura : undefined,
+        ropa: p?.ropa ?? (isMe ? userActual?.avatarRopa : 'ninguna'),
+        ropaColor: p?.ropaColor ?? (isMe ? userActual?.avatarRopaColor : undefined),
+        aura: p?.aura ?? (isMe ? userActual?.avatarAura : 'ninguna'),
       };
     });
 
-    const config: MatchConfig = {
+    const config: ConfigDePartida = {
       numJugadores: num,
       jugadores: configJugadores,
       empiezaAlAzar: false,
       permitirDeshacer: false,
       permitirPistas: false,
       modoConTiempo: true,
-      segundosPorTurno: 30,
-      temaTablero: usuarioActual?.temaTablero || ajustes.temaTablero || 'madera',
+      segundosPorTurno: 45,
+      temaTablero: userActual?.temaTablero || ajustes.temaTablero || 'madera',
       rotationMode: false,
     };
 
@@ -1057,7 +1087,7 @@ export const App: React.FC = () => {
       return;
     }
 
-    const nextTorneo: TorneoState = {
+    const nextTorneo: EstadoTorneo = {
       ...t,
       rondaActual: t.rondaActual + 1,
       terminado: false,
@@ -1089,7 +1119,7 @@ export const App: React.FC = () => {
     if (estado && !estado.terminada) {
       const curPlayer = estado.jugadores[estado.turnoActual];
       if (curPlayer.tipo === 'humano') {
-        penalizarAbandono(curPlayer.nombre, 5);
+        penalizarAbandono(curPlayer.nombre, 5, curPlayer.cuentaId);
       }
     }
     if (estado?.modoOnline) {
@@ -1212,7 +1242,7 @@ export const App: React.FC = () => {
       {/* RUTAS DE PANTALLA */}
       {screen === 'menu' && (
         <MenuScreen
-          usuarioActual={usuarioActual}
+          userActual={userActual}
           onAbrirPerfil={() => setModalActivo('perfil')}
           onAbrirAdmin={() => setModalActivo('admin')}
           onIniciarPartida={() => {
@@ -1236,12 +1266,12 @@ export const App: React.FC = () => {
         <ConfigScreen
           ajustes={ajustes}
           esTorneoInicial={esTorneoConfig}
-          usuarioActual={usuarioActual}
+          userActual={userActual}
           onIniciar={handleIniciarPartida}
           onVolver={() => setScreen('menu')}
-          onUsuarioActualizado={(upd) => {
-            setUsuarioActual(upd);
-            guardarUsuarioActual(upd);
+          onuserActualizado={(upd) => {
+            setuserActual(upd);
+            guardarUserActual(upd);
           }}
           onShowToast={showToast}
         />
@@ -1249,7 +1279,7 @@ export const App: React.FC = () => {
 
       {screen === 'online_lobby' && (
         <OnlineLobbyScreen
-          usuarioActual={usuarioActual}
+          userActual={userActual}
           codigoSalaInicial={codigoSalaUrl}
           onConsumirSalaInicial={() => {
             setCodigoSalaUrl(null);
@@ -1445,7 +1475,7 @@ export const App: React.FC = () => {
 
       {modalActivo === 'ranking' && (
         <RankingModal
-          usuarioActual={usuarioActual}
+          userActual={userActual}
           onAbrirPerfil={() => {
             setModalPrevio('ranking');
             setModalActivo('perfil');
@@ -1463,15 +1493,15 @@ export const App: React.FC = () => {
 
       {modalActivo === 'perfil' && (
         <PerfilModal
-          usuarioActual={usuarioActual}
+          userActual={userActual}
           onLoginSuccess={(u) => {
-            setUsuarioActual(u);
-            guardarUsuarioActual(u);
+            setuserActual(u);
+            guardarUserActual(u);
             showToast(`¡Bienvenido, ${u.nombre}!`);
           }}
           onLogout={() => {
-            setUsuarioActual(null);
-            guardarUsuarioActual(null);
+            setuserActual(null);
+            guardarUserActual(null);
             showToast('Sesión cerrada');
           }}
           onAbrirAdmin={() => {
@@ -1487,10 +1517,10 @@ export const App: React.FC = () => {
 
       {modalActivo === 'admin' && (
         <AdminPanelModal
-          usuarioActual={usuarioActual}
-          onUsuarioActualizado={(upd) => {
-            setUsuarioActual(upd);
-            guardarUsuarioActual(upd);
+          userActual={userActual}
+          onuserActualizado={(upd) => {
+            setuserActual(upd);
+            guardarUserActual(upd);
           }}
           onAbrirLogin={() => {
             setModalPrevio(null);
@@ -1552,29 +1582,29 @@ export const App: React.FC = () => {
           personajeActual={{
             hat:
               estado?.jugadores[miJugadorIdx]?.hat ||
-              usuarioActual?.avatarHat ||
+              userActual?.avatarHat ||
               'corona',
             color:
               estado?.jugadores[miJugadorIdx]?.color ||
-              usuarioActual?.avatarColor ||
+              userActual?.avatarColor ||
               '#ff6b6b',
             ropa:
               estado?.jugadores[miJugadorIdx]?.ropa ||
-              usuarioActual?.avatarRopa ||
+              userActual?.avatarRopa ||
               'ninguna',
             ropaColor:
               estado?.jugadores[miJugadorIdx]?.ropaColor ||
-              usuarioActual?.avatarRopaColor,
+              userActual?.avatarRopaColor,
             aura:
               estado?.jugadores[miJugadorIdx]?.aura ||
-              usuarioActual?.avatarAura ||
+              userActual?.avatarAura ||
               'ninguna',
           }}
           temaActual={temaTableroActivo}
-          usuarioActual={usuarioActual}
-          onUsuarioActualizado={(upd) => {
-            setUsuarioActual(upd);
-            guardarUsuarioActual(upd);
+          userActual={userActual}
+          onuserActualizado={(upd) => {
+            setuserActual(upd);
+            guardarUserActual(upd);
           }}
           onShowToast={showToast}
           onAplicar={(nuevoP, nuevoTema) => {

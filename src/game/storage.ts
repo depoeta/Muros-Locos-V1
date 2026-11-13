@@ -1,2354 +1,1996 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import {
-  AchievementDef,
-  AppSettings,
-  BoardTheme,
-  GameState,
-  HatType,
-  LevelInfo,
-  MatchResultRecord,
-  PERSONAJES_REGISTRO,
-  PersonajeColeccionable,
-  RankEntry,
+  AjustesDeApp,
+  AvatarTipoDeAura,
+  AvatarTipoDeGorro,
+  AvatarTipoDeRopa,
+  UserCuenta,
+  DefLogro,
+  DesglosePuntos,
+  EntradaRanking,
+  EstadoDeJuego,
+  InfoNivel,
+  UserInventario,
+  NotificacionStaff,
+  RegDeAvatar,
+  AvatarColeccionable,
+  RespuestaRankingSemanal,
+  UserRol,
   SalaPersonalizada,
-  ScoreBreakdown,
   SolicitudResetRanking,
-  UserAccount,
-  WeeklyBoardData,
-  WeeklyPlayerEntry,
-  WeeklyRankingResponse,
+  TemaTablero,
 } from '../types/murosLocos';
-import { bfsCamino } from './murosLocosEngine';
 
-export const LOGROS_LISTA: AchievementDef[] = [
-  { id: 'primera_vez', titulo: 'Primer paso', descripcion: 'Jugar la primera partida', icono: '👣' },
-  { id: 'primera_victoria', titulo: '¡Victoria!', descripcion: 'Ganar una partida', icono: '🏆' },
-  { id: 'diez_victorias', titulo: 'Imparable', descripcion: '10 victorias conseguidas', icono: '⚡' },
-  { id: 'racha_3', titulo: 'En racha', descripcion: '3 victorias seguidas', icono: '🔥' },
-  { id: 'racha_7', titulo: 'Intocable', descripcion: '7 victorias seguidas', icono: '👑' },
-  { id: 'sin_muros', titulo: 'Corredor puro', descripcion: 'Ganar sin colocar ningún muro', icono: '👟' },
-  { id: 'constructor', titulo: 'Constructor', descripcion: 'Colocar 50 muros en total', icono: '🧱' },
-  { id: 'saltarin', titulo: 'Saltarín', descripcion: '25 saltos en total', icono: '🦘' },
-  { id: 'remontada', titulo: 'De cero a héroe', descripcion: 'Lograr el bono de Remontada', icono: '🏹' },
-  { id: 'ultimo_segundo', titulo: 'Por los pelos', descripcion: 'Ganar con el rival a 1 paso de la meta', icono: '⏱️' },
-  { id: 'bot_dificil', titulo: 'Domador de robots', descripcion: 'Ganar al Bot Difícil', icono: '🤖' },
-  { id: 'partida_limpia', titulo: 'Manos limpias', descripcion: '5 partidas limpias logradas', icono: '✨' },
-  { id: 'cuatro_jugadores', titulo: 'Fiesta total', descripcion: 'Ganar una partida de 4 jugadores', icono: '🎉' },
-  { id: 'rapido', titulo: 'Rayo', descripcion: 'Ganar en 15 acciones o menos', icono: '⚡' },
-  { id: 'maestro_muros', titulo: 'Arquitecto cruel', descripcion: '3 muros maestros en una sola partida', icono: '🏰' },
-  { id: 'mil_puntos', titulo: 'Centenario de élite', descripcion: 'Llegar a 250 puntos totales', icono: '💎' },
-];
+const RANKING_LOCAL_KEY = 'muros_locos_ranking_v2';
+const RANKING_GLOBAL_CACHE_KEY = 'muros_locos_ranking_global_cache_v2';
+const AJUSTES_KEY = 'muros_locos_ajustes_v2';
+const CUENTAS_CACHE_KEY = 'muros_locos_cuentas_cache_v2';
+const SESION_KEY = 'muros_locos_sesion_v2';
+const SESION_TOKEN_KEY = 'muros_locos_token_v2';
+const COLA_OFFLINE_KEY = 'muros_locos_cola_offline_v1';
+const DESBLOQUEOS_LOCAL_KEY = 'muros_locos_desbloqueos_cache_v1';
 
-export type { LevelInfo };
+// ============================================================================
+// DIAGNÓSTICO DE RED Y SINCRONIZACIÓN AUTOMÁTICA D1
+// ============================================================================
 
-export function obtenerNivelYTitulo(puntos: number): LevelInfo {
-  if (puntos < 20) {
-    return { nivel: 1, titulo: 'Novato', minPuntos: 0, maxPuntos: 20, icono: '🥚' };
-  }
-  if (puntos < 50) {
-    return { nivel: 2, titulo: 'Aprendiz de muros', minPuntos: 20, maxPuntos: 50, icono: '🐣' };
-  }
-  if (puntos < 100) {
-    return { nivel: 3, titulo: 'Albañil astuto', minPuntos: 50, maxPuntos: 100, icono: '🧱' };
-  }
-  if (puntos < 180) {
-    return { nivel: 4, titulo: 'Explorador del laberinto', minPuntos: 100, maxPuntos: 180, icono: '🧭' };
-  }
-  if (puntos < 300) {
-    return { nivel: 5, titulo: 'Estratega loco', minPuntos: 180, maxPuntos: 300, icono: '🧠' };
-  }
-  if (puntos < 500) {
-    return { nivel: 6, titulo: 'Maestro de los muros', minPuntos: 300, maxPuntos: 500, icono: '👑' };
-  }
-  return { nivel: 7, titulo: 'Leyenda de Muros Locos', minPuntos: 500, maxPuntos: 1000, icono: '🌟' };
-}
-
-const memoryStore: Record<string, string> = {};
-
-function safeGet(key: string): string | null {
-  try {
-    return typeof window !== 'undefined' ? localStorage.getItem(key) : null;
-  } catch {
-    return memoryStore[key] || null;
-  }
-}
-
-function safeSet(key: string, val: string): boolean {
-  try {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(key, val);
-    }
-    return true;
-  } catch {
-    memoryStore[key] = val;
-    return false;
-  }
-}
-
-function safeRemove(key: string) {
-  try {
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem(key);
-    }
-  } catch {}
-  delete memoryStore[key];
-}
-
-const STORAGE_KEY_RANKING = 'muros_locos_ranking_v1';
-const STORAGE_KEY_RANKING_LOCAL = 'muros_locos_ranking_local_v1';
-const STORAGE_KEY_HISTORY = 'muros_locos_historial_v1';
-const STORAGE_KEY_SETTINGS = 'muros_locos_settings_v1';
-export const STORAGE_KEY_ACCOUNTS = 'muros_locos_accounts_v1';
-export const STORAGE_KEY_CURRENT_USER = 'muros_locos_current_user_v1';
-const STORAGE_KEY_SUPREME_TOKEN = 'muros_locos_supreme_token_v1';
-const STORAGE_KEY_SEMANAL = 'muros_locos_semanal_v1';
-
-let cloudDbConectado: boolean = false;
-let lastCloudSyncTime: number = 0;
-
-export type NetworkDiagnostic = {
-  checkedOnce: boolean;
+export interface DiagnosticoDeRed {
   isOnline: boolean;
   dbConectado: boolean;
-  serverPingMs: number;
-  lastPingTime: number;
-  lastError: string | null;
-  salasCount: number;
-  cuentasCount: number;
-};
+  d1Conectado: boolean;
+  ultimoPingOk: boolean;
+  ultimaSincronizacion: string | null;
+  ultimoError: string | null;
+  serverPingMs: number | null;
+  checkedOnce: boolean;
+  lastUpdate: number;
+}
 
-let currentDiagnostic: NetworkDiagnostic = {
-  checkedOnce: false,
+let redDiag: DiagnosticoDeRed = {
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
-  dbConectado: true,
-  serverPingMs: 0,
-  lastPingTime: Date.now(),
-  lastError: null,
-  salasCount: 0,
-  cuentasCount: 0,
+  dbConectado: false,
+  d1Conectado: false,
+  ultimoPingOk: false,
+  ultimaSincronizacion: null,
+  ultimoError: null,
+  serverPingMs: null,
+  checkedOnce: false,
+  lastUpdate: 0,
 };
 
-const diagnosticListeners = new Set<(d: NetworkDiagnostic) => void>();
-let lastKnownDbUpdate: number = 0;
-let pingIntervalId: any = null;
+const diagListeners = new Set<(diag: DiagnosticoDeRed) => void>();
+const nubeListeners = new Set<
+  (data: { cuentas: Record<string, UserCuenta>; ranking: Record<string, EntradaRanking> }) => void
+>();
+const sesionRevocadaListeners = new Set<(motivo: string) => void>();
+const staffNotifListeners = new Set<(notifs: NotificacionStaff[]) => void>();
+const notifsVistasIds = new Set<string>();
 
-export function obtenerDiagnosticoRed(): NetworkDiagnostic {
-  return { ...currentDiagnostic };
-}
-
-export function suscribirDiagnostico(cb: (d: NetworkDiagnostic) => void): () => void {
-  diagnosticListeners.add(cb);
-  cb({ ...currentDiagnostic });
-  return () => {
-    diagnosticListeners.delete(cb);
-  };
-}
-
-export function reportarDiagnostico(diag: Partial<NetworkDiagnostic>) {
-  currentDiagnostic = { ...currentDiagnostic, ...diag };
-  diagnosticListeners.forEach((l) => {
+function emitDiag() {
+  const snapshot = { ...redDiag };
+  diagListeners.forEach((cb) => {
     try {
-      l({ ...currentDiagnostic });
-    } catch {}
-  });
-}
-
-export function getApiBaseUrl(endpoint: string): string {
-  const clean = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
-  const envUrl = (import.meta as any).env?.VITE_API_URL;
-  if (envUrl && typeof envUrl === 'string' && envUrl.trim().length > 0) {
-    const base = envUrl.trim().replace(/\/+$/, '');
-    return `${base}/${clean}`;
-  }
-  if (typeof window !== 'undefined') {
-    const path = window.location.pathname;
-    if (path.includes('/app/muro')) {
-      return `/app/muro/${clean}`;
-    }
-    return `/${clean}`;
-  }
-  return endpoint;
-}
-
-let inFlightPingPromise: Promise<NetworkDiagnostic> | null = null;
-
-export async function pingServidor(): Promise<NetworkDiagnostic> {
-  if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    cloudDbConectado = false;
-    reportarDiagnostico({
-      checkedOnce: true,
-      isOnline: false,
-      dbConectado: false,
-      lastError: 'Sin conexión a internet (modo sin conexión)',
-    });
-    return obtenerDiagnosticoRed();
-  }
-
-  if (inFlightPingPromise) return inFlightPingPromise;
-
-  inFlightPingPromise = (async () => {
-    const startTime = Date.now();
-    try {
-      const res = await fetch(getApiBaseUrl('/api/ping'), {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-        cache: 'no-store',
-      });
-      const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
-        const pingMs = Math.max(1, Date.now() - startTime);
-        const data = await res.json();
-        const isDb =
-          res.headers.get('X-DB-Bound') === 'true' ||
-          res.headers.get('X-Database-Bound') === 'true' ||
-          Boolean(data.dbBound || data.d1Bound);
-        cloudDbConectado = isDb;
-
-        reportarDiagnostico({
-          checkedOnce: true,
-          isOnline: true,
-          dbConectado: isDb,
-          serverPingMs: pingMs,
-          lastPingTime: Date.now(),
-          lastError: isDb ? null : data.warning || 'Database (D1) no vinculada',
-          salasCount: data.salasCount || 0,
-          cuentasCount: data.cuentasCount || 0,
-        });
-
-        if (isDb && data.lastUpdate && data.lastUpdate !== lastKnownDbUpdate) {
-          lastKnownDbUpdate = data.lastUpdate;
-          await sincronizarConNube(true);
-        }
-      } else {
-        cloudDbConectado = false;
-        reportarDiagnostico({
-          checkedOnce: true,
-          isOnline: false,
-          dbConectado: false,
-          lastError: !contentType.includes('application/json')
-            ? 'API / Worker de Database no detectado en esta ruta'
-            : `Servidor HTTP ${res.status}`,
-        });
-      }
-    } catch (err: any) {
-      cloudDbConectado = false;
-      reportarDiagnostico({
-        checkedOnce: true,
-        isOnline: false,
-        dbConectado: false,
-        lastError: err?.message || 'Sin conexión con el servidor / Database (D1)',
-      });
-    } finally {
-      inFlightPingPromise = null;
-    }
-    return obtenerDiagnosticoRed();
-  })();
-
-  return inFlightPingPromise;
-}
-
-let networkEventsBound = false;
-
-export function iniciarHeartbeatGlobal() {
-  if (typeof window === 'undefined' || networkEventsBound) return;
-  networkEventsBound = true;
-
-  window.addEventListener('online', async () => {
-    // Reconexión automática al detectar internet / wifi: sincroniza por sí solo sin pedir acción al usuario
-    try {
-      const diag = await pingServidor();
-      if (diag.dbConectado) {
-        await sincronizarConNube(true);
-      }
-    } catch {}
-  });
-
-  window.addEventListener('offline', () => {
-    cloudDbConectado = false;
-    reportarDiagnostico({
-      checkedOnce: true,
-      isOnline: false,
-      dbConectado: false,
-      lastError: 'Sin conexión a internet (modo sin conexión)',
-    });
-  });
-}
-
-if (typeof window !== 'undefined') {
-  iniciarHeartbeatGlobal();
-}
-
-export function estaDatabaseConectada(): boolean {
-  return cloudDbConectado;
-}
-
-export const STORAGE_KEY_AUTH_TOKEN = 'muros_locos_auth_token';
-
-export function guardarTokenSesion(token: string | null) {
-  if (!token) {
-    safeRemove(STORAGE_KEY_AUTH_TOKEN);
-  } else {
-    safeSet(STORAGE_KEY_AUTH_TOKEN, token);
-  }
-}
-
-export function obtenerTokenSesion(): string {
-  return safeGet(STORAGE_KEY_AUTH_TOKEN) || '';
-}
-
-export function guardarTokenAdminSupremo(creds: { user: string; token: string } | null) {
-  if (!creds) {
-    safeRemove(STORAGE_KEY_SUPREME_TOKEN);
-  } else {
-    safeSet(STORAGE_KEY_SUPREME_TOKEN, JSON.stringify(creds));
-  }
-}
-
-export function obtenerTokenAdminSupremo(): { user: string; token: string } | null {
-  const raw = safeGet(STORAGE_KEY_SUPREME_TOKEN);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && parsed.user && parsed.token) return parsed;
-  } catch {}
-  return null;
-}
-
-interface DatabaseWriteOptions {
-  asAdmin?: boolean;
-  selfDelete?: { id: string; clave: string };
-  registerId?: string;
-}
-
-async function enviarJsonADatabase(
-  endpoint: string,
-  payload: unknown,
-  options?: DatabaseWriteOptions
-): Promise<boolean> {
-  try {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      return false;
-    }
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const cur = obtenerUsuarioActual();
-    const sup = obtenerTokenAdminSupremo();
-    const authToken = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
-    if (authToken) {
-      headers['Authorization'] = `Bearer ${authToken}`;
-    }
-
-    if (options?.asAdmin) {
-      if (cur?.id === 'admin' && sup) {
-        headers['X-Admin-User'] = sup.user;
-        headers['X-Admin-Token'] = sup.token;
-      } else if (cur && cur.id !== 'admin') {
-        headers['X-Admin-Id'] = cur.id;
-      }
-    }
-
-    if (options?.selfDelete) {
-      headers['X-Self-Delete-Id'] = options.selfDelete.id;
-      headers['X-Self-Delete-Key'] = options.selfDelete.clave;
-    }
-
-    if (options?.registerId) {
-      headers['X-Register-Id'] = options.registerId;
-    }
-
-    const res = await fetch(getApiBaseUrl(endpoint), {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-    });
-    const isBound =
-      res.headers.get('X-DB-Bound') === 'true' ||
-      res.headers.get('X-Database-Bound') === 'true';
-
-    if (res.status === 403 && isBound) {
-      cloudDbConectado = true;
-      reportarDiagnostico({ checkedOnce: true, isOnline: true, dbConectado: true, lastError: null });
-      await sincronizarConNube(true);
-      return false;
-    }
-
-    if (res.ok && isBound) {
-      cloudDbConectado = true;
-      reportarDiagnostico({ checkedOnce: true, isOnline: true, dbConectado: true, lastError: null });
-      return true;
-    }
-    cloudDbConectado = false;
-    reportarDiagnostico({
-      checkedOnce: true,
-      dbConectado: false,
-      lastError: 'No se pudo guardar en la Database (D1 desconectada)',
-    });
-    return false;
-  } catch {
-    cloudDbConectado = false;
-    reportarDiagnostico({
-      checkedOnce: true,
-      isOnline: false,
-      dbConectado: false,
-      lastError: 'Error de red al enviar cambios a la Database (D1)',
-    });
-    return false;
-  }
-}
-
-type CloudChangeListener = (data: {
-  cuentas: Record<string, UserAccount>;
-  ranking: Record<string, RankEntry>;
-}) => void;
-const cloudChangeListeners = new Set<CloudChangeListener>();
-
-export function suscribirCambiosNube(listener: CloudChangeListener): () => void {
-  cloudChangeListeners.add(listener);
-  return () => {
-    cloudChangeListeners.delete(listener);
-  };
-}
-
-function reconciliarYNotificarNube() {
-  const cuentas = cargarCuentas();
-  const ranking = cargarRanking();
-
-  const current = obtenerUsuarioActual();
-  if (current) {
-    const updated = cuentas[current.id];
-    if (!updated) {
-      if (current.id !== 'admin') {
-        cerrarSesion();
-      }
-    } else {
-      const inventarioCambiado =
-        JSON.stringify(updated.inventario || {}) !== JSON.stringify(current.inventario || {});
-      const ropaCambiada =
-        updated.avatarRopa !== current.avatarRopa || updated.avatarRopaColor !== current.avatarRopaColor;
-      const auraCambiada = updated.avatarAura !== current.avatarAura;
-      const aspectoCambiado =
-        updated.avatarHat !== current.avatarHat || updated.avatarColor !== current.avatarColor;
-      const statsCambiadas =
-        updated.rol !== current.rol ||
-        updated.puntos !== current.puntos ||
-        updated.victorias !== current.victorias ||
-        updated.nombre !== current.nombre ||
-        updated.temaTablero !== current.temaTablero;
-
-      if (inventarioCambiado || ropaCambiada || auraCambiada || aspectoCambiado || statsCambiadas) {
-        const merged: UserAccount = {
-          ...current,
-          ...updated,
-          id: current.id,
-          esSupremo: current.id === 'admin' ? true : updated.esSupremo,
-          rol: current.id === 'admin' ? 'dev' : updated.rol,
-          clave: current.id === 'admin' ? '***SUPREMO***' : (current.clave || updated.clave),
-        };
-        guardarUsuarioActual(merged);
-      }
-    }
-  }
-
-  cloudChangeListeners.forEach((l) => {
-    try {
-      l({ cuentas, ranking });
-    } catch (err) {
-      console.error('Error in cloud change listener:', err);
-    }
-  });
-}
-
-let inFlightSyncPromise: Promise<{
-  ok: boolean;
-  dbConectado: boolean;
-  rankingCount: number;
-  cuentasCount: number;
-}> | null = null;
-
-export async function sincronizarConNube(forzar: boolean = false): Promise<{
-  ok: boolean;
-  dbConectado: boolean;
-  rankingCount: number;
-  cuentasCount: number;
-}> {
-  if (inFlightSyncPromise) return inFlightSyncPromise;
-
-  const now = Date.now();
-  if (!forzar && now - lastCloudSyncTime < 10000) {
-    return {
-      ok: cloudDbConectado,
-      dbConectado: cloudDbConectado,
-      rankingCount: Object.keys(cargarRanking()).length,
-      cuentasCount: Object.keys(cargarCuentas()).length,
-    };
-  }
-
-  inFlightSyncPromise = (async () => {
-    try {
-      lastCloudSyncTime = Date.now();
-      let dbRankingOk = false;
-      let dbCuentasOk = false;
-
-      await Promise.all([
-        (async () => {
-          try {
-            const res = await fetch(getApiBaseUrl('/api/ranking'), {
-              method: 'GET',
-              headers: { Accept: 'application/json' },
-              cache: 'no-store',
-            });
-            const ct = res.headers.get('content-type') || '';
-            if (res.ok && ct.includes('application/json')) {
-              const isBound =
-                res.headers.get('X-DB-Bound') === 'true' ||
-                res.headers.get('X-Database-Bound') === 'true';
-              if (isBound) dbRankingOk = true;
-              const cloudData = await res.json();
-              if (cloudData && typeof cloudData === 'object' && !Array.isArray(cloudData) && isBound) {
-                safeSet(STORAGE_KEY_RANKING, JSON.stringify(cloudData));
-              }
-            }
-          } catch (err) {
-            console.warn('Fallo sincronización ranking:', err);
-          }
-        })(),
-        (async () => {
-          try {
-            const res = await fetch(getApiBaseUrl('/api/cuentas'), {
-              method: 'GET',
-              headers: { Accept: 'application/json' },
-              cache: 'no-store',
-            });
-            const ct = res.headers.get('content-type') || '';
-            if (res.ok && ct.includes('application/json')) {
-              const isBound =
-                res.headers.get('X-DB-Bound') === 'true' ||
-                res.headers.get('X-Database-Bound') === 'true';
-              if (isBound) dbCuentasOk = true;
-              const cloudAccounts = await res.json();
-              if (
-                cloudAccounts &&
-                typeof cloudAccounts === 'object' &&
-                !Array.isArray(cloudAccounts) &&
-                isBound
-              ) {
-                safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(cloudAccounts));
-              }
-            }
-          } catch (err) {
-            console.warn('Fallo sincronización cuentas:', err);
-          }
-        })(),
-      ]);
-
-      const anyDbActive = dbRankingOk || dbCuentasOk;
-      cloudDbConectado = anyDbActive;
-      reportarDiagnostico({
-        checkedOnce: true,
-        dbConectado: anyDbActive,
-        isOnline: anyDbActive ? true : currentDiagnostic.isOnline,
-        lastError: anyDbActive ? null : 'Sin conexión activa a la Database',
-      });
-
-      if (anyDbActive) {
-        reconciliarYNotificarNube();
-      }
-
-      return {
-        ok: anyDbActive,
-        dbConectado: cloudDbConectado,
-        rankingCount: Object.keys(cargarRanking()).length,
-        cuentasCount: Object.keys(cargarCuentas()).length,
-      };
-    } finally {
-      inFlightSyncPromise = null;
-    }
-  })();
-
-  return inFlightSyncPromise;
-}
-
-export function iniciarEscuchaNube(intervaloMs: number = 90000): () => void {
-  let isChecking = false;
-  let initialSynced = false;
-
-  const verificar = async () => {
-    // Pausar peticiones si no hay conexión a internet o la pestaña está en segundo plano
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      return;
-    }
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-      return;
-    }
-    if (isChecking) return;
-    isChecking = true;
-    try {
-      const prevTs = lastKnownDbUpdate;
-      const diag = await pingServidor();
-      if (!diag.dbConectado) return;
-
-      // pingServidor() solo descarga cuentas/ranking cuando lastUpdate cambia en Database (D1);
-      // forzamos únicamente la primera sincronización inicial al abrir la página.
-      if (!initialSynced || (prevTs === 0 && lastKnownDbUpdate === 0)) {
-        initialSynced = true;
-        await sincronizarConNube(true);
-      }
+      cb(snapshot);
     } catch {
-      // ignore transient network errors
-    } finally {
-      isChecking = false;
+      // ignorar
     }
-  };
-
-  if (pingIntervalId) clearInterval(pingIntervalId);
-  pingIntervalId = setInterval(verificar, intervaloMs);
-
-  const onVisibilityChange = () => {
-    if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-      verificar();
-    }
-  };
-  if (typeof document !== 'undefined') {
-    document.addEventListener('visibilitychange', onVisibilityChange);
-  }
-
-  verificar();
-  return () => {
-    if (pingIntervalId) {
-      clearInterval(pingIntervalId);
-      pingIntervalId = null;
-    }
-    if (typeof document !== 'undefined') {
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-    }
-  };
-}
-
-export function cargarAjustes(): AppSettings {
-  const def: AppSettings = {
-    sonido: true,
-    animacionesReducidas: false,
-    mostrarDistancia: true,
-    permitirDeshacer: true,
-    permitirPistas: true,
-    modoDaltonico: false,
-    cambiarVistaPorTurno: false,
-    vistaPropiaOnline: true,
-  };
-  const raw = safeGet(STORAGE_KEY_SETTINGS);
-  if (!raw) return def;
-  try {
-    return { ...def, ...JSON.parse(raw) };
-  } catch {
-    return def;
-  }
-}
-
-export function guardarAjustes(settings: AppSettings) {
-  safeSet(STORAGE_KEY_SETTINGS, JSON.stringify(settings));
-}
-
-export function normalizarRankEntry(raw: Partial<RankEntry>, fallbackName: string): RankEntry {
-  const validHat = PERSONAJES_REGISTRO.some((p) => p.id === raw.avatarHat)
-    ? (raw.avatarHat as HatType)
-    : 'corona';
-
-  return {
-    nombre: String(raw.nombre || fallbackName).trim().slice(0, 15),
-    puntosTotales: typeof raw.puntosTotales === 'number' ? Math.max(0, raw.puntosTotales) : 0,
-    partidas: typeof raw.partidas === 'number' ? Math.max(0, raw.partidas) : 0,
-    victorias: typeof raw.victorias === 'number' ? Math.max(0, raw.victorias) : 0,
-    derrotas: typeof raw.derrotas === 'number' ? Math.max(0, raw.derrotas) : 0,
-    empates: typeof raw.empates === 'number' ? Math.max(0, raw.empates) : 0,
-    rachaActual: typeof raw.rachaActual === 'number' ? Math.max(0, raw.rachaActual) : 0,
-    mejorRacha: typeof raw.mejorRacha === 'number' ? Math.max(0, raw.mejorRacha) : 0,
-    murosColocados: typeof raw.murosColocados === 'number' ? Math.max(0, raw.murosColocados) : 0,
-    saltos: typeof raw.saltos === 'number' ? Math.max(0, raw.saltos) : 0,
-    mejorPartida: typeof raw.mejorPartida === 'number' ? Math.max(0, raw.mejorPartida) : 0,
-    partidaMasRapida: typeof raw.partidaMasRapida === 'number' ? raw.partidaMasRapida : 999,
-    partidasLimpias: typeof raw.partidasLimpias === 'number' ? Math.max(0, raw.partidasLimpias) : 0,
-    elo: typeof raw.elo === 'number' ? Math.max(100, Math.round(raw.elo)) : 1000,
-    fechaUltimaPartida:
-      typeof raw.fechaUltimaPartida === 'string' ? raw.fechaUltimaPartida : new Date().toISOString(),
-    logros: Array.isArray(raw.logros) ? raw.logros.filter((x): x is string => typeof x === 'string') : [],
-    avatarColor: typeof raw.avatarColor === 'string' ? raw.avatarColor : '#ff6b6b',
-    avatarHat: validHat,
-  };
-}
-
-export function cargarRanking(): Record<string, RankEntry> {
-  const raw = safeGet(STORAGE_KEY_RANKING);
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return {};
-    const normalized: Record<string, RankEntry> = {};
-    for (const [key, val] of Object.entries(parsed)) {
-      if (val && typeof val === 'object') {
-        normalized[key] = normalizarRankEntry(val as Partial<RankEntry>, key);
-      }
-    }
-    return normalized;
-  } catch {
-    return {};
-  }
-}
-
-export function guardarRanking(ranking: Record<string, RankEntry>) {
-  safeSet(STORAGE_KEY_RANKING, JSON.stringify(ranking));
-  enviarJsonADatabase('/api/ranking', ranking);
-}
-
-export function cargarRankingLocal(): Record<string, RankEntry> {
-  const raw = safeGet(STORAGE_KEY_RANKING_LOCAL);
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return {};
-    const normalized: Record<string, RankEntry> = {};
-    for (const [key, val] of Object.entries(parsed)) {
-      if (val && typeof val === 'object') {
-        normalized[key] = normalizarRankEntry(val as Partial<RankEntry>, key);
-      }
-    }
-    return normalized;
-  } catch {
-    return {};
-  }
-}
-
-export function guardarRankingLocal(ranking: Record<string, RankEntry>) {
-  safeSet(STORAGE_KEY_RANKING_LOCAL, JSON.stringify(ranking));
-}
-
-export function borrarRankingLocal() {
-  safeSet(STORAGE_KEY_RANKING_LOCAL, JSON.stringify({}));
-}
-
-export function actualizarNombreInvitadoLocal(nombreAntiguo: string, nombreNuevo: string): void {
-  const cleanOld = nombreAntiguo.trim().toLowerCase();
-  const cleanNew = nombreNuevo.trim().toLowerCase();
-  if (!cleanNew || cleanOld === cleanNew) return;
-  const local = cargarRankingLocal();
-  if (local[cleanOld]) {
-    const entry = local[cleanOld];
-    entry.nombre = nombreNuevo.trim().slice(0, 15);
-    local[cleanNew] = entry;
-    delete local[cleanOld];
-    guardarRankingLocal(local);
-  }
-}
-
-export function cargarHistorial(): MatchResultRecord[] {
-  const raw = safeGet(STORAGE_KEY_HISTORY);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-export function guardarHistorial(historial: MatchResultRecord[]) {
-  const trimmed = historial.slice(-50);
-  safeSet(STORAGE_KEY_HISTORY, JSON.stringify(trimmed));
-}
-
-function getClientWeekInfo(nowMs = Date.now()) {
-  const d = new Date(nowMs);
-  const utcDay = d.getUTCDay();
-  const diffToMonday = utcDay === 0 ? -6 : 1 - utcDay;
-  const mondayUtc = Date.UTC(
-    d.getUTCFullYear(),
-    d.getUTCMonth(),
-    d.getUTCDate() + diffToMonday,
-    0,
-    0,
-    0,
-    0
-  );
-  const lastMondayUtc = mondayUtc - 7 * 86400000;
-  const nextMondayUtc = mondayUtc + 7 * 86400000;
-  return {
-    mondayUtc,
-    lastMondayUtc,
-    nextMondayUtc,
-    cierraEnMs: Math.max(0, nextMondayUtc - nowMs),
-    semanaActualId: new Date(mondayUtc).toISOString().slice(0, 10),
-    semanaPasadaId: new Date(lastMondayUtc).toISOString().slice(0, 10),
-  };
-}
-
-function construirRankingSemanalFallback(): WeeklyRankingResponse {
-  const w = getClientWeekInfo();
-  const cuentas = cargarCuentas();
-  const ranking = cargarRanking();
-
-  const buildRangeBoard = (semanaId: string, startMs: number, endMs: number): WeeklyBoardData => {
-    const jugadores: Record<string, WeeklyPlayerEntry> = {};
-    for (const acc of Object.values(cuentas)) {
-      if (!acc || !Array.isArray(acc.historialPartidas)) continue;
-      const key = acc.nombre.trim().toLowerCase();
-      for (const h of acc.historialPartidas) {
-        const t = new Date(h.fecha).getTime();
-        if (isNaN(t) || t < startMs || t >= endMs) continue;
-        const cur = jugadores[key] || {
-          nombre: acc.nombre,
-          avatarColor: acc.avatarColor || '#ff6b6b',
-          avatarHat: acc.avatarHat || 'corona',
-          puntos: 0,
-          partidas: 0,
-          victorias: 0,
-          elo: ranking[key]?.elo || acc.elo || 1000,
-          partidasIds: [],
-        };
-        if (cur.partidasIds && cur.partidasIds.includes(h.id)) continue;
-        cur.puntos += Math.max(0, Number(h.puntos) || 0);
-        cur.partidas += 1;
-        if (h.resultado === 'victoria') cur.victorias += 1;
-        cur.partidasIds?.push(h.id);
-        jugadores[key] = cur;
-      }
-    }
-    return { semanaId, jugadores };
-  };
-
-  try {
-    const cachedRaw = safeGet(STORAGE_KEY_SEMANAL);
-    if (cachedRaw) {
-      const cached = JSON.parse(cachedRaw) as WeeklyRankingResponse;
-      if (cached && cached.semanaActualId === w.semanaActualId) {
-        return { ...cached, cierraEnMs: w.cierraEnMs };
-      }
-    }
-  } catch {}
-
-  return {
-    ok: false,
-    d1Bound: false,
-    semanaActualId: w.semanaActualId,
-    semanaPasadaId: w.semanaPasadaId,
-    cierraEnMs: w.cierraEnMs,
-    actual: buildRangeBoard(w.semanaActualId, w.mondayUtc, w.nextMondayUtc),
-    pasada: buildRangeBoard(w.semanaPasadaId, w.lastMondayUtc, w.mondayUtc),
-  };
-}
-
-export async function obtenerRankingSemanalAsync(): Promise<WeeklyRankingResponse> {
-  try {
-    const res = await fetch(getApiBaseUrl('/api/semanal'), {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-      cache: 'no-store',
-    });
-    const ct = res.headers.get('content-type') || '';
-    if (res.ok && ct.includes('application/json')) {
-      const data = (await res.json()) as WeeklyRankingResponse;
-      if (data && data.actual && data.pasada) {
-        safeSet(STORAGE_KEY_SEMANAL, JSON.stringify(data));
-        return data;
-      }
-    }
-  } catch {}
-  return construirRankingSemanalFallback();
-}
-
-export function actualizarDespuesDePartida(
-  estado: GameState,
-  desgloses: Map<number, ScoreBreakdown>,
-  duracionSegundos: number
-): {
-  nuevosLogrosPorJugador: Map<string, AchievementDef[]>;
-  subidasNivelPorJugador: Map<string, { anterior: LevelInfo; nuevo: LevelInfo }>;
-  puntosGanadosPorJugador: Map<string, number>;
-} {
-  const ranking = cargarRanking();
-  const rankingLocal = cargarRankingLocal();
-  const historial = cargarHistorial();
-  const nuevosLogrosMap = new Map<string, AchievementDef[]>();
-  const subidasNivelMap = new Map<string, { anterior: LevelInfo; nuevo: LevelInfo }>();
-  const puntosGanadosMap = new Map<string, number>();
-
-  const sortedPlayers = [...estado.jugadores].sort((a, b) => {
-    if (a.id === estado.ganador) return -1;
-    if (b.id === estado.ganador) return 1;
-    const da = bfsCamino(a, estado.murosH, estado.murosV, undefined, estado.n).distancia;
-    const db = bfsCamino(b, estado.murosH, estado.murosV, undefined, estado.n).distancia;
-    if (da !== db) return da - db;
-    if (b.muros !== a.muros) return b.muros - a.muros;
-    return a.id - b.id;
   });
-
-  const puestoMap = new Map<number, number>();
-  sortedPlayers.forEach((p, idx) => {
-    puestoMap.set(p.id, idx + 1);
-  });
-
-  const matchRecord: MatchResultRecord = {
-    id: `m_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-    fecha: new Date().toISOString(),
-    numJugadores: estado.n,
-    ganadorNombre:
-      estado.ganador !== null && estado.ganador >= 0
-        ? estado.jugadores[estado.ganador].nombre
-        : 'Empate',
-    duracionSegundos,
-    turnosTotales: estado.turnosTotales,
-    puntosPorJugador: [],
-  };
-
-  const cuentas = cargarCuentas();
-  const cuentasPatch: Record<string, UserAccount> = {};
-  const rankingPatch: Record<string, RankEntry> = {};
-  const entradasSemanal: {
-    nombre: string;
-    avatarColor: string;
-    puntos: number;
-    victoria: boolean;
-  }[] = [];
-
-  for (const j of estado.jugadores) {
-    const desglose = desgloses.get(j.id) || { total: 0 };
-    const puntos = desglose.total || 0;
-    const esGanador = estado.ganador === j.id;
-    const puestoReal = puestoMap.get(j.id) || (esGanador ? 1 : 2);
-
-    matchRecord.puntosPorJugador.push({
-      nombre: j.nombre,
-      color: j.color,
-      puntos,
-      puesto: puestoReal,
-      esHumano: j.tipo === 'humano',
-    });
-
-    if (j.tipo !== 'humano') continue;
-
-    const cleanJName = j.nombre.trim().toLowerCase();
-
-    const lKey = cleanJName;
-    const lEntry = rankingLocal[lKey]
-      ? normalizarRankEntry(rankingLocal[lKey], j.nombre)
-      : normalizarRankEntry(
-          {
-            nombre: j.nombre,
-            avatarColor: j.color,
-            avatarHat: j.hat,
-            elo: 1000,
-          },
-          j.nombre
-        );
-
-    lEntry.partidas++;
-    lEntry.murosColocados += j.estadisticas.murosColocados;
-    lEntry.saltos += j.estadisticas.saltos;
-    lEntry.puntosTotales += puntos;
-    lEntry.avatarColor = j.color;
-    lEntry.avatarHat = j.hat;
-    lEntry.fechaUltimaPartida = new Date().toISOString();
-    if (puntos > lEntry.mejorPartida) lEntry.mejorPartida = puntos;
-    if (esGanador) {
-      lEntry.victorias++;
-      lEntry.rachaActual++;
-      lEntry.elo = Math.round(lEntry.elo + 25);
-      if (lEntry.rachaActual > lEntry.mejorRacha) lEntry.mejorRacha = lEntry.rachaActual;
-      if (j.estadisticas.acciones < lEntry.partidaMasRapida) lEntry.partidaMasRapida = j.estadisticas.acciones;
-    } else if (estado.ganador === -1) {
-      lEntry.empates++;
-      lEntry.rachaActual = 0;
-    } else {
-      lEntry.derrotas++;
-      lEntry.rachaActual = 0;
-      lEntry.elo = Math.max(100, Math.round(lEntry.elo - 15));
-    }
-    rankingLocal[lKey] = lEntry;
-    puntosGanadosMap.set(lKey, puntos);
-
-    // SEGURIDAD CRÍTICA: Solo el usuario que tiene su sesión iniciada legítimamente
-    // puede sumar puntos o alterar estadísticas de su cuenta en la nube.
-    // Los invitados quedan registrados únicamente en su ranking local.
-    const cur = obtenerUsuarioActual();
-    const esCuentaDelUsuarioAutenticado = Boolean(
-      cur && cur.id && cur.nombre.trim().toLowerCase() === cleanJName
-    );
-
-    if (!esCuentaDelUsuarioAutenticado) {
-      continue;
-    }
-
-    const matchingAcc = (cur && cuentas[cur.id]) || Object.values(cuentas).find(
-      (acc) => acc.id === cur?.id
-    );
-
-    if (!matchingAcc) continue;
-
-    const key = cleanJName;
-    const entry = ranking[key]
-      ? normalizarRankEntry(ranking[key], j.nombre)
-      : normalizarRankEntry(
-          {
-            nombre: matchingAcc.nombre,
-            avatarColor: matchingAcc.avatarColor || j.color,
-            avatarHat: matchingAcc.avatarHat || j.hat,
-            elo: matchingAcc.elo || 1000,
-          },
-          matchingAcc.nombre
-        );
-
-    const prevLevel = obtenerNivelYTitulo(entry.puntosTotales);
-
-    entry.partidas++;
-    entry.murosColocados += j.estadisticas.murosColocados;
-    entry.saltos += j.estadisticas.saltos;
-    entry.puntosTotales += puntos;
-    entry.fechaUltimaPartida = new Date().toISOString();
-    puntosGanadosMap.set(key, puntos);
-
-    if (puntos > entry.mejorPartida) {
-      entry.mejorPartida = puntos;
-    }
-
-    if (esGanador) {
-      entry.victorias++;
-      entry.rachaActual++;
-      entry.elo = Math.round(entry.elo + 25);
-      if (entry.rachaActual > entry.mejorRacha) {
-        entry.mejorRacha = entry.rachaActual;
-      }
-      if (j.estadisticas.acciones < entry.partidaMasRapida) {
-        entry.partidaMasRapida = j.estadisticas.acciones;
-      }
-    } else if (estado.ganador === -1) {
-      entry.empates++;
-      entry.rachaActual = 0;
-    } else {
-      entry.derrotas++;
-      entry.rachaActual = 0;
-      entry.elo = Math.max(100, Math.round(entry.elo - 15));
-    }
-
-    const newLevel = obtenerNivelYTitulo(entry.puntosTotales);
-    if (newLevel.nivel > prevLevel.nivel) {
-      subidasNivelMap.set(key, { anterior: prevLevel, nuevo: newLevel });
-    }
-
-    const newlyUnlocked: AchievementDef[] = [];
-    const checkLogro = (id: string, cond: boolean) => {
-      if (cond && !entry.logros.includes(id)) {
-        entry.logros.push(id);
-        const def = LOGROS_LISTA.find((l) => l.id === id);
-        if (def) newlyUnlocked.push(def);
-      }
-    };
-
-    const cualquierRivalA1Paso = estado.jugadores.some(
-      (rival) =>
-        rival.id !== j.id &&
-        bfsCamino(rival, estado.murosH, estado.murosV, undefined, estado.n).distancia <= 1
-    );
-
-    const esPartidaLimpiaActual =
-      esGanador &&
-      j.estadisticas.usosDeshacer === 0 &&
-      j.estadisticas.usosPista === 0 &&
-      j.estadisticas.intentosMuroInvalido === 0 &&
-      j.estadisticas.turnosAgotados === 0;
-
-    if (esPartidaLimpiaActual) {
-      entry.partidasLimpias = (entry.partidasLimpias || 0) + 1;
-    }
-
-    checkLogro('primera_vez', entry.partidas >= 1);
-    checkLogro('primera_victoria', entry.victorias >= 1);
-    checkLogro('diez_victorias', entry.victorias >= 10);
-    checkLogro('racha_3', entry.rachaActual >= 3);
-    checkLogro('racha_7', entry.rachaActual >= 7);
-    checkLogro('sin_muros', esGanador && j.estadisticas.murosColocados === 0);
-    checkLogro('constructor', entry.murosColocados >= 50);
-    checkLogro('saltarin', entry.saltos >= 25);
-    checkLogro('remontada', esGanador && j.estadisticas.remontada);
-    checkLogro('ultimo_segundo', esGanador && cualquierRivalA1Paso);
-    checkLogro('bot_dificil', esGanador && estado.jugadores.some((p) => p.tipo === 'bot_dificil'));
-    checkLogro('partida_limpia', entry.partidasLimpias >= 5);
-    checkLogro('cuatro_jugadores', esGanador && estado.n === 4);
-    checkLogro('rapido', esGanador && j.estadisticas.acciones <= 15);
-    checkLogro('maestro_muros', j.estadisticas.murosMaestros >= 3);
-    checkLogro('mil_puntos', entry.puntosTotales >= 250);
-
-    if (newlyUnlocked.length > 0) {
-      nuevosLogrosMap.set(key, newlyUnlocked);
-    }
-
-    ranking[key] = entry;
-
-    matchingAcc.puntos = entry.puntosTotales;
-    matchingAcc.partidas = entry.partidas;
-    matchingAcc.victorias = entry.victorias;
-    matchingAcc.elo = entry.elo;
-    matchingAcc.ultimaConexion = new Date().toISOString();
-
-    if (!matchingAcc.historialPartidas) {
-      matchingAcc.historialPartidas = [];
-    }
-    const rivalesNombres = estado.jugadores
-      .filter((rj) => rj.id !== j.id)
-      .map((rj) => rj.nombre)
-      .join(', ');
-
-    const resultadoJ: 'victoria' | 'derrota' | 'empate' = esGanador
-      ? 'victoria'
-      : estado.ganador === -1
-      ? 'empate'
-      : 'derrota';
-
-    matchingAcc.historialPartidas.unshift({
-      id: matchRecord.id,
-      fecha: matchRecord.fecha,
-      resultado: resultadoJ,
-      puntos,
-      rivales: rivalesNombres || 'Bot',
-      duracionSegundos,
-    });
-    if (matchingAcc.historialPartidas.length > 20) {
-      matchingAcc.historialPartidas = matchingAcc.historialPartidas.slice(0, 20);
-    }
-
-    cuentas[matchingAcc.id] = matchingAcc;
-    cuentasPatch[matchingAcc.id] = matchingAcc;
-    rankingPatch[key] = entry;
-    entradasSemanal.push({
-      nombre: matchingAcc.nombre,
-      avatarColor: matchingAcc.avatarColor || j.color,
-      puntos,
-      victoria: esGanador,
-    });
-
-    if (cur && cur.id === matchingAcc.id) {
-      guardarUsuarioActual(matchingAcc);
-    }
-  }
-
-  guardarRankingLocal(rankingLocal);
-  historial.push(matchRecord);
-  guardarHistorial(historial);
-
-  // Solo contactar con Cloudflare D1 si participó al menos una cuenta registrada (0 peticiones a la Database en modo Invitado)
-  if (Object.keys(cuentasPatch).length > 0) {
-    safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(cuentas));
-    safeSet(STORAGE_KEY_RANKING, JSON.stringify(ranking));
-
-    (async () => {
-      try {
-        const authToken = obtenerTokenSesion();
-        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-        if (authToken) {
-          headers['Authorization'] = `Bearer ${authToken}`;
-        }
-        const res = await fetch(getApiBaseUrl('/api/partida'), {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            matchId: matchRecord.id,
-            fecha: matchRecord.fecha,
-            cuentasPatch,
-            rankingPatch,
-            entradasSemanal,
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json().catch(() => null);
-          if (data && Array.isArray(data.activeAccountIds)) {
-            const cur = obtenerUsuarioActual();
-            if (cur && cur.id !== 'admin' && !data.activeAccountIds.includes(cur.id)) {
-              cerrarSesion();
-              await sincronizarConNube(true);
-            }
-          }
-        }
-      } catch {
-        // Fallback silencioso offline
-      }
-    })();
-  }
-
-  return {
-    nuevosLogrosPorJugador: nuevosLogrosMap,
-    subidasNivelPorJugador: subidasNivelMap,
-    puntosGanadosPorJugador: puntosGanadosMap,
-  };
 }
 
-export function penalizarAbandono(nombre: string, puntosPerdidos: number = 5): { puntosTotales: number } {
-  const cuentas = cargarCuentas();
-  const key = nombre.trim().toLowerCase();
-  const matchingAcc = Object.values(cuentas).find((a) => a.nombre.trim().toLowerCase() === key);
-  if (!matchingAcc) {
-    return { puntosTotales: 0 };
-  }
-
-  const ranking = cargarRanking();
-  const entry = ranking[key]
-    ? normalizarRankEntry(ranking[key], nombre)
-    : normalizarRankEntry({ nombre }, nombre);
-
-  entry.puntosTotales = Math.max(0, entry.puntosTotales - puntosPerdidos);
-  entry.derrotas++;
-  entry.partidas++;
-  entry.rachaActual = 0;
-  entry.elo = Math.max(100, entry.elo - 15);
-  entry.fechaUltimaPartida = new Date().toISOString();
-
-  ranking[key] = entry;
-  matchingAcc.puntos = entry.puntosTotales;
-  matchingAcc.partidas = entry.partidas;
-  matchingAcc.elo = entry.elo;
-  cuentas[matchingAcc.id] = matchingAcc;
-
-  safeSet(STORAGE_KEY_RANKING, JSON.stringify(ranking));
-  safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(cuentas));
-  const cur = obtenerUsuarioActual();
-  if (cur && cur.id === matchingAcc.id) {
-    guardarUsuarioActual(matchingAcc);
-  }
-
-  enviarJsonADatabase('/api/partida', {
-    matchId: `abandono_${Date.now()}`,
-    fecha: entry.fechaUltimaPartida,
-    cuentasPatch: { [matchingAcc.id]: matchingAcc },
-    rankingPatch: { [key]: entry },
-    entradasSemanal: [],
-  }).catch(() => {});
-
-  return { puntosTotales: entry.puntosTotales };
-}
-
-export function exportarDatosJSON(): string {
-  const ranking = cargarRanking();
-  const cuentas = cargarCuentas();
-  const historial = cargarHistorial();
-  const settings = cargarAjustes();
-  return JSON.stringify({ version: 2, ranking, cuentas, historial, settings }, null, 2);
-}
-
-export async function importarDatosJSONAsync(jsonStr: string): Promise<boolean> {
-  try {
-    const data = JSON.parse(jsonStr);
-    if (!data || typeof data !== 'object') return false;
-
-    let importedAnything = false;
-
-    if (data.cuentas && typeof data.cuentas === 'object') {
-      const ok = await enviarJsonADatabase('/api/cuentas', data.cuentas, { asAdmin: true });
-      if (!ok) return false;
-      safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(data.cuentas));
-      importedAnything = true;
-    }
-
-    if (data.ranking && typeof data.ranking === 'object') {
-      const normalized: Record<string, RankEntry> = {};
-      for (const [k, v] of Object.entries(data.ranking)) {
-        if (v && typeof v === 'object') {
-          normalized[k] = normalizarRankEntry(v as Partial<RankEntry>, k);
-        }
-      }
-      const ok = await enviarJsonADatabase('/api/ranking', normalized, { asAdmin: true });
-      if (!ok) return false;
-      safeSet(STORAGE_KEY_RANKING, JSON.stringify(normalized));
-      importedAnything = true;
-    }
-
-    if (Array.isArray(data.historial) && data.historial.length > 0) {
-      guardarHistorial(data.historial);
-      importedAnything = true;
-    }
-
-    if (data.settings && typeof data.settings === 'object') {
-      guardarAjustes(data.settings);
-      importedAnything = true;
-    }
-
-    return importedAnything;
-  } catch {
-    return false;
-  }
-}
-
-// =========================================================================
-// CUENTAS DE USUARIO Y AUTENTICACIÓN UNIFICADA (ADMIN SUPREMO + DELEGADOS)
-// =========================================================================
-
-export function cargarCuentas(): Record<string, UserAccount> {
-  const raw = safeGet(STORAGE_KEY_ACCOUNTS);
-  let accounts: Record<string, UserAccount> = {};
-  if (raw) {
+function emitNube(
+  cuentas: Record<string, UserCuenta>,
+  ranking: Record<string, EntradaRanking>
+) {
+  nubeListeners.forEach((cb) => {
     try {
-      accounts = JSON.parse(raw);
-    } catch {}
-  }
-
-  // Perfil público del Admin Supremo (sin guardar jamás su clave real en texto plano)
-  if (!accounts['admin']) {
-    accounts['admin'] = {
-      id: 'admin',
-      nombre: 'Admin Supremo',
-      clave: '***SUPREMO***',
-      rol: 'admin',
-      esSupremo: true,
-      avatarColor: '#ffd43b',
-      avatarHat: 'corona',
-      temaTablero: 'madera',
-      puntos: 9999,
-      partidas: 100,
-      victorias: 99,
-      elo: 2500,
-      creadoEn: new Date().toISOString(),
-      ultimaConexion: new Date().toISOString(),
-    };
-  } else {
-    accounts['admin'].rol = 'admin';
-    accounts['admin'].esSupremo = true;
-    accounts['admin'].clave = '***SUPREMO***';
-  }
-  return accounts;
-}
-
-export function guardarCuentas(cuentas: Record<string, UserAccount>) {
-  const copy = { ...cuentas };
-  if (copy['admin']) {
-    copy['admin'] = { ...copy['admin'], rol: 'dev', esSupremo: true, clave: '***SUPREMO***' };
-  }
-  safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(copy));
-  enviarJsonADatabase('/api/cuentas', copy);
-}
-
-export function obtenerUsuarioActual(): UserAccount | null {
-  const raw = safeGet(STORAGE_KEY_CURRENT_USER);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as UserAccount;
-    if (parsed.id === 'admin') {
-      // Si es Admin Supremo, necesita tener token de sesión activo
-      if (!obtenerTokenAdminSupremo()) return null;
-      const accounts = cargarCuentas();
-      return { ...(accounts['admin'] || parsed), id: 'admin', rol: 'dev', esSupremo: true };
+      cb({ cuentas, ranking });
+    } catch {
+      // ignorar
     }
-    const accounts = cargarCuentas();
-    return accounts[parsed.id] || parsed;
+  });
+}
+
+function emitSesionRevocada(motivo: string) {
+  sesionRevocadaListeners.forEach((cb) => {
+    try {
+      cb(motivo);
+    } catch {
+      // ignorar
+    }
+  });
+}
+
+function emitNotificacionesStaff(notifs: NotificacionStaff[]) {
+  const nuevas = notifs.filter((n) => n && n.id && !notifsVistasIds.has(n.id));
+  if (nuevas.length === 0) return;
+  nuevas.forEach((n) => notifsVistasIds.add(n.id));
+  staffNotifListeners.forEach((cb) => {
+    try {
+      cb(nuevas);
+    } catch {
+      // ignorar
+    }
+  });
+}
+
+export function obtenerDiagnosticoRed(): DiagnosticoDeRed {
+  return { ...redDiag };
+}
+
+export function suscribirDiagnostico(cb: (diag: DiagnosticoDeRed) => void): () => void {
+  diagListeners.add(cb);
+  cb({ ...redDiag });
+  return () => {
+    diagListeners.delete(cb);
+  };
+}
+
+export function suscribirCambiosNube(
+  cb: (data: { cuentas: Record<string, UserCuenta>; ranking: Record<string, EntradaRanking> }) => void
+): () => void {
+  nubeListeners.add(cb);
+  return () => {
+    nubeListeners.delete(cb);
+  };
+}
+
+export function suscribirSesionRevocada(cb: (motivo: string) => void): () => void {
+  sesionRevocadaListeners.add(cb);
+  return () => {
+    sesionRevocadaListeners.delete(cb);
+  };
+}
+
+export function suscribirNotificacionesStaff(cb: (notifs: NotificacionStaff[]) => void): () => void {
+  staffNotifListeners.add(cb);
+  return () => {
+    staffNotifListeners.delete(cb);
+  };
+}
+
+// ============================================================================
+// TOKEN DE SESIÓN Y CABECERAS DE AUTENTICACIÓN
+// ============================================================================
+
+export function obtenerTokenSesion(): string | null {
+  try {
+    return localStorage.getItem(SESION_TOKEN_KEY);
   } catch {
     return null;
   }
 }
 
-export function guardarUsuarioActual(user: UserAccount | null) {
-  if (!user) {
-    safeRemove(STORAGE_KEY_CURRENT_USER);
-  } else {
-    safeSet(STORAGE_KEY_CURRENT_USER, JSON.stringify(user));
+function guardarTokenSesion(token: string | null) {
+  try {
+    if (token) localStorage.setItem(SESION_TOKEN_KEY, token);
+    else localStorage.removeItem(SESION_TOKEN_KEY);
+  } catch {
+    // ignorar
   }
 }
 
-/**
- * Login seguro en servidor (/api/login):
- * - Valida contraseñas con PBKDF2 y migra de forma transparente cuentas antiguas.
- * - Soporta tanto al Admin Supremo como a jugadores y admins delegados.
- * - Guarda el token de sesión Bearer en el almacenamiento seguro del cliente.
- */
+export function getApiBaseUrl(path: string = ''): string {
+  return path;
+}
+
+function crearHeadersAutenticados(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(extra || {}),
+  };
+  const token = obtenerTokenSesion();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const cur = obteneruserActual();
+  if (cur && cur.id) {
+    headers['X-Admin-Id'] = cur.id;
+  }
+  return headers;
+}
+
+// ============================================================================
+// COLA OFFLINE DE PARTIDAS PARA D1
+// ============================================================================
+
+interface ParticipantePartidaPayload {
+  cuentaId?: string;
+  nombre: string;
+  resultado: 'victoria' | 'derrota' | 'empate';
+  puntosGanados: number;
+  movimientos: number;
+  murosColocados: number;
+  saltos: number;
+  partidaLimpia: boolean;
+  rival: string;
+  logros: string[];
+}
+
+interface PartidaD1Payload {
+  partidaId: string;
+  fecha: string;
+  modo: string;
+  duracionSeg: number;
+  participantes: ParticipantePartidaPayload[];
+}
+
+function leerColaOffline(): PartidaD1Payload[] {
+  try {
+    const raw = localStorage.getItem(COLA_OFFLINE_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+function guardarColaOffline(cola: PartidaD1Payload[]) {
+  try {
+    if (cola.length === 0) localStorage.removeItem(COLA_OFFLINE_KEY);
+    else localStorage.setItem(COLA_OFFLINE_KEY, JSON.stringify(cola.slice(-30)));
+  } catch {
+    // ignorar
+  }
+}
+
+function encolarPartidaOffline(payload: PartidaD1Payload) {
+  const cola = leerColaOffline();
+  if (!cola.some((p) => p.partidaId === payload.partidaId)) {
+    cola.push(payload);
+    guardarColaOffline(cola);
+  }
+}
+
+export async function sincronizarColaPartidasOffline(): Promise<number> {
+  const cola = leerColaOffline();
+  if (cola.length === 0) return 0;
+
+  try {
+    const res = await fetch('/api/partidas/sincronizar', {
+      method: 'POST',
+      headers: crearHeadersAutenticados(),
+      body: JSON.stringify({ partidas: cola }),
+    });
+    if (!res.ok) return 0;
+    const data = await res.json();
+    const sincronizadas = new Set<string>(Array.isArray(data?.sincronizadas) ? data.sincronizadas : []);
+    if (sincronizadas.size > 0) {
+      const restantes = cola.filter((p) => !sincronizadas.has(p.partidaId));
+      guardarColaOffline(restantes);
+      await sincronizarConNube(true);
+    }
+    return sincronizadas.size;
+  } catch {
+    return 0;
+  }
+}
+
+// ============================================================================
+// PING AL SERVIDOR Y ESCUCHA EN SEGUNDO PLANO
+// ============================================================================
+
+let syncInFlight: Promise<{ ok: boolean; dbConectado: boolean }> | null = null;
+let lastPingAt = 0;
+
+export async function pingServidor(): Promise<{ ok: boolean; dbConectado: boolean; lastUpdate: number }> {
+  const now = Date.now();
+  if (now - lastPingAt < 2500 && redDiag.checkedOnce) {
+    return {
+      ok: redDiag.ultimoPingOk,
+      dbConectado: redDiag.dbConectado,
+      lastUpdate: redDiag.lastUpdate,
+    };
+  }
+  lastPingAt = now;
+  const t0 = performance.now();
+  try {
+    const token = obtenerTokenSesion();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`/api/ping?_t=${now}`, { cache: 'no-store', headers });
+    const ms = Math.round(performance.now() - t0);
+    if (!res.ok) {
+      redDiag = {
+        ...redDiag,
+        isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+        dbConectado: false,
+        d1Conectado: false,
+        ultimoPingOk: false,
+        ultimoError: `HTTP ${res.status}`,
+        serverPingMs: ms,
+        checkedOnce: true,
+      };
+      emitDiag();
+      return { ok: false, dbConectado: false, lastUpdate: redDiag.lastUpdate };
+    }
+    const data = await res.json();
+    const isDb = Boolean(data?.dbBound ?? data?.d1Bound);
+    const serverLastUpdate = Number(data?.lastUpdate) || 0;
+    const prevLastUpdate = redDiag.lastUpdate;
+
+    if (data?.sesionRevocada === true) {
+      cerrarSesion();
+      emitSesionRevocada('Se inició sesión en otro dispositivo (máximo 2 sesiones por cuenta).');
+    }
+
+    const cur = obteneruserActual();
+    if (
+      cur &&
+      (cur.rol === 'dev' || cur.rol === 'admin' || cur.rol === 'mod' || cur.id === 'admin') &&
+      Array.isArray(data?.notificacionesStaff) &&
+      data.notificacionesStaff.length > 0
+    ) {
+      emitNotificacionesStaff(data.notificacionesStaff);
+    }
+
+    redDiag = {
+      ...redDiag,
+      isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+      dbConectado: isDb,
+      d1Conectado: isDb,
+      ultimoPingOk: true,
+      ultimoError: null,
+      serverPingMs: ms,
+      checkedOnce: true,
+      lastUpdate: serverLastUpdate,
+    };
+    emitDiag();
+
+    if (isDb && leerColaOffline().length > 0) {
+      sincronizarColaPartidasOffline().catch(() => {});
+    }
+
+    if (serverLastUpdate > 0 && serverLastUpdate !== prevLastUpdate) {
+      sincronizarConNube(false).catch(() => {});
+    }
+
+    return { ok: true, dbConectado: isDb, lastUpdate: serverLastUpdate };
+  } catch (err: any) {
+    redDiag = {
+      ...redDiag,
+      isOnline: typeof navigator !== 'undefined' ? navigator.onLine : false,
+      dbConectado: false,
+      d1Conectado: false,
+      ultimoPingOk: false,
+      ultimoError: err?.message || 'Error de conexión con D1',
+      serverPingMs: null,
+      checkedOnce: true,
+    };
+    emitDiag();
+    return { ok: false, dbConectado: false, lastUpdate: redDiag.lastUpdate };
+  }
+}
+
+export function iniciarEscuchaNube(intervalMs: number = 90000): () => void {
+  const interval = setInterval(() => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    pingServidor().catch(() => {});
+  }, intervalMs);
+
+  return () => clearInterval(interval);
+}
+
+// ============================================================================
+// LOGROS Y NIVELES
+// ============================================================================
+
+export const LOGROS_LISTA: DefLogro[] = [
+  { id: 'primera_victoria', titulo: 'Primera Corona', descripcion: 'Gana tu primera partida en Muros Locos', icono: '👑' },
+  { id: 'constructor', titulo: 'Arquitecto Experto', descripcion: 'Coloca al menos 8 muros en una partida ganada', icono: '🧱' },
+  { id: 'saltarin', titulo: 'Saltarín Ágil', descripcion: 'Salta por encima de un rival 2 veces en una partida', icono: '🦘' },
+  { id: 'partida_limpia', titulo: 'Paso Impecable', descripcion: 'Gana una partida completa sin cometer errores', icono: '✨' },
+  { id: 'velocista', titulo: 'Rayo Veloz', descripcion: 'Gana una partida en menos de 20 movimientos', icono: '⚡' },
+  { id: 'bot_dificil', titulo: 'Maestro Estratega', descripcion: 'Vence al Bot Maestro en modo Difícil', icono: '🤖' },
+  { id: 'cuatro_jugadores', titulo: 'Rey de la Arena', descripcion: 'Gana una batalla campal de 4 jugadores', icono: '⚔️' },
+  { id: 'racha_3', titulo: 'Imparable x3', descripcion: 'Consigue una racha de 3 victorias seguidas', icono: '🔥' },
+];
+
+export const NIVELES: InfoNivel[] = [
+  { nivel: 1, titulo: 'Novato', icono: '🥚', minPuntos: 0, siguientePuntos: 100 },
+  { nivel: 2, titulo: 'Aprendiz', icono: '🐥', minPuntos: 100, siguientePuntos: 300 },
+  { nivel: 3, titulo: 'Constructor', icono: '🧱', minPuntos: 300, siguientePuntos: 600 },
+  { nivel: 4, titulo: 'Estratega', icono: '🧭', minPuntos: 600, siguientePuntos: 1000 },
+  { nivel: 5, titulo: 'Maestro', icono: '🛡️', minPuntos: 1000, siguientePuntos: 1800 },
+  { nivel: 6, titulo: 'Leyenda', icono: '👑', minPuntos: 1800, siguientePuntos: null },
+];
+
+export function obtenerNivelYTitulo(puntosTotales: number): InfoNivel {
+  for (let i = NIVELES.length - 1; i >= 0; i--) {
+    if (puntosTotales >= NIVELES[i].minPuntos) {
+      return NIVELES[i];
+    }
+  }
+  return NIVELES[0];
+}
+
+// ============================================================================
+// RANKING LOCAL VS GLOBAL (SEPARADOS ESTRICTAMENTE)
+// ============================================================================
+
+function normalizarEntradaRanking(key: string, raw: any): EntradaRanking | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const nombre = String(raw.nombre || key || 'Jugador').trim().slice(0, 20);
+  if (!nombre) return null;
+
+  return {
+    id: raw.id ? String(raw.id).trim().toLowerCase() : undefined,
+    nombre,
+    puntosTotales: Math.max(0, Math.round(Number(raw.puntosTotales) || 0)),
+    partidas: Math.max(0, Math.round(Number(raw.partidas) || 0)),
+    victorias: Math.max(0, Math.round(Number(raw.victorias) || 0)),
+    derrotas: Math.max(0, Math.round(Number(raw.derrotas) || 0)),
+    empates: Math.max(0, Math.round(Number(raw.empates) || 0)),
+    rachaActual: Math.max(0, Math.round(Number(raw.rachaActual) || 0)),
+    mejorRacha: Math.max(0, Math.round(Number(raw.mejorRacha) || 0)),
+    murosTotales: Math.max(0, Math.round(Number(raw.murosTotales) || 0)),
+    saltosTotales: Math.max(0, Math.round(Number(raw.saltosTotales) || 0)),
+    partidasLimpias: Math.max(0, Math.round(Number(raw.partidasLimpias) || 0)),
+    logros: Array.isArray(raw.logros)
+      ? raw.logros
+      : Array.isArray(raw.logrosDesbloqueados)
+      ? raw.logrosDesbloqueados
+      : [],
+    ultimaPartida: typeof raw.ultimaPartida === 'string' ? raw.ultimaPartida : new Date().toISOString(),
+    avatarColor: typeof raw.avatarColor === 'string' ? raw.avatarColor : '#ff6b6b',
+    avatarHat: (raw.avatarHat as AvatarTipoDeGorro) || 'corona',
+    avatarRopa: (raw.avatarRopa as AvatarTipoDeRopa) || 'ninguna',
+    avatarRopaColor: raw.avatarRopaColor ? String(raw.avatarRopaColor) : undefined,
+    avatarAura: (raw.avatarAura as AvatarTipoDeAura) || 'ninguna',
+  };
+}
+
+export function cargarRankingLocal(): Record<string, EntradaRanking> {
+  try {
+    const raw = localStorage.getItem(RANKING_LOCAL_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    const out: Record<string, EntradaRanking> = {};
+    if (parsed && typeof parsed === 'object') {
+      Object.entries(parsed).forEach(([k, v]) => {
+        const clean = normalizarEntradaRanking(k, v);
+        if (clean) out[k] = clean;
+      });
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function borrarRankingLocal() {
+  try {
+    localStorage.removeItem(RANKING_LOCAL_KEY);
+  } catch {
+    // ignorar
+  }
+}
+
+export function actualizarNombreInvitadoLocal(nombreAnterior: string, nombreNuevo: string) {
+  const cleanOld = nombreAnterior.trim().toLowerCase();
+  const cleanNew = nombreNuevo.trim().slice(0, 15);
+  if (!cleanNew || cleanOld === cleanNew.toLowerCase()) return;
+  const local = cargarRankingLocal();
+  const prev = local[cleanOld];
+  if (prev) {
+    delete local[cleanOld];
+    prev.nombre = cleanNew;
+    local[cleanNew.toLowerCase()] = prev;
+    guardarRankingLocal(local);
+  }
+}
+
+export function cargarRanking(): Record<string, EntradaRanking> {
+  try {
+    const raw = localStorage.getItem(RANKING_GLOBAL_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    const out: Record<string, EntradaRanking> = {};
+    if (parsed && typeof parsed === 'object') {
+      Object.entries(parsed).forEach(([k, v]) => {
+        const clean = normalizarEntradaRanking(k, v);
+        if (clean) out[k] = clean;
+      });
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function guardarRankingLocal(data: Record<string, EntradaRanking>) {
+  try {
+    localStorage.setItem(RANKING_LOCAL_KEY, JSON.stringify(data));
+  } catch {
+    // ignorar
+  }
+}
+
+function guardarRankingGlobalCache(data: Record<string, EntradaRanking>) {
+  try {
+    localStorage.setItem(RANKING_GLOBAL_CACHE_KEY, JSON.stringify(data));
+  } catch {
+    // ignorar
+  }
+}
+
+// ============================================================================
+// SINCRONIZACIÓN DE CUENTAS Y RANKING CON LA DATABASE D1
+// ============================================================================
+
+export async function sincronizarConNube(forzar: boolean = false): Promise<{
+  ok: boolean;
+  dbConectado: boolean;
+  cuentas: Record<string, UserCuenta>;
+  ranking: Record<string, EntradaRanking>;
+}> {
+  if (syncInFlight && !forzar) {
+    const r = await syncInFlight;
+    return { ...r, cuentas: cargarCuentas(), ranking: cargarRanking() };
+  }
+
+  const run = async (): Promise<{ ok: boolean; dbConectado: boolean }> => {
+    const t0 = performance.now();
+    try {
+      const ts = Date.now();
+      const token = obtenerTokenSesion();
+      const [pingRes, cuentasRes, rankingRes] = await Promise.all([
+        fetch(`/api/ping?_t=${ts}`, {
+          cache: 'no-store',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        }),
+        fetch(`/api/cuentas?_t=${ts}`, { cache: 'no-store' }),
+        fetch(`/api/ranking?_t=${ts}`, { cache: 'no-store' }),
+      ]);
+      const ms = Math.round(performance.now() - t0);
+
+      let isDb = false;
+      let serverLastUpdate = redDiag.lastUpdate;
+      if (pingRes.ok) {
+        const pingData = await pingRes.json();
+        isDb = Boolean(pingData?.dbBound ?? pingData?.d1Bound);
+        serverLastUpdate = Number(pingData?.lastUpdate) || serverLastUpdate;
+        if (pingData?.sesionRevocada === true) {
+          cerrarSesion();
+          emitSesionRevocada('Tu sesión expiró al superarse el límite de 2 sesiones activas.');
+        }
+      }
+
+      if (!cuentasRes.ok || !rankingRes.ok) {
+        redDiag = {
+          ...redDiag,
+          isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+          dbConectado: false,
+          d1Conectado: false,
+          ultimoPingOk: false,
+          ultimoError: `Error HTTP cuentas:${cuentasRes.status} ranking:${rankingRes.status}`,
+          serverPingMs: ms,
+          checkedOnce: true,
+        };
+        emitDiag();
+        return { ok: false, dbConectado: false };
+      }
+
+      const rawCuentas = await cuentasRes.json();
+      const rawRanking = await rankingRes.json();
+
+      const cuentasLimpias: Record<string, UserCuenta> = {};
+      if (rawCuentas && typeof rawCuentas === 'object') {
+        Object.entries(rawCuentas).forEach(([idKey, acc]: [string, any]) => {
+          if (!acc || typeof acc !== 'object') return;
+          const isSupremo = idKey === 'admin' || acc.id === 'admin' || Boolean(acc.esSupremo);
+          const { claveHash: _h, claveSalt: _s, claveIter: _i, clave: _c, ...sinSecretos } = acc;
+          cuentasLimpias[idKey] = {
+            ...sinSecretos,
+            id: acc.id || idKey,
+            nombre: acc.nombre || idKey,
+            rol: isSupremo ? 'dev' : (acc.rol || 'jugador'),
+            esSupremo: isSupremo || acc.rol === 'dev',
+            avatarColor: acc.avatarColor || '#ff6b6b',
+            avatarHat: (acc.avatarHat as AvatarTipoDeGorro) || 'corona',
+            avatarRopa: (acc.avatarRopa as AvatarTipoDeRopa) || 'ninguna',
+            avatarRopaColor: acc.avatarRopaColor || undefined,
+            avatarAura: (acc.avatarAura as AvatarTipoDeAura) || 'ninguna',
+            inventario:
+              acc.inventario && typeof acc.inventario === 'object'
+                ? {
+                    personajes: Array.isArray(acc.inventario.personajes) ? acc.inventario.personajes : [],
+                    activoId: acc.inventario.activoId || undefined,
+                  }
+                : { personajes: [] },
+            puntos: Math.max(0, Number(acc.puntos) || 0),
+            partidas: Math.max(0, Number(acc.partidas) || 0),
+            victorias: Math.max(0, Number(acc.victorias) || 0),
+            derrotas: Math.max(0, Number(acc.derrotas) || 0),
+            empates: Math.max(0, Number(acc.empates) || 0),
+            logrosDesbloqueados: Array.isArray(acc.logrosDesbloqueados) ? acc.logrosDesbloqueados : [],
+            temaTablero: acc.temaTablero || 'madera',
+            historialPartidas: Array.isArray(acc.historialPartidas) ? acc.historialPartidas : [],
+            fechaRegistro: acc.fechaRegistro || new Date().toISOString(),
+            ultimaConexion: acc.ultimaConexion || new Date().toISOString(),
+          };
+        });
+      }
+
+      const rankingLimpio: Record<string, EntradaRanking> = {};
+      if (rawRanking && typeof rawRanking === 'object') {
+        Object.entries(rawRanking).forEach(([k, v]) => {
+          const norm = normalizarEntradaRanking(k, v);
+          if (norm) rankingLimpio[k] = norm;
+        });
+      }
+
+      Object.values(cuentasLimpias).forEach((acc) => {
+        if (!acc || acc.id === 'admin') return;
+        const key = acc.id;
+        const existing = rankingLimpio[key];
+        rankingLimpio[key] = {
+          id: acc.id,
+          nombre: acc.nombre,
+          puntosTotales: Math.max(acc.puntos || 0, existing?.puntosTotales || 0),
+          partidas: Math.max(acc.partidas || 0, existing?.partidas || 0),
+          victorias: Math.max(acc.victorias || 0, existing?.victorias || 0),
+          derrotas: Math.max(acc.derrotas || 0, existing?.derrotas || 0),
+          empates: Math.max(acc.empates || 0, existing?.empates || 0),
+          rachaActual: existing?.rachaActual || 0,
+          mejorRacha: existing?.mejorRacha || 0,
+          murosTotales: existing?.murosTotales || 0,
+          saltosTotales: existing?.saltosTotales || 0,
+          partidasLimpias: existing?.partidasLimpias || 0,
+          logros: acc.logrosDesbloqueados || existing?.logros || [],
+          ultimaPartida: acc.ultimaConexion || existing?.ultimaPartida || new Date().toISOString(),
+          avatarColor: acc.avatarColor || existing?.avatarColor || '#ff6b6b',
+          avatarHat: acc.avatarHat || existing?.avatarHat || 'corona',
+          avatarRopa: acc.avatarRopa || existing?.avatarRopa || 'ninguna',
+          avatarRopaColor: acc.avatarRopaColor || existing?.avatarRopaColor || undefined,
+          avatarAura: acc.avatarAura || existing?.avatarAura || 'ninguna',
+        };
+      });
+
+      guardarCuentasCache(cuentasLimpias);
+      guardarRankingGlobalCache(rankingLimpio);
+
+      const cur = obteneruserActual();
+      if (cur && cur.id !== 'admin') {
+        const fresh = cuentasLimpias[cur.id];
+        if (fresh) {
+          guardarUserActual(fresh);
+        }
+      }
+
+      redDiag = {
+        ...redDiag,
+        isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+        dbConectado: isDb,
+        d1Conectado: isDb,
+        ultimoPingOk: true,
+        ultimaSincronizacion: new Date().toLocaleTimeString(),
+        ultimoError: null,
+        serverPingMs: ms,
+        checkedOnce: true,
+        lastUpdate: serverLastUpdate,
+      };
+      emitDiag();
+      emitNube(cuentasLimpias, rankingLimpio);
+
+      return { ok: true, dbConectado: isDb };
+    } catch (err: any) {
+      redDiag = {
+        ...redDiag,
+        isOnline: typeof navigator !== 'undefined' ? navigator.onLine : false,
+        dbConectado: false,
+        d1Conectado: false,
+        ultimoPingOk: false,
+        ultimoError: err?.message || 'Error de red sincronizando D1',
+        serverPingMs: null,
+        checkedOnce: true,
+      };
+      emitDiag();
+      return { ok: false, dbConectado: false };
+    }
+  };
+
+  syncInFlight = run().finally(() => {
+    syncInFlight = null;
+  });
+
+  const result = await syncInFlight;
+  return { ...result, cuentas: cargarCuentas(), ranking: cargarRanking() };
+}
+
+// ============================================================================
+// REGISTRO DE PARTIDAS EN LOCAL + DATABASE D1 (/api/partida)
+// ============================================================================
+
+export function actualizarDespuesDePartida(
+  estadoFinal: EstadoDeJuego,
+  desgloses: Map<number, DesglosePuntos>,
+  duracionSegundos: number = 0
+): {
+  nuevosLogrosPorJugador: Map<string, DefLogro[]>;
+  subidasNivelPorJugador: Map<string, { anterior: InfoNivel; nuevo: InfoNivel }>;
+} {
+  const cuentas = cargarCuentas();
+  const rankingLocal = cargarRankingLocal();
+  const rankingGlobal = cargarRanking();
+  const sesionActiva = obteneruserActual();
+  const nowIso = new Date().toISOString();
+  const partidaId = `pt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+  const nuevosLogrosPorJugador = new Map<string, DefLogro[]>();
+  const subidasNivelPorJugador = new Map<string, { anterior: InfoNivel; nuevo: InfoNivel }>();
+  const participantesD1: ParticipantePartidaPayload[] = [];
+
+  const ganadorId = estadoFinal.ganador;
+  const hayBotDificil = estadoFinal.jugadores.some((j) => j.tipo === 'bot_dificil');
+  const esCuatroJugadores = estadoFinal.n === 4;
+  const modoTexto = estadoFinal.modoOnline
+    ? 'online'
+    : estadoFinal.torneo?.activo
+    ? 'torneo'
+    : 'local';
+
+  for (const j of estadoFinal.jugadores) {
+    if (j.tipo !== 'humano') continue;
+
+    const cleanNombre = j.nombre.trim();
+    const localKey = cleanNombre.toLowerCase();
+    const gano = ganadorId === j.id;
+    const empato = ganadorId === -1 || ganadorId === null;
+    const puntosGanados = desgloses.get(j.id)?.total || 0;
+
+    // 1) Ranking Local del dispositivo
+    const lEntry: EntradaRanking = rankingLocal[localKey] || {
+      nombre: cleanNombre,
+      puntosTotales: 0,
+      partidas: 0,
+      victorias: 0,
+      derrotas: 0,
+      empates: 0,
+      rachaActual: 0,
+      mejorRacha: 0,
+      murosTotales: 0,
+      saltosTotales: 0,
+      partidasLimpias: 0,
+      logros: [],
+      ultimaPartida: nowIso,
+      avatarColor: j.color,
+      avatarHat: j.hat,
+      avatarRopa: j.ropa || 'ninguna',
+      avatarRopaColor: j.ropaColor,
+      avatarAura: j.aura || 'ninguna',
+    };
+
+    const nivelAntesLocal = obtenerNivelYTitulo(lEntry.puntosTotales);
+    lEntry.partidas += 1;
+    lEntry.puntosTotales = Math.max(0, lEntry.puntosTotales + puntosGanados);
+    lEntry.murosTotales += j.estadisticas.murosColocados;
+    lEntry.saltosTotales += j.estadisticas.saltos;
+    if (j.estadisticas.partidaLimpia && gano) lEntry.partidasLimpias += 1;
+
+    if (gano) {
+      lEntry.victorias += 1;
+      lEntry.rachaActual += 1;
+      if (lEntry.rachaActual > lEntry.mejorRacha) lEntry.mejorRacha = lEntry.rachaActual;
+    } else if (empato) {
+      lEntry.empates = (lEntry.empates || 0) + 1;
+    } else {
+      lEntry.derrotas += 1;
+      lEntry.rachaActual = 0;
+    }
+
+    // Calcular logros nuevos
+    const logrosPrevios = new Set(lEntry.logros || []);
+    const nuevosIds: string[] = [];
+    const evalLogro = (id: string, cond: boolean) => {
+      if (cond && !logrosPrevios.has(id)) {
+        logrosPrevios.add(id);
+        nuevosIds.push(id);
+      }
+    };
+    evalLogro('primera_victoria', gano);
+    evalLogro('constructor', gano && j.estadisticas.murosColocados >= 8);
+    evalLogro('saltarin', j.estadisticas.saltos >= 2);
+    evalLogro('partida_limpia', gano && j.estadisticas.partidaLimpia);
+    evalLogro('velocista', gano && j.estadisticas.movimientos < 20);
+    evalLogro('bot_dificil', gano && hayBotDificil);
+    evalLogro('cuatro_jugadores', gano && esCuatroJugadores);
+    evalLogro('racha_3', lEntry.rachaActual >= 3);
+
+    lEntry.logros = Array.from(logrosPrevios);
+    lEntry.ultimaPartida = nowIso;
+    lEntry.avatarColor = j.color;
+    lEntry.avatarHat = j.hat;
+    lEntry.avatarRopa = j.ropa || 'ninguna';
+    lEntry.avatarRopaColor = j.ropaColor;
+    lEntry.avatarAura = j.aura || 'ninguna';
+    rankingLocal[localKey] = lEntry;
+
+    if (nuevosIds.length > 0) {
+      nuevosLogrosPorJugador.set(
+        localKey,
+        LOGROS_LISTA.filter((d) => nuevosIds.includes(d.id))
+      );
+    }
+
+    const nivelDespuesLocal = obtenerNivelYTitulo(lEntry.puntosTotales);
+    if (nivelDespuesLocal.nivel > nivelAntesLocal.nivel) {
+      subidasNivelPorJugador.set(localKey, {
+        anterior: nivelAntesLocal,
+        nuevo: nivelDespuesLocal,
+      });
+    }
+
+    // 2) Identificar cuenta registrada vinculada en D1 (por cuentaId o coincidencia exacta)
+    let matchingAcc: UserCuenta | undefined;
+    if (j.cuentaId && cuentas[j.cuentaId]) {
+      matchingAcc = cuentas[j.cuentaId];
+    } else if (
+      sesionActiva &&
+      (sesionActiva.id === j.cuentaId ||
+        sesionActiva.nombre.trim().toLowerCase() === cleanNombre.toLowerCase())
+    ) {
+      matchingAcc = cuentas[sesionActiva.id] || sesionActiva;
+    } else {
+      matchingAcc = Object.values(cuentas).find(
+        (acc) => acc.nombre.trim().toLowerCase() === cleanNombre.toLowerCase()
+      );
+    }
+
+    if (!matchingAcc) continue;
+
+    const otrosNombres = estadoFinal.jugadores
+      .filter((o) => o.id !== j.id)
+      .map((o) => o.nombre);
+    const rivalLabel = otrosNombres.join(' vs ') || 'Rival';
+    const resultadoLabel: 'victoria' | 'derrota' | 'empate' = gano
+      ? 'victoria'
+      : empato
+      ? 'empate'
+      : 'derrota';
+
+    const entry: EntradaRanking = rankingGlobal[matchingAcc.id] || {
+      id: matchingAcc.id,
+      nombre: matchingAcc.nombre,
+      puntosTotales: matchingAcc.puntos || 0,
+      partidas: matchingAcc.partidas || 0,
+      victorias: matchingAcc.victorias || 0,
+      derrotas: matchingAcc.derrotas || 0,
+      empates: matchingAcc.empates || 0,
+      rachaActual: 0,
+      mejorRacha: 0,
+      murosTotales: 0,
+      saltosTotales: 0,
+      partidasLimpias: 0,
+      logros: matchingAcc.logrosDesbloqueados || [],
+      ultimaPartida: nowIso,
+      avatarColor: matchingAcc.avatarColor,
+      avatarHat: matchingAcc.avatarHat,
+      avatarRopa: matchingAcc.avatarRopa,
+      avatarRopaColor: matchingAcc.avatarRopaColor,
+      avatarAura: matchingAcc.avatarAura,
+    };
+
+    const nivelAntesCloud = obtenerNivelYTitulo(entry.puntosTotales);
+    entry.partidas += 1;
+    entry.puntosTotales = Math.max(0, entry.puntosTotales + puntosGanados);
+    entry.murosTotales += j.estadisticas.murosColocados;
+    entry.saltosTotales += j.estadisticas.saltos;
+    if (j.estadisticas.partidaLimpia && gano) entry.partidasLimpias += 1;
+    if (gano) {
+      entry.victorias += 1;
+      entry.rachaActual += 1;
+      if (entry.rachaActual > entry.mejorRacha) entry.mejorRacha = entry.rachaActual;
+    } else if (empato) {
+      entry.empates = (entry.empates || 0) + 1;
+    } else {
+      entry.derrotas += 1;
+      entry.rachaActual = 0;
+    }
+    entry.ultimaPartida = nowIso;
+    const setLogrosG = new Set([...(entry.logros || []), ...lEntry.logros]);
+    entry.logros = Array.from(setLogrosG);
+    rankingGlobal[matchingAcc.id] = entry;
+
+    const nivelDespuesCloud = obtenerNivelYTitulo(entry.puntosTotales);
+    if (nivelDespuesCloud.nivel > nivelAntesCloud.nivel) {
+      subidasNivelPorJugador.set(localKey, {
+        anterior: nivelAntesCloud,
+        nuevo: nivelDespuesCloud,
+      });
+    }
+
+    const nuevaEntradaHist = {
+      id: partidaId,
+      fecha: nowIso,
+      rival: rivalLabel,
+      resultado: resultadoLabel,
+      puntosGanados,
+      movimientos: j.estadisticas.movimientos,
+      murosColocados: j.estadisticas.murosColocados,
+      saltos: j.estadisticas.saltos,
+      partidaLimpia: j.estadisticas.partidaLimpia,
+      modo: modoTexto,
+      duracionSegundos: Math.round(duracionSegundos),
+      logros: nuevosIds,
+    };
+
+    matchingAcc.puntos = entry.puntosTotales;
+    matchingAcc.partidas = entry.partidas;
+    matchingAcc.victorias = entry.victorias;
+    matchingAcc.derrotas = entry.derrotas;
+    matchingAcc.empates = entry.empates;
+    matchingAcc.logrosDesbloqueados = entry.logros;
+    matchingAcc.ultimaConexion = nowIso;
+    matchingAcc.historialPartidas = [
+      nuevaEntradaHist,
+      ...(matchingAcc.historialPartidas || []),
+    ].slice(0, 50);
+    cuentas[matchingAcc.id] = matchingAcc;
+
+    if (sesionActiva && sesionActiva.id === matchingAcc.id) {
+      guardarUserActual(matchingAcc);
+    }
+
+    participantesD1.push({
+      cuentaId: matchingAcc.id,
+      nombre: matchingAcc.nombre,
+      resultado: resultadoLabel,
+      puntosGanados,
+      movimientos: j.estadisticas.movimientos,
+      murosColocados: j.estadisticas.murosColocados,
+      saltos: j.estadisticas.saltos,
+      partidaLimpia: j.estadisticas.partidaLimpia,
+      rival: rivalLabel,
+      logros: nuevosIds,
+    });
+  }
+
+  guardarRankingLocal(rankingLocal);
+  guardarRankingGlobalCache(rankingGlobal);
+  guardarCuentasCache(cuentas);
+
+  if (participantesD1.length > 0) {
+    const payloadD1: PartidaD1Payload = {
+      partidaId,
+      fecha: nowIso,
+      modo: modoTexto,
+      duracionSeg: Math.max(0, Math.round(duracionSegundos)),
+      participantes: participantesD1,
+    };
+
+    fetch('/api/partida', {
+      method: 'POST',
+      headers: crearHeadersAutenticados(),
+      body: JSON.stringify(payloadD1),
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          encolarPartidaOffline(payloadD1);
+          return;
+        }
+        await sincronizarConNube(true);
+      })
+      .catch(() => {
+        encolarPartidaOffline(payloadD1);
+      });
+  }
+
+  return { nuevosLogrosPorJugador, subidasNivelPorJugador };
+}
+
+export function penalizarAbandono(
+  nombre: string,
+  puntosPerdidos: number = 5,
+  cuentaId?: string
+) {
+  const cleanNombre = nombre.trim();
+  const sesionActiva = obteneruserActual();
+  const cuentas = cargarCuentas();
+  const rankingLocal = cargarRankingLocal();
+  const rankingGlobal = cargarRanking();
+  const nowIso = new Date().toISOString();
+  const partidaId = `pt_ab_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+  const localKey = cleanNombre.toLowerCase();
+  if (rankingLocal[localKey]) {
+    rankingLocal[localKey].partidas += 1;
+    rankingLocal[localKey].derrotas += 1;
+    rankingLocal[localKey].rachaActual = 0;
+    rankingLocal[localKey].puntosTotales = Math.max(0, rankingLocal[localKey].puntosTotales - puntosPerdidos);
+    guardarRankingLocal(rankingLocal);
+  }
+
+  let matchingAcc: UserCuenta | undefined;
+  if (cuentaId && cuentas[cuentaId]) {
+    matchingAcc = cuentas[cuentaId];
+  } else if (
+    sesionActiva &&
+    (sesionActiva.id === cuentaId ||
+      sesionActiva.nombre.trim().toLowerCase() === cleanNombre.toLowerCase())
+  ) {
+    matchingAcc = cuentas[sesionActiva.id] || sesionActiva;
+  } else {
+    matchingAcc = Object.values(cuentas).find(
+      (acc) => acc.nombre.trim().toLowerCase() === cleanNombre.toLowerCase()
+    );
+  }
+
+  if (!matchingAcc) return;
+
+  matchingAcc.partidas = (matchingAcc.partidas || 0) + 1;
+  matchingAcc.derrotas = (matchingAcc.derrotas || 0) + 1;
+  matchingAcc.puntos = Math.max(0, (matchingAcc.puntos || 0) - puntosPerdidos);
+  matchingAcc.ultimaConexion = nowIso;
+  matchingAcc.historialPartidas = [
+    {
+      id: partidaId,
+      fecha: nowIso,
+      rival: 'Abandono de partida',
+      resultado: 'derrota' as const,
+      puntosGanados: 0,
+      movimientos: 0,
+      murosColocados: 0,
+      saltos: 0,
+      partidaLimpia: false,
+      modo: 'abandono',
+      duracionSegundos: 0,
+      logros: [],
+    },
+    ...(matchingAcc.historialPartidas || []),
+  ].slice(0, 50);
+  cuentas[matchingAcc.id] = matchingAcc;
+
+  if (rankingGlobal[matchingAcc.id]) {
+    rankingGlobal[matchingAcc.id].partidas += 1;
+    rankingGlobal[matchingAcc.id].derrotas += 1;
+    rankingGlobal[matchingAcc.id].rachaActual = 0;
+    rankingGlobal[matchingAcc.id].puntosTotales = matchingAcc.puntos;
+    guardarRankingGlobalCache(rankingGlobal);
+  }
+
+  guardarCuentasCache(cuentas);
+  if (sesionActiva && sesionActiva.id === matchingAcc.id) {
+    guardarUserActual(matchingAcc);
+  }
+
+  const payloadD1: PartidaD1Payload = {
+    partidaId,
+    fecha: nowIso,
+    modo: 'abandono',
+    duracionSeg: 0,
+    participantes: [
+      {
+        cuentaId: matchingAcc.id,
+        nombre: matchingAcc.nombre,
+        resultado: 'derrota',
+        puntosGanados: 0,
+        movimientos: 0,
+        murosColocados: 0,
+        saltos: 0,
+        partidaLimpia: false,
+        rival: 'Abandono de partida',
+        logros: [],
+      },
+    ],
+  };
+
+  fetch('/api/partida', {
+    method: 'POST',
+    headers: crearHeadersAutenticados(),
+    body: JSON.stringify(payloadD1),
+  })
+    .then(async (res) => {
+      if (!res.ok) encolarPartidaOffline(payloadD1);
+      else await sincronizarConNube(true);
+    })
+    .catch(() => {
+      encolarPartidaOffline(payloadD1);
+    });
+}
+
+// ============================================================================
+// AJUSTES LOCALES DE LA APLICACIÓN
+// ============================================================================
+
+export function cargarAjustes(): AjustesDeApp {
+  try {
+    const raw = localStorage.getItem(AJUSTES_KEY);
+    if (!raw) {
+      return {
+        sonido: true,
+        mostrarDistancia: true,
+        mostrarCoordenadas: true,
+        modoDaltonico: false,
+        animacionesReducidas: false,
+        permitirDeshacer: true,
+        permitirPistas: true,
+        temaTablero: 'madera',
+        cambiarVistaPorTurno: false,
+      };
+    }
+    const parsed = JSON.parse(raw);
+    return {
+      sonido: parsed.sonido !== false,
+      mostrarDistancia: parsed.mostrarDistancia !== false,
+      mostrarCoordenadas: parsed.mostrarCoordenadas !== false,
+      modoDaltonico: Boolean(parsed.modoDaltonico),
+      animacionesReducidas: Boolean(parsed.animacionesReducidas),
+      permitirDeshacer: parsed.permitirDeshacer !== false,
+      permitirPistas: parsed.permitirPistas !== false,
+      temaTablero: (parsed.temaTablero as TemaTablero) || 'madera',
+      cambiarVistaPorTurno: Boolean(parsed.cambiarVistaPorTurno),
+    };
+  } catch {
+    return {
+      sonido: true,
+      mostrarDistancia: true,
+      mostrarCoordenadas: true,
+      modoDaltonico: false,
+      animacionesReducidas: false,
+      permitirDeshacer: true,
+      permitirPistas: true,
+      temaTablero: 'madera',
+      cambiarVistaPorTurno: false,
+    };
+  }
+}
+
+export function guardarAjustes(ajustes: AjustesDeApp) {
+  try {
+    localStorage.setItem(AJUSTES_KEY, JSON.stringify(ajustes));
+  } catch {
+    // ignorar
+  }
+}
+
+// ============================================================================
+// RESPALDO EXPORTACIÓN / IMPORTACIÓN LOCAL
+// ============================================================================
+
+export function exportarDatosJSON(): string {
+  return JSON.stringify(
+    {
+      rankingLocal: cargarRankingLocal(),
+      ajustes: cargarAjustes(),
+      fechaExportacion: new Date().toISOString(),
+    },
+    null,
+    2
+  );
+}
+
+export async function importarDatosJSONAsync(jsonString: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const data = JSON.parse(jsonString);
+    if (data.rankingLocal && typeof data.rankingLocal === 'object') {
+      guardarRankingLocal(data.rankingLocal);
+    }
+    if (data.ajustes && typeof data.ajustes === 'object') {
+      guardarAjustes(data.ajustes);
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'El archivo JSON no tiene un formato válido.' };
+  }
+}
+
+// ============================================================================
+// GESTIÓN DE CUENTAS Y SESIONES CON DATABASE D1
+// ============================================================================
+
+export function cargarCuentas(): Record<string, UserCuenta> {
+  let out: Record<string, UserCuenta> = {};
+  try {
+    const raw = localStorage.getItem(CUENTAS_CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        Object.entries(parsed).forEach(([k, v]: [string, any]) => {
+          if (!v || typeof v !== 'object') return;
+          const { clave: _c, claveHash: _h, claveSalt: _s, claveIter: _i, ...sinSecretos } = v;
+          out[k] = sinSecretos as UserCuenta;
+        });
+      }
+    }
+  } catch {
+    out = {};
+  }
+
+  // Perfil reservado del Dev Supremo Único (estadísticas reales a 0, sin clave en cliente)
+  const adminPrev = out['admin'];
+  out['admin'] = {
+    id: 'admin',
+    nombre: adminPrev?.nombre || 'Dev Supremo',
+    rol: 'dev',
+    esSupremo: true,
+    avatarColor: adminPrev?.avatarColor || '#ffd43b',
+    avatarHat: adminPrev?.avatarHat || 'corona',
+    avatarRopa: adminPrev?.avatarRopa || 'ninguna',
+    avatarRopaColor: adminPrev?.avatarRopaColor || undefined,
+    avatarAura: adminPrev?.avatarAura || 'ninguna',
+    inventario: adminPrev?.inventario || { personajes: [] },
+    puntos: Number(adminPrev?.puntos) || 0,
+    partidas: Number(adminPrev?.partidas) || 0,
+    victorias: Number(adminPrev?.victorias) || 0,
+    derrotas: Number(adminPrev?.derrotas) || 0,
+    empates: Number(adminPrev?.empates) || 0,
+    logrosDesbloqueados: adminPrev?.logrosDesbloqueados || [],
+    temaTablero: adminPrev?.temaTablero || 'madera',
+    historialPartidas: adminPrev?.historialPartidas || [],
+    fechaRegistro: adminPrev?.fechaRegistro || '2026-01-01T00:00:00.000Z',
+    ultimaConexion: adminPrev?.ultimaConexion || new Date().toISOString(),
+  };
+
+  return out;
+}
+
+function guardarCuentasCache(cuentas: Record<string, UserCuenta>) {
+  try {
+    const limpias: Record<string, UserCuenta> = {};
+    Object.entries(cuentas).forEach(([k, v]) => {
+      if (!v) return;
+      const { clave: _c, ...rest } = v;
+      limpias[k] = rest;
+    });
+    localStorage.setItem(CUENTAS_CACHE_KEY, JSON.stringify(limpias));
+  } catch {
+    // ignorar
+  }
+}
+
+export function obteneruserActual(): UserCuenta | null {
+  try {
+    const raw = localStorage.getItem(SESION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.id) return null;
+    const cuentas = cargarCuentas();
+    if (parsed.id === 'admin') {
+      return {
+        ...cuentas['admin'],
+        ...parsed,
+        id: 'admin',
+        rol: 'dev',
+        esSupremo: true,
+        clave: '',
+      };
+    }
+    return cuentas[parsed.id] || { ...parsed, clave: '' };
+  } catch {
+    return null;
+  }
+}
+
+export function guardarUserActual(user: UserCuenta | null) {
+  try {
+    if (!user) {
+      localStorage.removeItem(SESION_KEY);
+      guardarTokenSesion(null);
+      return;
+    }
+    const { clave: _c, ...userLimpio } = user;
+    if (userLimpio.id === 'admin') {
+      userLimpio.rol = 'dev';
+      userLimpio.esSupremo = true;
+    }
+    localStorage.setItem(SESION_KEY, JSON.stringify(userLimpio));
+  } catch {
+    // ignorar
+  }
+}
+
+export function cerrarSesion() {
+  guardarUserActual(null);
+}
+
 export async function iniciarSesionAsync(
   nombre: string,
   clave: string
-): Promise<{ ok: boolean; error?: string; user?: UserAccount }> {
-  const cleanUser = nombre.trim();
-  const cleanKey = clave.trim();
+): Promise<{ ok: boolean; user?: UserCuenta; error?: string; offline?: boolean }> {
+  const cleanNombre = nombre.trim();
+  const cleanClave = clave.trim();
+  if (!cleanNombre || !cleanClave) {
+    return { ok: false, error: 'Ingresa tu user y contraseña.' };
+  }
 
   try {
-    const res = await fetch(getApiBaseUrl('/api/login'), {
+    const res = await fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ usuario: cleanUser, clave: cleanKey }),
+      body: JSON.stringify({ user: cleanNombre, clave: cleanClave }),
     });
+    const data = await res.json();
 
-    const ct = res.headers.get('content-type') || '';
-    if (ct.includes('application/json')) {
-      const info = await res.json().catch(() => null);
-      if (res.ok && info && info.ok && info.user) {
-        if (info.token) {
-          guardarTokenSesion(info.token);
-        }
-        if (info.isSupremeAdmin) {
-          guardarTokenAdminSupremo({
-            user: cleanUser,
-            token: info.token || cleanKey,
-          });
-        } else {
-          guardarTokenAdminSupremo(null);
-        }
-        guardarUsuarioActual(info.user);
-        await sincronizarConNube(true);
-        return { ok: true, user: info.user };
-      }
-      return { ok: false, error: info?.error || 'Usuario o clave incorrectos.' };
+    if (res.ok && data?.ok && data?.user) {
+      if (data.token) guardarTokenSesion(data.token);
+      const user: UserCuenta = {
+        ...data.user,
+        rol: data.user.id === 'admin' ? 'dev' : (data.user.rol || 'jugador'),
+        esSupremo: Boolean(data.user.id === 'admin' || data.user.esSupremo || data.user.rol === 'dev'),
+      };
+      guardarUserActual(user);
+      const cuentas = cargarCuentas();
+      cuentas[user.id] = user;
+      guardarCuentasCache(cuentas);
+      await sincronizarConNube(true);
+      return { ok: true, user: obteneruserActual() || user };
     }
-    return { ok: false, error: 'Respuesta inesperada del servidor.' };
-  } catch (err: any) {
-    return { ok: false, error: '⚠️ Error de conexión con el servidor: ' + (err?.message || 'Verifica tu red.') };
+
+    return { ok: false, error: data?.error || 'User o contraseña incorrectos.' };
+  } catch {
+    return {
+      ok: false,
+      offline: true,
+      error: 'Sin conexión a la Database D1. Verifica tu red para iniciar sesión.',
+    };
   }
 }
 
-/**
- * Registro de nuevo usuario en servidor (/api/registro):
- * - La contraseña se hashea con PBKDF2 en el servidor y nunca se expone en texto plano.
- * - Inicia sesión inmediatamente emitiendo un token Bearer seguro.
- */
-export async function registrarUsuarioAsync(
+export const autenticarUserAsync = iniciarSesionAsync;
+
+export async function registrarUserAsync(
   nombre: string,
   clave: string,
   avatarColor: string,
-  avatarHat: HatType,
-  temaTablero: BoardTheme = 'madera'
-): Promise<{ ok: boolean; error?: string; user?: UserAccount }> {
-  const cleanName = nombre.trim();
-  const cleanKey = clave.trim();
+  avatarHat: AvatarTipoDeGorro,
+  temaTablero: TemaTablero = 'madera'
+): Promise<{ ok: boolean; user?: UserCuenta; error?: string; offline?: boolean }> {
+  const cleanNombre = nombre.trim();
+  const cleanClave = clave.trim();
 
-  if (cleanName.length < 3 || cleanName.length > 15) {
-    return { ok: false, error: 'El nombre debe tener entre 3 y 15 letras.' };
+  if (cleanNombre.length < 3 || cleanNombre.length > 15) {
+    return { ok: false, error: 'El nombre debe tener entre 3 y 15 caracteres.' };
   }
-  const validChars = /^[a-zA-Z0-9_ñÑáéíóúÁÉÍÓÚ\s]+$/;
-  if (!validChars.test(cleanName)) {
-    return { ok: false, error: 'El nombre solo puede contener letras, números y espacios.' };
+  if (cleanClave.length < 4) {
+    return { ok: false, error: 'La contraseña debe tener al menos 4 caracteres.' };
   }
-  if (cleanKey.length < 4) {
-    return { ok: false, error: 'La clave debe tener al menos 4 caracteres.' };
-  }
-
-  const cleanId = cleanName.toLowerCase().replace(/[^a-z0-9_-]/g, '');
 
   try {
-    const res = await fetch(getApiBaseUrl('/api/registro'), {
+    const res = await fetch('/api/registro', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        id: cleanId,
-        nombre: cleanName,
-        clave: cleanKey,
+        nombre: cleanNombre,
+        clave: cleanClave,
         avatarColor,
         avatarHat,
         temaTablero,
       }),
     });
-
-    const info = await res.json().catch(() => null);
-    if (res.ok && info && info.ok && info.user) {
-      if (info.token) {
-        guardarTokenSesion(info.token);
-      }
-      guardarUsuarioActual(info.user);
-      await sincronizarConNube(true);
-      return { ok: true, user: info.user };
-    }
-    return { ok: false, error: info?.error || 'No se pudo crear la cuenta.' };
-  } catch (err: any) {
-    return { ok: false, error: '⚠️ Error de conexión al registrar: ' + (err?.message || 'Inténtalo de nuevo.') };
-  }
-}
-
-/**
- * Restablecimiento de clave por el Admin Supremo (/api/admin/restablecer-clave)
- */
-export async function restablecerClaveUsuarioAsync(
-  targetId: string
-): Promise<{ ok: boolean; claveTemporal?: string; error?: string }> {
-  try {
-    const token = obtenerTokenSesion();
-    const sup = obtenerTokenAdminSupremo();
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    if (sup) {
-      headers['X-Admin-User'] = sup.user;
-      headers['X-Admin-Token'] = sup.token;
-    }
-    const res = await fetch(getApiBaseUrl('/api/admin/restablecer-clave'), {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ targetId }),
-    });
-    const data = await res.json().catch(() => null);
-    if (res.ok && data?.ok && data.claveTemporal) {
-      return { ok: true, claveTemporal: data.claveTemporal };
-    }
-    return { ok: false, error: data?.error || 'No se pudo restablecer la clave.' };
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'Error de conexión.' };
-  }
-}
-
-export function cerrarSesion() {
-  guardarTokenAdminSupremo(null);
-  guardarTokenSesion(null);
-  guardarUsuarioActual(null);
-}
-
-/**
- * Verifica en tiempo real contra el Worker y Database (D1) si el usuario actual sigue teniendo permisos
- * de administrador (Dev Supremo con su token de login, o Staff con rol 'dev', 'admin' o 'mod').
- * Nunca pide clave al usuario otra vez.
- */
-export async function D1_VerificarAccionAdmin(
-  usuario: UserAccount | null,
-  requiereSupremo: boolean = false
-): Promise<{
-  ok: boolean;
-  esSupremo?: boolean;
-  dbDesconectado?: boolean;
-  /** @deprecated compatibilidad */
-  revocado?: boolean;
-  error?: string;
-}> {
-  if (!usuario) {
-    return { ok: false, error: 'Debes iniciar sesión con tu cuenta de Staff primero.' };
-  }
-
-  try {
-    const supremeCreds = usuario.id === 'admin' ? obtenerTokenAdminSupremo() : null;
-    const tokenSesion = obtenerTokenSesion();
-    const res = await fetch(getApiBaseUrl('/api/admin/verify-action'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(tokenSesion ? { Authorization: `Bearer ${tokenSesion}` } : {}),
-      },
-      body: JSON.stringify({
-        usuarioId: usuario.id,
-        usuarioClave: usuario.id === 'admin' ? undefined : usuario.clave,
-        adminUser: supremeCreds?.user,
-        adminToken: supremeCreds?.token,
-        requiereSupremo,
-      }),
-    });
-
-    const isBound =
-      res.headers.get('X-DB-Bound') === 'true' ||
-      res.headers.get('X-Database-Bound') === 'true';
-    const ct = res.headers.get('content-type') || '';
-
-    if (res.status === 503 || !isBound || !ct.includes('application/json')) {
-      cloudDbConectado = false;
-      reportarDiagnostico({
-        checkedOnce: true,
-        dbConectado: false,
-        lastError: 'Sin conexión a la Database (D1)',
-      });
-      return {
-        ok: false,
-        dbDesconectado: true,
-        error: '⚠️ No hay conexión con la Database (D1). Conéctate para enviar o recibir cambios.',
-      };
-    }
-
     const data = await res.json();
-    if (!res.ok || !data.ok) {
-      if (data.revoked) {
-        await sincronizarConNube(true);
-        const cuentas = cargarCuentas();
-        if (usuario.id === 'admin' || !cuentas[usuario.id]) {
-          cerrarSesion();
-        } else {
-          guardarUsuarioActual(cuentas[usuario.id]);
-        }
-        return {
-          ok: false,
-          revocado: true,
-          error: data.error || '⛔ Tus permisos de administrador fueron revocados en la Database.',
-        };
-      }
-      return {
-        ok: false,
-        error: data.error || 'No tienes permiso para realizar esta acción.',
+
+    if (res.ok && data?.ok && data?.user) {
+      if (data.token) guardarTokenSesion(data.token);
+      const user: UserCuenta = {
+        ...data.user,
+        rol: data.user.rol || 'jugador',
       };
+      guardarUserActual(user);
+      const cuentas = cargarCuentas();
+      cuentas[user.id] = user;
+      guardarCuentasCache(cuentas);
+      await sincronizarConNube(true);
+      return { ok: true, user: obteneruserActual() || user };
     }
 
-    cloudDbConectado = true;
-    reportarDiagnostico({ checkedOnce: true, isOnline: true, dbConectado: true, lastError: null });
-    return { ok: true, esSupremo: Boolean(data.isSupremeAdmin) };
+    return { ok: false, error: data?.error || 'No se pudo completar el registro.' };
   } catch {
-    cloudDbConectado = false;
-    reportarDiagnostico({
-      checkedOnce: true,
-      isOnline: false,
-      dbConectado: false,
-      lastError: 'Error de red con la Database',
-    });
     return {
       ok: false,
-      dbDesconectado: true,
-      error: '⚠️ Sin conexión al servidor / Database (D1). No se pueden enviar cambios.',
+      offline: true,
+      error: 'No se pudo conectar con la Database D1 para crear la cuenta.',
     };
   }
 }
 
-export function actualizarCuentaUsuario(id: string, patch: Partial<UserAccount>): UserAccount | null {
-  const cuentas = cargarCuentas();
-  if (!cuentas[id]) return null;
-  const current = cuentas[id];
-  const updated: UserAccount = {
-    ...current,
-    ...patch,
-    id: current.id,
-    // Jamás sobrescribir el rol desde acciones normales de perfil/aspecto; solo adminActualizarUsuarioAsync puede
-    rol: current.id === 'admin' ? 'admin' : current.rol,
-    clave: current.id === 'admin' ? '***SUPREMO***' : patch.clave || current.clave,
-  };
-  cuentas[id] = updated;
-  guardarCuentas(cuentas);
-  const cur = obtenerUsuarioActual();
-  if (cur && cur.id === id) {
-    guardarUsuarioActual(updated);
-  }
-  const ranking = cargarRanking();
-  const rankKey = updated.nombre.trim().toLowerCase();
-  if (ranking[rankKey]) {
-    if (patch.avatarColor) ranking[rankKey].avatarColor = patch.avatarColor;
-    if (patch.avatarHat) ranking[rankKey].avatarHat = patch.avatarHat;
-    guardarRanking(ranking);
-  }
-  return updated;
-}
-
-export async function actualizarCuentaAsync(usuario: UserAccount): Promise<UserAccount> {
-  const cuentas = cargarCuentas();
-  const current = cuentas[usuario.id] || usuario;
-  const isDevOrAdmin = usuario.id === 'admin' || current.rol === 'admin' || current.rol === 'dev';
-
-  const updated: UserAccount = {
-    ...current,
-    avatarHat: usuario.avatarHat,
-    avatarColor: usuario.avatarColor,
-    avatarRopa: usuario.avatarRopa,
-    avatarRopaColor: usuario.avatarRopaColor,
-    avatarAura: usuario.avatarAura,
-    inventario: usuario.inventario || current.inventario,
-    temaTablero: usuario.temaTablero || current.temaTablero,
-    id: current.id,
-    rol: current.id === 'admin' ? 'dev' : current.rol,
-    clave: current.id === 'admin' ? '***SUPREMO***' : (current.clave || usuario.clave),
-  };
-
-  cuentas[usuario.id] = updated;
-  safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(cuentas));
-
-  const cur = obtenerUsuarioActual();
-  if (cur && cur.id === usuario.id) {
-    guardarUsuarioActual(updated);
+export async function D1_VerificarAccionAdmin(
+  user: UserCuenta | null,
+  requiereSupremo: boolean = false
+): Promise<{
+  ok: boolean;
+  revocado?: boolean;
+  error?: string;
+  rolActual?: UserRol;
+}> {
+  if (!user) {
+    return { ok: false, error: 'Debes iniciar sesión como Staff.' };
   }
 
-  const ranking = cargarRanking();
-  const rankKey = updated.nombre.trim().toLowerCase();
-  if (ranking[rankKey]) {
-    if (updated.avatarColor) ranking[rankKey].avatarColor = updated.avatarColor;
-    if (updated.avatarHat) ranking[rankKey].avatarHat = updated.avatarHat;
-    safeSet(STORAGE_KEY_RANKING, JSON.stringify(ranking));
-  }
-
-  // Persistir inmediatamente a la Base de Datos (D1 / Server)
   try {
-    await Promise.all([
-      enviarJsonADatabase('/api/cuentas', cuentas, { asAdmin: isDevOrAdmin }),
-      ranking[rankKey]
-        ? enviarJsonADatabase('/api/ranking', ranking, { asAdmin: isDevOrAdmin })
-        : Promise.resolve(true),
-    ]);
-  } catch (err) {
-    console.warn('Error al guardar aspecto en Database:', err);
-  }
-
-  reconciliarYNotificarNube();
-  return updated;
-}
-
-export async function cambiarClaveUsuarioAsync(
-  claveActual: string,
-  nuevaClave: string
-): Promise<{ ok: boolean; error?: string }> {
-  const token = obtenerTokenSesion();
-  if (!token) {
-    return { ok: false, error: 'Debes tener una sesión activa para cambiar tu contraseña.' };
-  }
-  if (!nuevaClave || nuevaClave.length < 4) {
-    return { ok: false, error: 'La nueva contraseña debe tener al menos 4 caracteres.' };
-  }
-  try {
-    const res = await fetch(getApiBaseUrl('/api/perfil/cambiar-clave'), {
+    const res = await fetch('/api/admin/verify-action', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ claveActual, nuevaClave }),
+      headers: crearHeadersAutenticados(),
+      body: JSON.stringify({
+        actorId: user.id,
+        requiereSupremo,
+      }),
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) {
-      return { ok: false, error: data.error || 'No se pudo cambiar la contraseña.' };
+    const data = await res.json();
+
+    if (res.ok && data?.ok) {
+      return { ok: true, rolActual: (data.rol as UserRol) || user.rol };
+    }
+    return {
+      ok: false,
+      revocado: Boolean(data?.revoked),
+      error: data?.error || 'Permisos de administración inválidos o revocados.',
+    };
+  } catch {
+    const esLocalValido =
+      user.id === 'admin' ||
+      user.rol === 'dev' ||
+      (!requiereSupremo && (user.rol === 'admin' || user.rol === 'mod'));
+    return esLocalValido
+      ? { ok: true, rolActual: user.rol }
+      : { ok: false, error: 'No se pudo verificar con la Database.' };
+  }
+}
+
+export async function actualizarCuentaAsync(
+  userActual: UserCuenta,
+  patch: {
+    nombre?: string;
+    avatarColor?: string;
+    avatarHat?: AvatarTipoDeGorro;
+    avatarRopa?: AvatarTipoDeRopa;
+    avatarRopaColor?: string;
+    avatarAura?: AvatarTipoDeAura;
+    temaTablero?: TemaTablero;
+    inventario?: UserInventario;
+  }
+): Promise<{ ok: boolean; user?: UserCuenta; error?: string }> {
+  try {
+    const res = await fetch('/api/perfil/actualizar', {
+      method: 'POST',
+      headers: crearHeadersAutenticados(),
+      body: JSON.stringify({
+        nombre: patch.nombre,
+        avatarColor: patch.avatarColor,
+        avatarHat: patch.avatarHat,
+        avatarRopa: patch.avatarRopa,
+        avatarRopaColor: patch.avatarRopaColor,
+        avatarAura: patch.avatarAura,
+        temaTablero: patch.temaTablero,
+        inventario: patch.inventario,
+      }),
+    });
+    const data = await res.json();
+
+    if (res.ok && data?.ok && data?.user) {
+      const updated: UserCuenta = {
+        ...userActual,
+        ...data.user,
+      };
+      guardarUserActual(updated);
+      const cuentas = cargarCuentas();
+      cuentas[updated.id] = updated;
+      guardarCuentasCache(cuentas);
+      await sincronizarConNube(true);
+      return { ok: true, user: obteneruserActual() || updated };
+    }
+    return { ok: false, error: data?.error || 'No se pudo guardar en la Database.' };
+  } catch {
+    return { ok: false, error: 'Error de red guardando perfil.' };
+  }
+}
+
+export async function cambiarClaveUserAsync(
+  claveActual: string,
+  claveNueva: string
+): Promise<{ ok: boolean; error?: string; mensaje?: string }> {
+  const cur = obteneruserActual();
+  if (!cur) return { ok: false, error: 'Debes iniciar sesión.' };
+
+  try {
+    const res = await fetch('/api/perfil/cambiar-clave', {
+      method: 'POST',
+      headers: crearHeadersAutenticados(),
+      body: JSON.stringify({
+        userId: cur.id,
+        claveActual,
+        nuevaClave: claveNueva,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data?.ok) {
+      return { ok: false, error: data?.error || 'No se pudo cambiar la clave.' };
     }
     if (data.token) {
       guardarTokenSesion(data.token);
     }
-    await sincronizarConNube(true);
-    return { ok: true };
-  } catch (err: any) {
-    return { ok: false, error: 'Error de red al cambiar la contraseña: ' + (err?.message || 'Reintente.') };
+    if (data.user) {
+      guardarUserActual({ ...cur, ...data.user });
+    }
+    return { ok: true, mensaje: data.mensaje || 'Clave actualizada con éxito.' };
+  } catch {
+    return { ok: false, error: 'Error de red contactando D1.' };
   }
 }
 
-export async function adminActualizarUsuarioAsync(
-  id: string,
-  patch: Partial<UserAccount>
+export async function darDeBajaUserAsync(
+  claveConfirmacion: string
 ): Promise<{ ok: boolean; error?: string }> {
-  if (id === 'admin') {
-    return { ok: false, error: 'El Admin Supremo es intocable.' };
-  }
-
-  await sincronizarConNube(true);
-  const cuentas = cargarCuentas();
-  if (!cuentas[id]) {
-    return { ok: false, error: 'El usuario ya no existe en la base de datos.' };
-  }
-
-  if (patch.nombre) {
-    const cleanNew = patch.nombre.trim();
-    if (cleanNew.length < 3 || cleanNew.length > 15) {
-      return { ok: false, error: 'El nombre debe tener entre 3 y 15 caracteres.' };
-    }
-    const validChars = /^[a-zA-Z0-9_ñÑáéíóúÁÉÍÓÚ\s]+$/;
-    if (!validChars.test(cleanNew)) {
-      return { ok: false, error: 'Caracteres inválidos en el nombre.' };
-    }
-    if (['admin', 'administrador', 'admin supremo'].includes(cleanNew.toLowerCase())) {
-      return { ok: false, error: 'Nombre reservado para el Admin Supremo.' };
-    }
-    const isTaken = Object.values(cuentas).some(
-      (acc) => acc.id !== id && acc.nombre.trim().toLowerCase() === cleanNew.toLowerCase()
-    );
-    if (isTaken) {
-      return { ok: false, error: 'Ese nombre ya está en uso por otro jugador.' };
-    }
-  }
-
-  const current = cuentas[id];
-  const oldName = current.nombre.trim().toLowerCase();
-  const updatedUser: UserAccount = { ...current, ...patch, id };
-  cuentas[id] = updatedUser;
-
-  const ranking = cargarRanking();
-  const newName = updatedUser.nombre.trim().toLowerCase();
-
-  if (oldName !== newName) {
-    delete ranking[oldName];
-    for (const key of Object.keys(ranking)) {
-      if (ranking[key].nombre.trim().toLowerCase() === oldName) {
-        delete ranking[key];
-      }
-    }
-  }
-
-  const existingRank =
-    ranking[newName] || normalizarRankEntry({ nombre: updatedUser.nombre }, updatedUser.nombre);
-
-  ranking[newName] = {
-    ...existingRank,
-    nombre: updatedUser.nombre,
-    puntosTotales: patch.puntos !== undefined ? patch.puntos : existingRank.puntosTotales,
-    elo: patch.elo !== undefined ? patch.elo : existingRank.elo,
-    victorias: patch.victorias !== undefined ? patch.victorias : existingRank.victorias,
-    partidas: patch.partidas !== undefined ? patch.partidas : existingRank.partidas,
-    avatarColor: updatedUser.avatarColor || existingRank.avatarColor,
-    avatarHat: updatedUser.avatarHat || existingRank.avatarHat,
-  };
-
-  const [okCuentas, okRanking] = await Promise.all([
-    enviarJsonADatabase('/api/cuentas', cuentas, { asAdmin: true }),
-    enviarJsonADatabase('/api/ranking', ranking, { asAdmin: true }),
-  ]);
-
-  if (!okCuentas) {
-    return {
-      ok: false,
-      error: '⚠️ No se pudieron enviar los cambios (Database desconectada o permisos revocados).',
-    };
-  }
-
-  safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(cuentas));
-  safeSet(STORAGE_KEY_RANKING, JSON.stringify(ranking));
-
-  const cur = obtenerUsuarioActual();
-  if (cur && cur.id === id) {
-    guardarUsuarioActual(updatedUser);
-  }
-
-  reconciliarYNotificarNube();
-  return { ok: true };
-}
-
-export async function adminEliminarUsuarioAsync(
-  id: string
-): Promise<{ ok: boolean; error?: string }> {
-  if (id === 'admin') {
-    return { ok: false, error: 'El Admin Supremo no puede eliminarse.' };
+  const cur = obteneruserActual();
+  if (!cur) return { ok: false, error: 'Debes iniciar sesión.' };
+  if (cur.id === 'admin') {
+    return { ok: false, error: 'La cuenta del Dev Supremo no puede darse de baja.' };
   }
 
   try {
-    const cur = obtenerUsuarioActual();
-    const sup = obtenerTokenAdminSupremo();
-    const authToken = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (authToken) {
-      headers['Authorization'] = `Bearer ${authToken}`;
-    }
-    if (sup) {
-      headers['X-Admin-User'] = sup.user;
-      headers['X-Admin-Token'] = sup.token;
-    } else if (cur && cur.id !== 'admin') {
-      headers['X-Admin-Id'] = cur.id;
-    }
-
-    const res = await fetch(getApiBaseUrl('/api/admin/eliminar-usuario'), {
+    const res = await fetch('/api/perfil/dar-de-baja', {
       method: 'POST',
-      headers,
-      body: JSON.stringify({ targetId: id }),
+      headers: crearHeadersAutenticados(),
+      body: JSON.stringify({
+        userId: cur.id,
+        clave: claveConfirmacion,
+      }),
     });
-
-    const data = await res.json().catch(() => null);
+    const data = await res.json();
     if (!res.ok || !data?.ok) {
-      return { ok: false, error: data?.error || '⚠️ No se pudo eliminar (permisos revocados o desconexión).' };
+      return { ok: false, error: data?.error || 'No se pudo dar de baja tu cuenta.' };
     }
-
-    // Limpiar localmente tras confirmación del servidor
-    const cuentas = cargarCuentas();
-    const targetName = cuentas[id]?.nombre?.trim().toLowerCase();
-    delete cuentas[id];
-    safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(cuentas));
-
-    const ranking = cargarRanking();
-    if (targetName) delete ranking[targetName];
-    delete ranking[id.toLowerCase()];
-    for (const key of Object.keys(ranking)) {
-      if (
-        ranking[key]?.nombre?.trim().toLowerCase() === targetName ||
-        key.toLowerCase() === targetName ||
-        key.toLowerCase() === id.toLowerCase()
-      ) {
-        delete ranking[key];
-      }
-    }
-    safeSet(STORAGE_KEY_RANKING, JSON.stringify(ranking));
-
-    if (cur && cur.id === id) {
-      cerrarSesion();
-    }
-
-    reconciliarYNotificarNube();
+    cerrarSesion();
     await sincronizarConNube(true);
     return { ok: true };
-  } catch (err: any) {
-    return { ok: false, error: '⚠️ Error de red al eliminar usuario: ' + (err?.message || 'Reintente.') };
+  } catch {
+    return { ok: false, error: 'Error de red al eliminar la cuenta.' };
   }
 }
 
-export async function darDeBajaUsuarioAsync(id: string): Promise<boolean> {
-  if (id === 'admin') return false;
-  await sincronizarConNube(true);
-  const cuentas = cargarCuentas();
-  const target = cuentas[id];
-  if (!target) return false;
+// ============================================================================
+// FUNCIONES ADMINISTRATIVAS (DEV / ADMIN / MOD)
+// ============================================================================
 
-  const clavePropia = target.clave;
-  const targetName = target.nombre.trim().toLowerCase();
-  delete cuentas[id];
-
-  const ranking = cargarRanking();
-  delete ranking[targetName];
-  delete ranking[id.toLowerCase()];
-  for (const key of Object.keys(ranking)) {
-    if (
-      ranking[key].nombre.trim().toLowerCase() === targetName ||
-      key.toLowerCase() === targetName ||
-      key.toLowerCase() === id.toLowerCase()
-    ) {
-      delete ranking[key];
+export async function adminActualizarUserAsync(
+  targetId: string,
+  patch: {
+    nombre?: string;
+    rol?: UserRol;
+    puntos?: number;
+    victorias?: number;
+    partidas?: number;
+    clave?: string;
+  }
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch('/api/admin/actualizar-user', {
+      method: 'POST',
+      headers: crearHeadersAutenticados(),
+      body: JSON.stringify({ targetId, patch }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data?.ok) {
+      return { ok: false, error: data?.error || 'No se pudo actualizar el user.' };
     }
+    await sincronizarConNube(true);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Error de red actualizando user en D1.' };
   }
+}
 
-  const [okCuentas, okRanking] = await Promise.all([
-    enviarJsonADatabase('/api/cuentas', cuentas, clavePropia ? { selfDelete: { id, clave: clavePropia } } : undefined),
-    enviarJsonADatabase('/api/ranking', ranking),
-  ]);
-
-  if (!okCuentas || !okRanking) {
-    return false;
+export async function adminCambiarIdUserAsync(
+  oldId: string,
+  newId: string
+): Promise<{ ok: boolean; error?: string; mensaje?: string }> {
+  try {
+    const res = await fetch('/api/admin/cambiar-id', {
+      method: 'POST',
+      headers: crearHeadersAutenticados(),
+      body: JSON.stringify({ oldId, newId }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data?.ok) {
+      return { ok: false, error: data?.error || 'No se pudo cambiar el ID.' };
+    }
+    await sincronizarConNube(true);
+    return { ok: true, mensaje: data.mensaje };
+  } catch {
+    return { ok: false, error: 'Error de red cambiando ID en cascada.' };
   }
+}
 
-  safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(cuentas));
-  safeSet(STORAGE_KEY_RANKING, JSON.stringify(ranking));
-  cerrarSesion();
-  reconciliarYNotificarNube();
-  return true;
+export async function adminEliminarUserAsync(
+  targetId: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch('/api/admin/eliminar-user', {
+      method: 'POST',
+      headers: crearHeadersAutenticados(),
+      body: JSON.stringify({ targetId }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data?.ok) {
+      return { ok: false, error: data?.error || 'No se pudo eliminar el user.' };
+    }
+    await sincronizarConNube(true);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Error de red al eliminar user.' };
+  }
+}
+
+export async function restablecerClaveUserAsync(
+  targetId: string
+): Promise<{ ok: boolean; claveTemporal?: string; error?: string }> {
+  try {
+    const res = await fetch('/api/admin/restablecer-clave', {
+      method: 'POST',
+      headers: crearHeadersAutenticados(),
+      body: JSON.stringify({ targetId }),
+    });
+    const data = await res.json();
+    if (res.ok && data?.ok && data?.claveTemporal) {
+      return { ok: true, claveTemporal: data.claveTemporal };
+    }
+    return { ok: false, error: data?.error || 'No se pudo restablecer la clave.' };
+  } catch {
+    return { ok: false, error: 'Error de conexión con la Database.' };
+  }
 }
 
 export async function adminResetearRankingAsync(): Promise<{ ok: boolean; error?: string }> {
-  await sincronizarConNube(true);
-  const rankingVacio: Record<string, RankEntry> = {};
-  const cuentas = cargarCuentas();
-
-  for (const [id, acc] of Object.entries(cuentas)) {
-    if (id !== 'admin') {
-      cuentas[id] = {
-        ...acc,
-        puntos: 0,
-        partidas: 0,
-        victorias: 0,
-        elo: 1000,
-      };
-    }
-  }
-
-  const [okRanking, okCuentas] = await Promise.all([
-    enviarJsonADatabase('/api/ranking', rankingVacio, { asAdmin: true }),
-    enviarJsonADatabase('/api/cuentas', cuentas, { asAdmin: true }),
-  ]);
-
-  if (!okRanking || !okCuentas) {
-    return {
-      ok: false,
-      error: '⚠️ No se pudo borrar el Ranking Global (Database desconectada o permisos revocados).',
-    };
-  }
-
-  safeSet(STORAGE_KEY_RANKING, JSON.stringify(rankingVacio));
-  safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(cuentas));
-
-  const cur = obtenerUsuarioActual();
-  if (cur && cur.id !== 'admin' && cuentas[cur.id]) {
-    guardarUsuarioActual(cuentas[cur.id]);
-  }
-
-  reconciliarYNotificarNube();
-  return { ok: true };
-}
-
-export async function regalarPersonajeAsync(
-  targetId: string,
-  personaje: Partial<PersonajeColeccionable>
-): Promise<{ ok: boolean; mensaje?: string; error?: string; inventario?: any }> {
   try {
-    const cur = obtenerUsuarioActual();
-    const sup = obtenerTokenAdminSupremo();
-    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    if (sup) {
-      headers['X-Admin-User'] = sup.user;
-      headers['X-Admin-Token'] = sup.token;
-    } else if (cur && cur.id !== 'admin') {
-      headers['X-Admin-Id'] = cur.id;
-    }
-
-    const res = await fetch(getApiBaseUrl('/api/admin/personajes/regalar'), {
+    const res = await fetch('/api/admin/ranking/aprobar-reset', {
       method: 'POST',
-      headers,
-      body: JSON.stringify({ targetId, personaje }),
+      headers: crearHeadersAutenticados(),
+      body: JSON.stringify({}),
     });
-    const data = await res.json().catch(() => null);
-    if (res.ok && data?.ok) {
-      const cuentas = cargarCuentas();
-      if (cuentas[targetId]) {
-        cuentas[targetId].inventario = data.inventario || {
-          personajes: [...(cuentas[targetId].inventario?.personajes || []), data.personaje].filter(Boolean),
-        };
-        safeSet(STORAGE_KEY_ACCOUNTS, JSON.stringify(cuentas));
-      }
-      if (cur && cur.id === targetId) {
-        cur.inventario = data.inventario || cuentas[targetId]?.inventario;
-        guardarUsuarioActual(cur);
-      }
-      reconciliarYNotificarNube();
-      await sincronizarConNube(true);
-      return { ok: true, mensaje: data.mensaje, inventario: data.inventario };
+    const data = await res.json();
+    if (!res.ok || !data?.ok) {
+      return { ok: false, error: data?.error || 'No se pudo reiniciar el Ranking.' };
     }
-    return { ok: false, error: data?.error || 'No se pudo entregar el personaje.' };
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'Error de red.' };
+    await sincronizarConNube(true);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Error de red reiniciando el Ranking.' };
   }
 }
 
-export async function quitarPersonajeInventarioAsync(
-  targetId: string,
-  personajeId: string
-): Promise<{ ok: boolean; mensaje?: string; error?: string }> {
-  try {
-    const cur = obtenerUsuarioActual();
-    const sup = obtenerTokenAdminSupremo();
-    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    if (sup) {
-      headers['X-Admin-User'] = sup.user;
-      headers['X-Admin-Token'] = sup.token;
-    }
-
-    const res = await fetch(getApiBaseUrl('/api/admin/personajes/quitar'), {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ targetId, personajeId }),
-    });
-    const data = await res.json().catch(() => null);
-    if (res.ok && data?.ok) {
-      await sincronizarConNube(true);
-      return { ok: true, mensaje: data.mensaje };
-    }
-    return { ok: false, error: data?.error || 'No se pudo revocar el personaje.' };
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'Error de red.' };
-  }
-}
-
-export async function fijarPremioSemanalAsync(
-  personaje: Partial<PersonajeColeccionable> | null
-): Promise<{ ok: boolean; mensaje?: string; error?: string; premioSemanal?: any }> {
-  try {
-    const cur = obtenerUsuarioActual();
-    const sup = obtenerTokenAdminSupremo();
-    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    if (sup) {
-      headers['X-Admin-User'] = sup.user;
-      headers['X-Admin-Token'] = sup.token;
-    } else if (cur && cur.id !== 'admin') {
-      headers['X-Admin-Id'] = cur.id;
-    }
-
-    const res = await fetch(getApiBaseUrl('/api/admin/personajes/fijar-premio-semanal'), {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ personaje }),
-    });
-    const data = await res.json().catch(() => null);
-    if (res.ok && data?.ok) {
-      return { ok: true, mensaje: data.mensaje, premioSemanal: data.premioSemanal };
-    }
-    return { ok: false, error: data?.error || 'No se pudo fijar el premio semanal.' };
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'Error de red.' };
-  }
-}
-
-export async function obtenerConfigSemanalAsync(): Promise<{
-  primerLugar: number;
-  segundoLugar: number;
-  tercerLugar: number;
-  participacion?: number;
-  premioSemanal?: PersonajeColeccionable;
-}> {
-  try {
-    const res = await fetch(getApiBaseUrl('/api/admin/config-semanal'));
-    const data = await res.json().catch(() => null);
-    if (data?.ok) {
-      return {
-        primerLugar: data.config?.primerLugar ?? 50,
-        segundoLugar: data.config?.segundoLugar ?? 30,
-        tercerLugar: data.config?.tercerLugar ?? 15,
-        participacion: data.config?.participacion ?? 5,
-        premioSemanal: data.premioSemanal,
-      };
-    }
-  } catch {}
-  return { primerLugar: 50, segundoLugar: 30, tercerLugar: 15, participacion: 5 };
-}
-
-export async function guardarConfigSemanalAsync(cfg: {
-  primerLugar: number;
-  segundoLugar: number;
-  tercerLugar: number;
-  participacion?: number;
-}): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const cur = obtenerUsuarioActual();
-    const sup = obtenerTokenAdminSupremo();
-    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    if (sup) {
-      headers['X-Admin-User'] = sup.user;
-      headers['X-Admin-Token'] = sup.token;
-    } else if (cur && cur.id !== 'admin') {
-      headers['X-Admin-Id'] = cur.id;
-    }
-
-    const res = await fetch(getApiBaseUrl('/api/admin/config-semanal'), {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(cfg),
-    });
-    const data = await res.json().catch(() => null);
-    if (res.ok && data?.ok) {
-      return { ok: true };
-    }
-    return { ok: false, error: data?.error || 'No se pudo guardar la configuración.' };
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'Error de conexión.' };
-  }
-}
+export const aprobarResetRankingAsync = adminResetearRankingAsync;
 
 export async function solicitarResetRankingAsync(
-  motivo?: string
-): Promise<{ ok: boolean; mensaje?: string; error?: string }> {
+  motivo: string = 'Solicitud de reinicio desde panel Admin'
+): Promise<{ ok: boolean; error?: string }> {
   try {
-    const cur = obtenerUsuarioActual();
-    const sup = obtenerTokenAdminSupremo();
-    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    if (sup) {
-      headers['X-Admin-User'] = sup.user;
-      headers['X-Admin-Token'] = sup.token;
-    } else if (cur && cur.id !== 'admin') {
-      headers['X-Admin-Id'] = cur.id;
-    }
-
-    const res = await fetch(getApiBaseUrl('/api/admin/ranking/solicitar-reset'), {
+    const res = await fetch('/api/admin/ranking/solicitar-reset', {
       method: 'POST',
-      headers,
+      headers: crearHeadersAutenticados(),
       body: JSON.stringify({ motivo }),
     });
-    const data = await res.json().catch(() => null);
-    if (res.ok && data?.ok) {
-      return { ok: true, mensaje: data.mensaje };
-    }
-    return { ok: false, error: data?.error || 'No se pudo solicitar el reseteo.' };
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'Error de conexión.' };
+    const data = await res.json();
+    return res.ok && data?.ok ? { ok: true } : { ok: false, error: data?.error };
+  } catch {
+    return { ok: false, error: 'Error enviando solicitud.' };
   }
 }
 
 export async function obtenerSolicitudResetRankingAsync(): Promise<SolicitudResetRanking | null> {
   try {
-    const res = await fetch(getApiBaseUrl('/api/admin/ranking/solicitud-reset'));
-    const data = await res.json().catch(() => null);
+    const res = await fetch(`/api/admin/ranking/solicitud-reset?_t=${Date.now()}`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
     return data?.solicitud || null;
   } catch {
     return null;
   }
 }
 
-export async function aprobarResetRankingAsync(): Promise<{ ok: boolean; mensaje?: string; error?: string }> {
-  try {
-    const cur = obtenerUsuarioActual();
-    const sup = obtenerTokenAdminSupremo();
-    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    if (sup) {
-      headers['X-Admin-User'] = sup.user;
-      headers['X-Admin-Token'] = sup.token;
-    }
-
-    const res = await fetch(getApiBaseUrl('/api/admin/ranking/aprobar-reset'), {
-      method: 'POST',
-      headers,
-    });
-    const data = await res.json().catch(() => null);
-    if (res.ok && data?.ok) {
-      await sincronizarConNube(true);
-      return { ok: true, mensaje: data.mensaje };
-    }
-    return { ok: false, error: data?.error || 'No se pudo aprobar el reseteo.' };
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'Error de conexión.' };
-  }
-}
-
 export async function rechazarResetRankingAsync(): Promise<{ ok: boolean; error?: string }> {
   try {
-    const cur = obtenerUsuarioActual();
-    const sup = obtenerTokenAdminSupremo();
-    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    if (sup) {
-      headers['X-Admin-User'] = sup.user;
-      headers['X-Admin-Token'] = sup.token;
-    }
-
-    const res = await fetch(getApiBaseUrl('/api/admin/ranking/rechazar-reset'), {
+    const res = await fetch('/api/admin/ranking/rechazar-reset', {
       method: 'POST',
-      headers,
+      headers: crearHeadersAutenticados(),
+      body: JSON.stringify({}),
     });
-    const data = await res.json().catch(() => null);
-    if (res.ok && data?.ok) {
-      return { ok: true };
-    }
-    return { ok: false, error: data?.error || 'No se pudo rechazar.' };
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'Error de conexión.' };
+    const data = await res.json();
+    return res.ok && data?.ok ? { ok: true } : { ok: false, error: data?.error };
+  } catch {
+    return { ok: false, error: 'Error rechazando solicitud.' };
   }
 }
 
-export function equiparPersonajeInventario(
-  usuario: UserAccount,
+// ============================================================================
+// PERSONAJES EXCLUSIVOS, REGALOS, MOVIMIENTO Y RETIRO
+// ============================================================================
+
+export async function regalarPersonajeAsync(
+  targetId: string,
+  personaje: {
+    nombre: string;
+    color: string;
+    hat: AvatarTipoDeGorro;
+    ropa: AvatarTipoDeRopa;
+    ropaColor?: string;
+    aura: AvatarTipoDeAura;
+    descripcion?: string;
+  }
+): Promise<{ ok: boolean; error?: string; personaje?: AvatarColeccionable }> {
+  try {
+    const res = await fetch('/api/admin/personajes/regalar', {
+      method: 'POST',
+      headers: crearHeadersAutenticados(),
+      body: JSON.stringify({ targetId, personaje }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data?.ok) {
+      return { ok: false, error: data?.error || 'Error al regalar personaje.' };
+    }
+    // Solo recargar la nube; jamás cambiar el aspecto equipado del administrador que regala
+    await sincronizarConNube(true);
+    return { ok: true, personaje: data.personaje };
+  } catch {
+    return { ok: false, error: 'Error de red enviando personaje.' };
+  }
+}
+
+export async function quitarPersonajeInventarioAsync(
+  targetId: string,
+  personajeId: string
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch('/api/admin/personajes/quitar', {
+      method: 'POST',
+      headers: crearHeadersAutenticados(),
+      body: JSON.stringify({ targetId, personajeId }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data?.ok) {
+      return { ok: false, error: data?.error || 'Error al retirar personaje.' };
+    }
+    await sincronizarConNube(true);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Error de red retirando personaje.' };
+  }
+}
+
+export async function moverPersonajeInventarioAsync(
+  fromId: string,
+  toId: string,
+  personajeId: string
+): Promise<{ ok: boolean; error?: string; mensaje?: string }> {
+  try {
+    const res = await fetch('/api/admin/personajes/mover', {
+      method: 'POST',
+      headers: crearHeadersAutenticados(),
+      body: JSON.stringify({ fromId, toId, personajeId }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data?.ok) {
+      return { ok: false, error: data?.error || 'Error al mover personaje.' };
+    }
+    await sincronizarConNube(true);
+    return { ok: true, mensaje: data.mensaje };
+  } catch {
+    return { ok: false, error: 'Error de red moviendo personaje.' };
+  }
+}
+
+export async function equiparPersonajeInventario(
+  user: UserCuenta,
   personajeId: string | null
-): UserAccount {
-  const inv = usuario.inventario || { personajes: [] };
-  let patch: Partial<UserAccount> = {};
+): Promise<{ ok: boolean; user?: UserCuenta; error?: string }> {
+  const invActual: UserInventario = user.inventario || { personajes: [] };
+  let nuevoColor = user.avatarColor;
+  let nuevoHat = user.avatarHat;
+  let nuevaRopa: AvatarTipoDeRopa = 'ninguna';
+  let nuevoRopaColor: string | undefined = undefined;
+  let nuevaAura: AvatarTipoDeAura = 'ninguna';
+  let nuevoActivoId: string | undefined = undefined;
 
-  if (!personajeId) {
-    // Desequipar
-    patch = {
-      inventario: { ...inv, activoId: undefined },
-      avatarRopa: 'ninguna',
-      avatarRopaColor: undefined,
-      avatarAura: 'ninguna',
-    };
-  } else {
-    const item = (inv.personajes || []).find((p) => p.id === personajeId);
-    if (item) {
-      patch = {
-        inventario: { ...inv, activoId: item.id },
-        avatarColor: item.color,
-        avatarHat: item.hat,
-        avatarRopa: item.ropa || 'ninguna',
-        avatarRopaColor: item.ropaColor,
-        avatarAura: item.aura || 'ninguna',
-      };
+  if (personajeId) {
+    const found = invActual.personajes.find((p) => p.id === personajeId);
+    if (!found) {
+      return { ok: false, error: 'Personaje no encontrado en tu inventario.' };
     }
+    nuevoColor = found.color;
+    nuevoHat = found.hat;
+    nuevaRopa = found.ropa || 'ninguna';
+    nuevoRopaColor = found.ropaColor;
+    nuevaAura = found.aura || 'ninguna';
+    nuevoActivoId = found.id;
   }
 
-  const updated: UserAccount = { ...usuario, ...patch };
-  actualizarCuentaUsuario(usuario.id, patch);
-  return updated;
+  return actualizarCuentaAsync(user, {
+    avatarColor: nuevoColor,
+    avatarHat: nuevoHat,
+    avatarRopa: nuevaRopa,
+    avatarRopaColor: nuevoRopaColor,
+    avatarAura: nuevaAura,
+    inventario: {
+      ...invActual,
+      activoId: nuevoActivoId,
+    },
+  });
 }
 
-const STORAGE_KEY_DESBLOQUEOS = 'muros_locos_desbloqueos_v1';
+// ============================================================================
+// CONFIGURACIÓN SEMANAL, DESBLOQUEOS Y SALAS PERSONALIZADAS
+// ============================================================================
+
+export async function fijarPremioSemanalAsync(personaje: {
+  nombre: string;
+  color: string;
+  hat: AvatarTipoDeGorro;
+  ropa: AvatarTipoDeRopa;
+  ropaColor?: string;
+  aura: AvatarTipoDeAura;
+  descripcion?: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch('/api/admin/personajes/fijar-premio-semanal', {
+      method: 'POST',
+      headers: crearHeadersAutenticados(),
+      body: JSON.stringify({ personaje }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data?.ok) {
+      return { ok: false, error: data?.error || 'No se pudo fijar el premio semanal.' };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Error de red guardando premio semanal.' };
+  }
+}
+
+export async function obtenerConfigSemanalAsync(): Promise<{
+  puntosConfig: {
+    puntosVictoria: number;
+    puntosEmpate: number;
+    primerLugar: number;
+    segundoLugar: number;
+    tercerLugar: number;
+    participacion: number;
+  };
+  premioSemanal: AvatarColeccionable | null;
+}> {
+  try {
+    const [cfgRes, semRes] = await Promise.all([
+      fetch(`/api/admin/config-semanal?_t=${Date.now()}`, { cache: 'no-store' }),
+      fetch(`/api/admin/premio-semanal?_t=${Date.now()}`, { cache: 'no-store' }),
+    ]);
+    const cfgData = cfgRes.ok ? await cfgRes.json() : {};
+    const semData = semRes.ok ? await semRes.json() : {};
+    const c = cfgData?.config || {};
+    return {
+      puntosConfig: {
+        puntosVictoria: Number(c.puntosVictoria ?? 3),
+        puntosEmpate: Number(c.puntosEmpate ?? 1),
+        primerLugar: Number(c.primerLugar ?? 50),
+        segundoLugar: Number(c.segundoLugar ?? 25),
+        tercerLugar: Number(c.tercerLugar ?? 15),
+        participacion: Number(c.participacion ?? 5),
+      },
+      premioSemanal: semData?.premio || cfgData?.premioSemanal || null,
+    };
+  } catch {
+    return {
+      puntosConfig: {
+        puntosVictoria: 3,
+        puntosEmpate: 1,
+        primerLugar: 50,
+        segundoLugar: 25,
+        tercerLugar: 15,
+        participacion: 5,
+      },
+      premioSemanal: null,
+    };
+  }
+}
+
+export async function guardarConfigSemanalAsync(config: {
+  puntosVictoria?: number;
+  puntosEmpate?: number;
+  primerLugar: number;
+  segundoLugar: number;
+  tercerLugar: number;
+  participacion?: number;
+}): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch('/api/admin/config-semanal', {
+      method: 'POST',
+      headers: crearHeadersAutenticados(),
+      body: JSON.stringify(config),
+    });
+    const data = await res.json();
+    return res.ok && data?.ok
+      ? { ok: true }
+      : { ok: false, error: data?.error || 'Error guardando puntos semanales.' };
+  } catch {
+    return { ok: false, error: 'Error de conexión.' };
+  }
+}
 
 export function obtenerDesbloqueosLocales(): Record<string, number> {
-  const defaults: Record<string, number> = {
-    gatito: 30,
-    zorro: 60,
-    robot: 120,
-    dragon: 200,
-    ninja: 300,
-    navidad: 400,
-    granjero: 500,
-    vikingo: 650,
-    copa: 800,
-    gorra: 950,
-    boina: 1100,
-    espacial: 1300,
-  };
+  const defaults: Record<string, number> = {};
+  RegDeAvatar.forEach((p) => {
+    if (p.desbloqueoTipo === 'puntos') defaults[p.id] = p.puntosRequeridos;
+  });
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_DESBLOQUEOS);
-    if (raw) return { ...defaults, ...JSON.parse(raw) };
-  } catch {}
-  return defaults;
+    const raw = localStorage.getItem(DESBLOQUEOS_LOCAL_KEY);
+    if (!raw) return defaults;
+    return { ...defaults, ...JSON.parse(raw) };
+  } catch {
+    return defaults;
+  }
 }
 
 export async function obtenerDesbloqueosPersonajesAsync(): Promise<Record<string, number>> {
-  const local = obtenerDesbloqueosLocales();
+  const defaults = obtenerDesbloqueosLocales();
   try {
-    const res = await fetch(getApiBaseUrl('/api/admin/desbloqueos-personajes'));
-    const data = await res.json().catch(() => null);
-    if (data?.ok && data.desbloqueos) {
-      safeSet(STORAGE_KEY_DESBLOQUEOS, JSON.stringify(data.desbloqueos));
-      return { ...local, ...data.desbloqueos };
+    const res = await fetch(`/api/admin/desbloqueos-personajes?_t=${Date.now()}`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) return defaults;
+    const data = await res.json();
+    const merged = { ...defaults, ...(data?.desbloqueos || {}) };
+    try {
+      localStorage.setItem(DESBLOQUEOS_LOCAL_KEY, JSON.stringify(merged));
+    } catch {
+      // ignorar
     }
-  } catch {}
-  return local;
+    return merged;
+  } catch {
+    return defaults;
+  }
 }
 
 export async function guardarDesbloqueosPersonajesAsync(
   desbloqueos: Record<string, number>
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    safeSet(STORAGE_KEY_DESBLOQUEOS, JSON.stringify(desbloqueos));
-    const cur = obtenerUsuarioActual();
-    const sup = obtenerTokenAdminSupremo();
-    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    if (sup) {
-      headers['X-Admin-User'] = sup.user;
-      headers['X-Admin-Token'] = sup.token;
-    } else if (cur && cur.id !== 'admin') {
-      headers['X-Admin-Id'] = cur.id;
-    }
-
-    const res = await fetch(getApiBaseUrl('/api/admin/desbloqueos-personajes'), {
+    const res = await fetch('/api/admin/desbloqueos-personajes', {
       method: 'POST',
-      headers,
+      headers: crearHeadersAutenticados(),
       body: JSON.stringify({ desbloqueos }),
     });
-    const data = await res.json().catch(() => null);
+    const data = await res.json();
     if (res.ok && data?.ok) {
+      try {
+        localStorage.setItem(DESBLOQUEOS_LOCAL_KEY, JSON.stringify(desbloqueos));
+      } catch {
+        // ignorar
+      }
       return { ok: true };
     }
-    return { ok: false, error: data?.error || 'No se pudieron guardar los requisitos de desbloqueo en Database.' };
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'Error de conexión.' };
+    return { ok: false, error: data?.error || 'Error guardando requisitos.' };
+  } catch {
+    return { ok: false, error: 'Error de red.' };
   }
 }
 
-// ==========================================
-// SALAS PERSONALIZADAS EN LÍNEA (STAFF: DEV, ADMIN, MOD)
-// ==========================================
-
-const STORAGE_KEY_SALAS_PERSONALIZADAS = 'muros_salas_personalizadas_cache';
-
 export async function obtenerSalasPersonalizadasAsync(): Promise<SalaPersonalizada[]> {
   try {
-    const res = await fetch(getApiBaseUrl('/api/admin/salas-personalizadas'));
-    const data = await res.json().catch(() => null);
-    if (data?.ok && Array.isArray(data.salas)) {
-      safeSet(STORAGE_KEY_SALAS_PERSONALIZADAS, JSON.stringify(data.salas));
-      return data.salas;
-    }
-  } catch {}
-  try {
-    const local = localStorage.getItem(STORAGE_KEY_SALAS_PERSONALIZADAS);
-    if (local) return JSON.parse(local);
-  } catch {}
-  return [];
+    const res = await fetch(`/api/admin/salas-personalizadas?_t=${Date.now()}`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.salas) ? data.salas : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function crearSalaPersonalizadaAsync(
-  sala: Partial<SalaPersonalizada>
+  sala: Omit<SalaPersonalizada, 'creadaEn' | 'creador' | 'creadorRol'>
 ): Promise<{ ok: boolean; error?: string; sala?: SalaPersonalizada }> {
   try {
-    const cur = obtenerUsuarioActual();
-    const sup = obtenerTokenAdminSupremo();
-    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    if (sup) {
-      headers['X-Admin-User'] = sup.user;
-      headers['X-Admin-Token'] = sup.token;
-    } else if (cur && cur.id !== 'admin') {
-      headers['X-Admin-Id'] = cur.id;
-    }
-
-    const res = await fetch(getApiBaseUrl('/api/admin/salas-personalizadas'), {
+    const res = await fetch('/api/admin/salas-personalizadas', {
       method: 'POST',
-      headers,
+      headers: crearHeadersAutenticados(),
       body: JSON.stringify(sala),
     });
-    const data = await res.json().catch(() => null);
-    if (res.ok && data?.ok) {
-      return { ok: true, sala: data.sala };
-    }
-    return { ok: false, error: data?.error || 'No se pudo crear la sala personalizada.' };
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'Error de red.' };
+    const data = await res.json();
+    return res.ok && data?.ok
+      ? { ok: true, sala: data.sala }
+      : { ok: false, error: data?.error || 'No se pudo publicar la sala oficial.' };
+  } catch {
+    return { ok: false, error: 'Error de red creando sala.' };
   }
 }
 
@@ -2356,29 +1998,24 @@ export async function eliminarSalaPersonalizadaAsync(
   codigo: string
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    const cur = obtenerUsuarioActual();
-    const sup = obtenerTokenAdminSupremo();
-    const token = obtenerTokenSesion() || (cur?.id === 'admin' && sup ? sup.token : null);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    if (sup) {
-      headers['X-Admin-User'] = sup.user;
-      headers['X-Admin-Token'] = sup.token;
-    } else if (cur && cur.id !== 'admin') {
-      headers['X-Admin-Id'] = cur.id;
-    }
-
-    const res = await fetch(getApiBaseUrl(`/api/admin/salas-personalizadas/${encodeURIComponent(codigo)}`), {
+    const res = await fetch(`/api/admin/salas-personalizadas/${encodeURIComponent(codigo)}`, {
       method: 'DELETE',
-      headers,
+      headers: crearHeadersAutenticados(),
     });
-    const data = await res.json().catch(() => null);
-    if (res.ok && data?.ok) {
-      return { ok: true };
-    }
-    return { ok: false, error: data?.error || 'No se pudo eliminar la sala.' };
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'Error de red.' };
+    const data = await res.json();
+    return res.ok && data?.ok ? { ok: true } : { ok: false, error: data?.error };
+  } catch {
+    return { ok: false, error: 'Error de red eliminando sala.' };
   }
 }
 
+export async function obtenerRankingSemanalAsync(): Promise<RespuestaRankingSemanal | null> {
+  try {
+    const res = await fetch(`/api/semanal?_t=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data && data.ok ? (data as RespuestaRankingSemanal) : null;
+  } catch {
+    return null;
+  }
+}

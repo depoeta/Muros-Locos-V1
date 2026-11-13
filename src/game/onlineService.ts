@@ -10,14 +10,17 @@
  */
 
 import {
-  ActiveOnlineSession,
-  Coord,
-  GameState,
-  HatType,
-  OnlineDiagnosticData,
-  OnlineMessage,
-  OnlinePlayerInfo,
-  WallOrientation,
+  AvatarTipoDeAura,
+  AvatarTipoDeGorro,
+  AvatarTipoDeRopa,
+  Coordenada,
+  DatosDiagnosticoOnline,
+  EstadoDeJuego,
+  InfoJugadorOnline,
+  InfoSalaPublica,
+  MensajeOnline,
+  OrientacionMuro,
+  SesionOnlineActiva,
 } from '../types/murosLocos';
 import { getApiBaseUrl, obtenerTokenSesion } from './storage';
 
@@ -59,8 +62,8 @@ const RTC_CONFIGURATION: RTCConfiguration = {
   ],
 };
 
-function prepareWireState(state: GameState): GameState {
-  const clean = JSON.parse(JSON.stringify(state)) as GameState;
+function prepareWireState(state: EstadoDeJuego): EstadoDeJuego {
+  const clean = JSON.parse(JSON.stringify(state)) as EstadoDeJuego;
   clean.historial = [];
   if (Array.isArray(clean.registroAcciones) && clean.registroAcciones.length > 40) {
     clean.registroAcciones = clean.registroAcciones.slice(-40);
@@ -123,14 +126,14 @@ async function gatherLocalDescription(
 }
 
 export type OnlineEventCallback = {
-  onLobbyUpdate?: (players: OnlinePlayerInfo[], maxPlayers: 2 | 4) => void;
+  onLobbyUpdate?: (players: InfoJugadorOnline[], maxPlayers: 2 | 4) => void;
   onLobbyFull?: (maxPlayers: 2 | 4) => void;
-  onGameStart?: (initialState: GameState) => void;
-  onStateSync?: (state: GameState) => void;
+  onGameStart?: (initialState: EstadoDeJuego) => void;
+  onStateSync?: (state: EstadoDeJuego) => void;
   onClientAction?: (
     jugadorId: number,
     accion: 'mover' | 'muro' | 'pasar',
-    payload: { destino?: Coord; orientacion?: WallOrientation; r?: number; c?: number }
+    payload: { destino?: Coordenada; orientacion?: OrientacionMuro; r?: number; c?: number }
   ) => void;
   onPlayerAction?: (
     jugadorId: number,
@@ -167,12 +170,16 @@ class OnlineManager {
   private roomCode: string = '';
   private roomPublica: boolean = true;
   private myPeerId: string = '';
+  private myCuentaId?: string;
   private maxPlayers: 2 | 4 = 2;
   private myPlayerId: number = 0;
   private myName: string = '';
   private myColor: string = '#ff6b6b';
-  private myHat: HatType = 'corona';
-  private lobbyPlayers: OnlinePlayerInfo[] = [];
+  private myHat: AvatarTipoDeGorro = 'corona';
+  private myRopa: AvatarTipoDeRopa = 'ninguna';
+  private myRopaColor?: string;
+  private myAura: AvatarTipoDeAura = 'ninguna';
+  private lobbyPlayers: InfoJugadorOnline[] = [];
   private callbacks: OnlineEventCallback = {};
 
   private syncInterval: ReturnType<typeof setInterval> | null = null;
@@ -190,7 +197,7 @@ class OnlineManager {
   private pendingActionRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private lastPollAt: number = 0;
 
-  private currentGameState: GameState | null = null;
+  private currentGameState: EstadoDeJuego | null = null;
   private isIntentionalExit: boolean = false;
   private rivalLeftAfterMatch: boolean = false;
   private roomClosedRemotely: boolean = false;
@@ -207,7 +214,7 @@ class OnlineManager {
     }
   }
 
-  private diagnosticData: OnlineDiagnosticData = {
+  private diagnosticData: DatosDiagnosticoOnline = {
     status: 'desconectado',
     pingMs: null,
     calidad: 'desconectado',
@@ -218,14 +225,14 @@ class OnlineManager {
     dataChannelState: 'closed',
     logs: [],
   };
-  private diagnosticListeners: Set<(data: OnlineDiagnosticData) => void> = new Set();
+  private diagnosticListeners: Set<(data: DatosDiagnosticoOnline) => void> = new Set();
   private diagPingTimer: ReturnType<typeof setInterval> | null = null;
 
-  public getDiagnosticData(): OnlineDiagnosticData {
+  public getDiagnosticData(): DatosDiagnosticoOnline {
     return { ...this.diagnosticData, logs: [...this.diagnosticData.logs] };
   }
 
-  public subscribeDiagnostics(listener: (data: OnlineDiagnosticData) => void): () => void {
+  public subscribeDiagnostics(listener: (data: DatosDiagnosticoOnline) => void): () => void {
     this.diagnosticListeners.add(listener);
     listener(this.getDiagnosticData());
     return () => {
@@ -309,20 +316,25 @@ class OnlineManager {
     return this.myPlayerId;
   }
 
-  public getLobbyPlayers(): OnlinePlayerInfo[] {
+  public getLobbyPlayers(): InfoJugadorOnline[] {
     return this.lobbyPlayers;
   }
 
   public saveActiveSession() {
     if (!this.roomCode || !this.role) return;
     try {
-      const session: ActiveOnlineSession = {
+      const session: SesionOnlineActiva = {
         roomCode: this.roomCode,
         role: this.role,
+        myPeerId: this.myPeerId,
         myPlayerId: this.myPlayerId,
+        myCuentaId: this.myCuentaId,
         myName: this.myName,
         myColor: this.myColor,
         myHat: this.myHat,
+        myRopa: this.myRopa,
+        myRopaColor: this.myRopaColor,
+        myAura: this.myAura,
         lastState: this.currentGameState || undefined,
         timestamp: Date.now(),
       };
@@ -330,7 +342,7 @@ class OnlineManager {
     } catch {}
   }
 
-  public getSavedSession(): ActiveOnlineSession | null {
+  public getSavedSession(): SesionOnlineActiva | null {
     try {
       const raw = sessionStorage.getItem(SESSION_STORAGE_KEY);
       if (!raw) return null;
@@ -345,7 +357,7 @@ class OnlineManager {
     }
   }
 
-  public getActiveSession(): ActiveOnlineSession | null {
+  public getActiveSession(): SesionOnlineActiva | null {
     return this.getSavedSession();
   }
 
@@ -387,7 +399,7 @@ class OnlineManager {
     }
   }
 
-  private buildPingPayload(type: 'PING' | 'PONG'): OnlineMessage {
+  private buildPingPayload(type: 'PING' | 'PONG'): MensajeOnline {
     return {
       type,
       turnosTotales: this.currentGameState?.turnosTotales,
@@ -571,13 +583,24 @@ class OnlineManager {
   }
 
   private async processHostRoomPoll(sala: any) {
-    const remoteList: OnlinePlayerInfo[] = Array.isArray(sala.jugadores) ? sala.jugadores : [];
+    const remoteList: InfoJugadorOnline[] = Array.isArray(sala.jugadores) ? sala.jugadores : [];
 
     // Sincronizar lista del lobby mientras no haya iniciado la partida
     if (!this.currentGameState && remoteList.length > 0) {
       const changed =
         remoteList.length !== this.lobbyPlayers.length ||
-        remoteList.some((p, i) => p.peerId !== this.lobbyPlayers[i]?.peerId);
+        remoteList.some((p, i) => {
+          const prev = this.lobbyPlayers[i];
+          return (
+            !prev ||
+            p.peerId !== prev.peerId ||
+            p.nombre !== prev.nombre ||
+            p.conectado !== prev.conectado ||
+            p.ropa !== prev.ropa ||
+            p.ropaColor !== prev.ropaColor ||
+            p.aura !== prev.aura
+          );
+        });
 
       if (changed) {
         this.lobbyPlayers = remoteList;
@@ -611,7 +634,7 @@ class OnlineManager {
         this.lastMsgSeq = item.seq;
       }
       if (item.msg) {
-        this.handleMessageFromClient(item.from, item.msg as OnlineMessage);
+        this.handleMessageFromClient(item.from, item.msg as MensajeOnline);
       }
     }
     if (typeof sala.seq === 'number' && sala.seq > this.lastMsgSeq) {
@@ -620,7 +643,7 @@ class OnlineManager {
   }
 
   private async processClientRoomPoll(sala: any) {
-    const remoteList: OnlinePlayerInfo[] = Array.isArray(sala.jugadores) ? sala.jugadores : [];
+    const remoteList: InfoJugadorOnline[] = Array.isArray(sala.jugadores) ? sala.jugadores : [];
 
     if (!this.currentGameState && remoteList.length > 0) {
       const me = remoteList.find((p) => p.peerId === this.myPeerId);
@@ -629,7 +652,18 @@ class OnlineManager {
       }
       const changed =
         remoteList.length !== this.lobbyPlayers.length ||
-        remoteList.some((p, i) => p.peerId !== this.lobbyPlayers[i]?.peerId);
+        remoteList.some((p, i) => {
+          const prev = this.lobbyPlayers[i];
+          return (
+            !prev ||
+            p.peerId !== prev.peerId ||
+            p.nombre !== prev.nombre ||
+            p.conectado !== prev.conectado ||
+            p.ropa !== prev.ropa ||
+            p.ropaColor !== prev.ropaColor ||
+            p.aura !== prev.aura
+          );
+        });
 
       if (changed) {
         this.lobbyPlayers = remoteList;
@@ -663,7 +697,7 @@ class OnlineManager {
         this.lastMsgSeq = item.seq;
       }
       if (item.msg) {
-        this.handleMessageFromHost(item.msg as OnlineMessage);
+        this.handleMessageFromHost(item.msg as MensajeOnline);
       }
     }
     if (typeof sala.seq === 'number' && sala.seq > this.lastMsgSeq) {
@@ -744,12 +778,12 @@ class OnlineManager {
       // Sincronizar lobby o estado de partida apenas abre el canal directo
       try {
         dc.send(
-          JSON.stringify({
-            type: 'LOBBY_UPDATE',
-            roomCode: this.roomCode,
-            maxJugadores: this.maxPlayers,
-            jugadores: [...this.lobbyPlayers],
-          } satisfies OnlineMessage)
+            JSON.stringify({
+              type: 'LOBBY_UPDATE',
+              roomCode: this.roomCode,
+              maxJugadores: this.maxPlayers,
+              jugadores: [...this.lobbyPlayers],
+            } satisfies MensajeOnline)
         );
         if (this.currentGameState && !this.currentGameState.terminada) {
           dc.send(
@@ -758,7 +792,7 @@ class OnlineManager {
               config: this.currentGameState.config,
               initialState: prepareWireState(this.currentGameState),
               _startId: this.lastHandledStartId || `sync_${this.roomCode}`,
-            } satisfies OnlineMessage)
+            } satisfies MensajeOnline)
           );
         }
       } catch {}
@@ -766,7 +800,7 @@ class OnlineManager {
 
     dc.onmessage = (ev) => {
       try {
-        const msg = JSON.parse(String(ev.data)) as OnlineMessage;
+        const msg = JSON.parse(String(ev.data)) as MensajeOnline;
         this.handleMessageFromClient(clientPeerId, msg);
       } catch {}
     };
@@ -803,9 +837,15 @@ class OnlineManager {
     code: string,
     hostName: string,
     color: string,
-    hat: HatType,
+    hat: AvatarTipoDeGorro,
     maxPlayers: 2 | 4 = 2,
-    publica: boolean = true
+    publica: boolean = true,
+    opciones?: {
+      cuentaId?: string;
+      ropa?: AvatarTipoDeRopa;
+      ropaColor?: string;
+      aura?: AvatarTipoDeAura;
+    }
   ): Promise<string> {
     this.cleanUp();
     this.isIntentionalExit = false;
@@ -816,9 +856,13 @@ class OnlineManager {
     this.roomPublica = publica;
     this.maxPlayers = maxPlayers;
     this.myPlayerId = 0;
+    this.myCuentaId = opciones?.cuentaId;
     this.myName = hostName.trim() || 'Anfitrión';
     this.myColor = color;
     this.myHat = hat;
+    this.myRopa = opciones?.ropa || 'ninguna';
+    this.myRopaColor = opciones?.ropaColor;
+    this.myAura = opciones?.aura || 'ninguna';
     this.myPeerId = `host-${this.roomCode.toLowerCase()}-${randomShortId(5)}`;
     this.lastMsgSeq = 0;
 
@@ -826,9 +870,13 @@ class OnlineManager {
       {
         id: 0,
         peerId: this.myPeerId,
+        cuentaId: this.myCuentaId,
         nombre: this.myName,
         color: this.myColor,
         hat: this.myHat,
+        ropa: this.myRopa,
+        ropaColor: this.myRopaColor,
+        aura: this.myAura,
         listo: true,
         conectado: true,
         esAnfitrion: true,
@@ -843,9 +891,13 @@ class OnlineManager {
         codigo: this.roomCode,
         nombre: `Sala de ${this.myName}`,
         anfitrion: this.myName,
+        cuentaId: this.myCuentaId,
         hostPeerId: this.myPeerId,
         color: this.myColor,
         hat: this.myHat,
+        ropa: this.myRopa,
+        ropaColor: this.myRopaColor,
+        aura: this.myAura,
         maxJugadores: this.maxPlayers,
         publica: this.roomPublica,
         jugadores: this.lobbyPlayers,
@@ -878,7 +930,13 @@ class OnlineManager {
     code: string,
     playerName: string,
     color: string,
-    hat: HatType
+    hat: AvatarTipoDeGorro,
+    opciones?: {
+      cuentaId?: string;
+      ropa?: AvatarTipoDeRopa;
+      ropaColor?: string;
+      aura?: AvatarTipoDeAura;
+    }
   ): Promise<void> {
     this.cleanUp();
     this.isIntentionalExit = false;
@@ -886,14 +944,18 @@ class OnlineManager {
     this.roomClosedRemotely = false;
     this.role = 'client';
     this.roomCode = normalizeRoomCode(code);
+    this.myCuentaId = opciones?.cuentaId;
     this.myName = playerName.trim() || 'Invitado';
     this.myColor = color;
     this.myHat = hat;
+    this.myRopa = opciones?.ropa || 'ninguna';
+    this.myRopaColor = opciones?.ropaColor;
+    this.myAura = opciones?.aura || 'ninguna';
     this.myPeerId = `cli-${randomShortId(8)}`;
     this.appliedAnswerSdp = '';
     this.lastMsgSeq = 0;
 
-    if (this.roomCode.length < 4) {
+    if (this.roomCode.length < 3) {
       this.cleanUp();
       throw new Error('Introduce un código de sala válido.');
     }
@@ -941,9 +1003,13 @@ class OnlineManager {
         cache: 'no-store',
         body: JSON.stringify({
           peerId: this.myPeerId,
+          cuentaId: this.myCuentaId,
           nombre: this.myName,
           color: this.myColor,
           hat: this.myHat,
+          ropa: this.myRopa,
+          ropaColor: this.myRopaColor,
+          aura: this.myAura,
           offer: offerSdp,
         }),
       }
@@ -970,9 +1036,27 @@ class OnlineManager {
       this.myPlayerId = me.id;
       this.myColor = me.color;
       this.myHat = me.hat;
-      if (me.esAnfitrion) {
+      this.myRopa = me.ropa || 'ninguna';
+      this.myRopaColor = me.ropaColor;
+      this.myAura = me.aura || 'ninguna';
+      if (me.esAnfitrion || data.esAnfitrion) {
+        if (this.clientDc) {
+          try {
+            this.clientDc.close();
+          } catch {}
+          this.clientDc = null;
+        }
+        if (this.clientPc) {
+          try {
+            this.clientPc.close();
+          } catch {}
+          this.clientPc = null;
+        }
+        this.hostPeers.clear();
         this.role = 'host';
         this.diagnosticData.role = 'host';
+        this.diagnosticData.iceState = 'connected';
+        this.diagnosticData.dataChannelState = 'open';
       }
     }
 
@@ -1003,10 +1087,14 @@ class OnlineManager {
         dc.send(
           JSON.stringify({
             type: 'JOIN_REQUEST',
+            cuentaId: this.myCuentaId,
             nombre: this.myName,
             color: this.myColor,
             hat: this.myHat,
-          } satisfies OnlineMessage)
+            ropa: this.myRopa,
+            ropaColor: this.myRopaColor,
+            aura: this.myAura,
+          } satisfies MensajeOnline)
         );
         if (this.currentGameState && !this.currentGameState.terminada) {
           dc.send(
@@ -1014,7 +1102,7 @@ class OnlineManager {
               type: 'REQUEST_SYNC',
               jugadorId: this.myPlayerId,
               turnosTotales: this.currentGameState.turnosTotales,
-            } satisfies OnlineMessage)
+            } satisfies MensajeOnline)
           );
         }
       } catch {}
@@ -1022,7 +1110,7 @@ class OnlineManager {
 
     dc.onmessage = (ev) => {
       try {
-        const msg = JSON.parse(String(ev.data)) as OnlineMessage;
+        const msg = JSON.parse(String(ev.data)) as MensajeOnline;
         this.handleMessageFromHost(msg);
       } catch {}
     };
@@ -1043,7 +1131,7 @@ class OnlineManager {
     };
   }
 
-  private async postFallbackMessage(msg: OnlineMessage, toPeerId?: string) {
+  private async postFallbackMessage(msg: MensajeOnline, toPeerId?: string) {
     if (!this.roomCode) return;
     try {
       await fetch(getApiBaseUrl(`/api/salas/${encodeURIComponent(this.roomCode)}/msg`), {
@@ -1059,7 +1147,7 @@ class OnlineManager {
     } catch {}
   }
 
-  private sendToHost(msg: OnlineMessage) {
+  private sendToHost(msg: MensajeOnline) {
     if (this.clientDc && this.clientDc.readyState === 'open') {
       try {
         this.clientDc.send(JSON.stringify(msg));
@@ -1076,7 +1164,7 @@ class OnlineManager {
     }
   }
 
-  public broadcast(msg: OnlineMessage) {
+  public broadcast(msg: MensajeOnline) {
     const serialized = JSON.stringify(msg);
     let sentCount = 0;
     const expectedRemotes = this.lobbyPlayers.filter((p) => !p.esAnfitrion).length;
@@ -1104,7 +1192,7 @@ class OnlineManager {
 
   private syncHostStateToSingleClient(senderPeerId: string) {
     if (!this.currentGameState) return;
-    const syncMsg: OnlineMessage = {
+    const syncMsg: MensajeOnline = {
       type: 'STATE_SYNC',
       state: prepareWireState(this.currentGameState),
     };
@@ -1118,7 +1206,7 @@ class OnlineManager {
     this.postFallbackMessage(syncMsg, senderPeerId);
   }
 
-  private handleMessageFromClient(senderPeerId: string, msg: OnlineMessage) {
+  private handleMessageFromClient(senderPeerId: string, msg: MensajeOnline) {
     if (!msg || typeof msg !== 'object') return;
     this.lastSeenMap.set(senderPeerId, Date.now());
 
@@ -1167,9 +1255,13 @@ class OnlineManager {
     if (msg.type === 'JOIN_REQUEST') {
       const existing = this.lobbyPlayers.find((p) => p.peerId === senderPeerId);
       if (existing) {
+        existing.cuentaId = msg.cuentaId || existing.cuentaId;
         existing.nombre = msg.nombre.trim() || existing.nombre;
         existing.color = msg.color || existing.color;
         existing.hat = msg.hat || existing.hat;
+        existing.ropa = msg.ropa || existing.ropa || 'ninguna';
+        existing.ropaColor = msg.ropaColor !== undefined ? msg.ropaColor : existing.ropaColor;
+        existing.aura = msg.aura || existing.aura || 'ninguna';
         existing.conectado = true;
         this.broadcastLobbyUpdate();
       }
@@ -1242,7 +1334,7 @@ class OnlineManager {
     }
   }
 
-  private handleMessageFromHost(msg: OnlineMessage) {
+  private handleMessageFromHost(msg: MensajeOnline) {
     if (!msg || typeof msg !== 'object') return;
     this.hostLastSeen = Date.now();
 
@@ -1300,6 +1392,9 @@ class OnlineManager {
         this.myPlayerId = me.id;
         this.myColor = me.color;
         this.myHat = me.hat;
+        this.myRopa = me.ropa || 'ninguna';
+        this.myRopaColor = me.ropaColor;
+        this.myAura = me.aura || 'ninguna';
       }
 
       this.saveActiveSession();
@@ -1315,7 +1410,7 @@ class OnlineManager {
       this.rivalLeftAfterMatch = false;
       this.roomClosedRemotely = false;
       this.hadWebRtcOpenInMatch = this.areAllClientDataChannelsOpen();
-      const clientState: GameState = {
+      const clientState: EstadoDeJuego = {
         ...msg.initialState,
         miJugadorId: this.myPlayerId,
         esAnfitrion: false,
@@ -1326,7 +1421,7 @@ class OnlineManager {
       this.callbacks.onGameStart?.(clientState);
     } else if (msg.type === 'STATE_SYNC') {
       this.clearPendingActionRetry();
-      const clientState: GameState = {
+      const clientState: EstadoDeJuego = {
         ...msg.state,
         miJugadorId: this.myPlayerId,
         esAnfitrion: false,
@@ -1357,7 +1452,7 @@ class OnlineManager {
     } else if (msg.type === 'HOST_RESUMED') {
       this.clearPendingActionRetry();
       this.stopReconnectGracePeriod();
-      const clientState: GameState = {
+      const clientState: EstadoDeJuego = {
         ...msg.state,
         miJugadorId: this.myPlayerId,
         esAnfitrion: false,
@@ -1371,7 +1466,7 @@ class OnlineManager {
 
   private broadcastLobbyUpdate() {
     const list = [...this.lobbyPlayers];
-    const updateMsg: OnlineMessage = {
+    const updateMsg: MensajeOnline = {
       type: 'LOBBY_UPDATE',
       roomCode: this.roomCode,
       maxJugadores: this.maxPlayers,
@@ -1388,7 +1483,7 @@ class OnlineManager {
     this.callbacks.onLobbyUpdate?.(list, this.maxPlayers);
   }
 
-  public startGameAsHost(initialState: GameState) {
+  public startGameAsHost(initialState: EstadoDeJuego) {
     this.clearPendingActionRetry();
     this.rivalLeftAfterMatch = false;
     this.roomClosedRemotely = false;
@@ -1405,7 +1500,7 @@ class OnlineManager {
     this.lastHandledStartId = startId;
     this.saveActiveSession();
 
-    const startMsg: OnlineMessage = {
+    const startMsg: MensajeOnline = {
       type: 'START_GAME',
       config: cleanInitial.config,
       initialState: cleanInitial,
@@ -1414,7 +1509,7 @@ class OnlineManager {
     this.broadcast(startMsg);
   }
 
-  public syncState(state: GameState) {
+  public syncState(state: EstadoDeJuego) {
     const cleanState = prepareWireState(state);
     this.currentGameState = cleanState;
     this.saveActiveSession();
@@ -1426,11 +1521,11 @@ class OnlineManager {
 
   public sendAction(
     accion: 'mover' | 'muro' | 'pasar',
-    payload: { destino?: Coord; orientacion?: WallOrientation; r?: number; c?: number }
+    payload: { destino?: Coordenada; orientacion?: OrientacionMuro; r?: number; c?: number }
   ) {
     if (this.role !== 'client') return;
     const expectedPrevTurns = this.currentGameState?.turnosTotales ?? 0;
-    const msg: OnlineMessage = {
+    const msg: MensajeOnline = {
       type: 'PLAYER_ACTION',
       jugadorId: this.myPlayerId,
       accion,
@@ -1464,7 +1559,7 @@ class OnlineManager {
   }
 
   public sendReaction(emoji: string) {
-    const msg: OnlineMessage = {
+    const msg: MensajeOnline = {
       type: 'REACTION',
       jugadorId: this.myPlayerId,
       emoji,
@@ -1485,7 +1580,7 @@ class OnlineManager {
 
   public requestRematch(_jugadorId?: number): boolean {
     if (!this.canRequestRematch()) return false;
-    const msg: OnlineMessage = {
+    const msg: MensajeOnline = {
       type: 'REMATCH_REQUEST',
       jugadorId: this.myPlayerId,
       nombre: this.myName,
@@ -1502,7 +1597,7 @@ class OnlineManager {
   }
 
   public respondRematch(aceptada: boolean): boolean {
-    const msg: OnlineMessage = {
+    const msg: MensajeOnline = {
       type: 'REMATCH_RESPONSE',
       jugadorId: this.myPlayerId,
       nombre: this.myName,
@@ -1544,7 +1639,7 @@ class OnlineManager {
     }
   }
 
-  public async obtenerSalasPublicas(): Promise<any[]> {
+  public async obtenerSalasPublicas(): Promise<InfoSalaPublica[]> {
     try {
       const base = getApiBaseUrl('/api/salas');
       const sep = base.includes('?') ? '&' : '?';
@@ -1576,9 +1671,13 @@ class OnlineManager {
           codigo: code,
           nombre: String(nombre).trim() || `Sala ${code}`,
           anfitrion: info.anfitrion || this.myName,
+          cuentaId: info.cuentaId || this.myCuentaId,
           hostPeerId: this.myPeerId || `host_${code.toLowerCase()}`,
           color: info.color || this.myColor,
           hat: info.hat || this.myHat,
+          ropa: info.ropa || this.myRopa,
+          ropaColor: info.ropaColor ?? this.myRopaColor,
+          aura: info.aura || this.myAura,
           maxJugadores: info.maxJugadores || this.maxPlayers,
           publica: true,
           jugadores: this.lobbyPlayers.length > 0 ? this.lobbyPlayers : undefined,
@@ -1632,7 +1731,7 @@ class OnlineManager {
     const prevName = this.myName;
 
     if (prevRole === 'host' && prevCode) {
-      const leftMsg: OnlineMessage = {
+      const leftMsg: MensajeOnline = {
         type: 'PLAYER_LEFT',
         jugadorId: prevPlayerId,
         nombre: prevName || 'El anfitrión',
@@ -1650,7 +1749,7 @@ class OnlineManager {
         keepalive: true,
       }).catch(() => {});
     } else if (prevRole === 'client' && prevCode) {
-      const leftMsg: OnlineMessage = {
+      const leftMsg: MensajeOnline = {
         type: 'PLAYER_LEFT',
         jugadorId: prevPlayerId,
         nombre: prevName || 'El otro jugador',
@@ -1715,6 +1814,10 @@ class OnlineManager {
     this.role = null;
     this.roomCode = '';
     this.myPeerId = '';
+    this.myCuentaId = undefined;
+    this.myRopa = 'ninguna';
+    this.myRopaColor = undefined;
+    this.myAura = 'ninguna';
     this.lobbyPlayers = [];
 
     this.diagnosticData.status = 'desconectado';
