@@ -606,6 +606,12 @@ function normalizarCodigoSala(raw: any): string {
   return String(raw || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
 }
 
+function normalizarTamanoTablero(raw: any): 5 | 7 | 9 {
+  const num = Number(raw);
+  if (num === 5 || num === 7 || num === 9) return num;
+  return 9;
+}
+
 function limpiarSalasExpiradas() {
   const salasRaw = leerJson(ARCHIVO_SALAS_ONLINE, {}) as Record<string, any>;
   const ahora = Date.now();
@@ -652,7 +658,7 @@ function leerSalaOnline(codigo: string) {
       creadoEn: match.creadoEn || ahora,
       ultimoCambio: ahora,
       modoMuros: match.modoMuros || 'estandar',
-      tamanoTablero: match.tamanoTablero === 7 ? 7 : 9,
+      tamanoTablero: normalizarTamanoTablero(match.tamanoTablero),
       esOficialStaff: true,
     };
     guardarSalaOnline(limpio, nuevaSala);
@@ -796,14 +802,14 @@ app.post('/api/login', async (req, res) => {
   let encontrada: any = null;
   for (const acc of Object.values(cuentas)) {
     if (!acc || acc.id === 'admin') continue;
-    if (String(acc.nombre || '').trim().toLowerCase() === busqueda || String(acc.id || '').trim().toLowerCase() === busqueda) {
+    if (String(acc.id || '').trim().toLowerCase() === busqueda) {
       encontrada = acc;
       break;
     }
   }
 
   if (!encontrada) {
-    return res.status(404).json({ ok: false, error: 'User no encontrado. Regístrate para jugar.' });
+    return res.status(404).json({ ok: false, error: 'User ID no encontrado. Usa tu ID exacto o regístrate.' });
   }
 
   const valida = await verificarClaveCuenta(encontrada, claveTrim);
@@ -1446,7 +1452,7 @@ app.post('/api/admin/salas-personalizadas', async (req, res) => {
     creadoEn: ahora,
     maxJugadores: maxJugadores === 4 ? 4 : 2,
     modoMuros: modoMuros === 'caos' ? 'caos' : modoMuros === 'tactico' ? 'tactico' : 'estandar',
-    tamanoTablero: tamanoTablero === 7 ? 7 : 9,
+    tamanoTablero: normalizarTamanoTablero(tamanoTablero),
     destacada: true,
     mensajeEspecial: String(mensajeEspecial || '').trim().slice(0, 80),
   };
@@ -1989,7 +1995,7 @@ app.post('/api/salas', (req, res) => {
     creadoEn: existente?.creadoEn || ahora,
     ultimoCambio: ahora,
     modoMuros: existente?.modoMuros || room.modoMuros,
-    tamanoTablero: existente?.tamanoTablero || room.tamanoTablero,
+    tamanoTablero: normalizarTamanoTablero(existente?.tamanoTablero ?? room.tamanoTablero),
     esOficialStaff: Boolean(existente?.esOficialStaff),
   };
 
@@ -2022,7 +2028,7 @@ app.get('/api/salas/:codigo', (req, res) => {
       seq: sala.seq || 0,
       ultimoCambio: sala.ultimoCambio || sala.creadoEn || 0,
       modoMuros: sala.modoMuros,
-      tamanoTablero: sala.tamanoTablero,
+      tamanoTablero: normalizarTamanoTablero(sala.tamanoTablero),
       esOficialStaff: Boolean(sala.esOficialStaff),
       mensajesNuevos,
     },

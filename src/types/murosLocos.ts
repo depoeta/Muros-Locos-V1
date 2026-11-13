@@ -71,14 +71,16 @@ export interface UserInventario {
   activoId?: string;
 }
 
+export type TamanoTablero = 5 | 7 | 9;
+
 export interface SalaPersonalizada {
   codigo: string;
   nombre: string;
   creador: string;
   creadorRol: UserRol;
-  maxJugadores: 2 | 4 | 6;
+  maxJugadores: 2 | 4;
   modoMuros: 'estandar' | 'tactico' | 'caos';
-  tamanoTablero: 7 | 9 | 13;
+  tamanoTablero: TamanoTablero;
   mensajeEspecial?: string;
   creadaEn: number;
 }
@@ -175,6 +177,7 @@ export interface ConfigDePartida {
   segundosPorTurno: number;
   esTorneo?: boolean;
   totalRondasTorneo?: number;
+  tamanoTablero?: TamanoTablero;
   temaTablero?: TemaTablero;
   rotationMode?: boolean;
 }
@@ -263,7 +266,8 @@ export type MensajeOnline =
   | {
       type: 'LOBBY_UPDATE';
       roomCode: string;
-      maxJugadores: 2 | 4 | 6;
+      maxJugadores: 2 | 4;
+      tamanoTablero?: TamanoTablero;
       jugadores: InfoJugadorOnline[];
     }
   | {
@@ -309,12 +313,14 @@ export interface SesionOnlineActiva {
   myRopa?: AvatarTipoDeRopa;
   myRopaColor?: string;
   myAura?: AvatarTipoDeAura;
+  tamanoTablero?: TamanoTablero;
   lastState?: EstadoDeJuego;
   timestamp: number;
 }
 
 export interface EstadoDeJuego {
-  n: 2 | 4 | 6;
+  n: 2 | 4;
+  tamanoTablero?: TamanoTablero;
   jugadores: JugadorEnJuego[];
   murosH: number[][];
   murosV: number[][];
@@ -464,12 +470,12 @@ export interface InfoSalaPublica {
   ropa?: AvatarTipoDeRopa;
   ropaColor?: string;
   aura?: AvatarTipoDeAura;
-  maxJugadores: 2 | 4 | 6;
+  maxJugadores: 2 | 4;
   jugadoresConectados: number;
   creadoEn: number;
   esOficialStaff?: boolean;
   modoMuros?: 'estandar' | 'tactico' | 'caos';
-  tamanoTablero?: 7 | 9 | 13;
+  tamanoTablero?: TamanoTablero;
 }
 
 export interface SolicitudResetRanking {

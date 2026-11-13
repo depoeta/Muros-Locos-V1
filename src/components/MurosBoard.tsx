@@ -6,12 +6,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  BOARD_SIZE,
   esMeta,
   movimientosLegales,
   sounds,
   validarMuro,
-  WALL_GRID_SIZE,
 } from '../game/murosLocosEngine';
 import { TemaTablero, Coordenada, EstadoDeJuego, OrientacionMuro } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
@@ -144,6 +142,21 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
 
   const hayMultiplesHumanos = estado.jugadores.filter((p) => p.tipo === 'humano').length >= 2;
 
+  const wallGridSize = estado.murosH.length > 0 ? estado.murosH.length : 8;
+  const boardSize = wallGridSize + 1;
+  const lastIdx = boardSize - 1;
+  const gapPx = 6;
+  const wallThickness = 12;
+  const wallOffset = 9;
+  const hitOffset = 3;
+  const charSize = boardSize === 7 ? 52 : boardSize === 5 ? 60 : 46;
+  const gridTemplateClass =
+    boardSize === 5
+      ? 'grid-cols-5 grid-rows-5 gap-[6px] p-[6px]'
+      : boardSize === 7
+      ? 'grid-cols-7 grid-rows-7 gap-[6px] p-[6px]'
+      : 'grid-cols-9 grid-rows-9 gap-[6px] p-[6px]';
+
   const obtenerAnguloJugador = (jugadorId: number, numJugadores: 2 | 4): number => {
     if (numJugadores === 2) {
       return jugadorId === 1 ? 180 : 0;
@@ -181,7 +194,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
   const toVisualIntersection = (r: number, c: number): Coordenada => ({ r, c });
 
   const isGoalForActivePlayer = (r: number, c: number): boolean => {
-    return esMeta(jugadorActivo, r, c, estado.n);
+    return esMeta(jugadorActivo, r, c, estado.n, boardSize);
   };
 
   const getGoalInfo = (r: number, c: number) => {
@@ -192,12 +205,12 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
 
     if (estado.n === 2) {
       if (r === 0) return { color: p0?.color || '#ff6b6b', player: p0?.nombre || 'J1', symbol: '🏁' };
-      if (r === 8) return { color: p1?.color || '#4dabf7', player: p1?.nombre || 'J2', symbol: '🏁' };
+      if (r === lastIdx) return { color: p1?.color || '#4dabf7', player: p1?.nombre || 'J2', symbol: '🏁' };
     } else {
-      if ((r === 0 || r === 8) && (c === 0 || c === 8)) return null;
+      if ((r === 0 || r === lastIdx) && (c === 0 || c === lastIdx)) return null;
       if (r === 0) return { color: p0?.color || '#ff6b6b', player: p0?.nombre || 'J1', symbol: '🏁' };
-      if (c === 8) return { color: p1?.color || '#4dabf7', player: p1?.nombre || 'J2', symbol: '🏁' };
-      if (r === 8) return { color: p2?.color || '#ffd43b', player: p2?.nombre || 'J3', symbol: '🏁' };
+      if (c === lastIdx) return { color: p1?.color || '#4dabf7', player: p1?.nombre || 'J2', symbol: '🏁' };
+      if (r === lastIdx) return { color: p2?.color || '#ffd43b', player: p2?.nombre || 'J3', symbol: '🏁' };
       if (c === 0) return { color: p3?.color || '#51cf66', player: p3?.nombre || 'J4', symbol: '🏁' };
     }
     return null;
@@ -329,15 +342,16 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
         // Modo Muro: mover el cursor del muro fantasma
         if (estado.modoAccion === 'muro') {
           setHoveredIntersection((prev: Coordenada | null) => {
-            const curR = prev ? prev.r : 3;
-            const curC = prev ? prev.c : 3;
+            const centerWall = Math.floor((wallGridSize - 1) / 2);
+            const curR = prev ? prev.r : centerWall;
+            const curC = prev ? prev.c : centerWall;
             let nextR = curR;
             let nextC = curC;
 
             if (isUp) nextR = Math.max(0, curR - 1);
-            if (isDown) nextR = Math.min(7, curR + 1);
+            if (isDown) nextR = Math.min(wallGridSize - 1, curR + 1);
             if (isLeft) nextC = Math.max(0, curC - 1);
-            if (isRight) nextC = Math.min(7, curC + 1);
+            if (isRight) nextC = Math.min(wallGridSize - 1, curC + 1);
 
             updatePreview(nextR, nextC);
             sounds.playClick();
@@ -363,6 +377,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
     bloqueadoPorAnimacion,
     estado.terminada,
     estado.modoAccion,
+    wallGridSize,
     jugadorActivo,
     movimientos,
     hoveredIntersection,
@@ -411,14 +426,14 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
         <div className={`absolute bottom-2 left-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} border-2 border-[#2b2140]`} />
         <div className={`absolute bottom-2 right-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} border-2 border-[#2b2140]`} />
 
-        {/* Inner Playing Surface (9x9 grid) */}
+        {/* Inner Playing Surface (5x5, 7x7 o 9x9 grid) */}
         <div
           ref={boardRef}
-          className={`relative w-full h-full rounded-2xl ${currentTheme.innerBg} border-3 border-[#2b2140] overflow-hidden grid grid-cols-9 grid-rows-9 gap-[6px] p-[6px] transition-colors duration-300`}
+          className={`relative w-full h-full rounded-2xl ${currentTheme.innerBg} border-3 border-[#2b2140] overflow-hidden grid ${gridTemplateClass} transition-colors duration-300`}
           style={{ touchAction: 'manipulation' }}
         >
-          {Array.from({ length: BOARD_SIZE }).map((_, vr) =>
-            Array.from({ length: BOARD_SIZE }).map((_, vc) => {
+          {Array.from({ length: boardSize }).map((_, vr) =>
+            Array.from({ length: boardSize }).map((_, vc) => {
               const logical = toLogicalCell(vr, vc);
               const r = logical.r;
               const c = logical.c;
@@ -497,9 +512,9 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
           )}
 
           {/* Placed Horizontal Walls */}
-          {Array.from({ length: WALL_GRID_SIZE }).map((_, r) =>
-            Array.from({ length: WALL_GRID_SIZE }).map((_, c) => {
-              const wallOwner = estado.murosH[r][c];
+          {Array.from({ length: wallGridSize }).map((_, r) =>
+            Array.from({ length: wallGridSize }).map((_, c) => {
+              const wallOwner = estado.murosH[r]?.[c] ?? -1;
               if (wallOwner === -1) return null;
               const wallColor = getWallColor(wallOwner);
               const vis = toVisualIntersection(r, c);
@@ -516,9 +531,9 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                   }
                   className="absolute z-15 h-3 rounded-full border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] flex items-center justify-between px-1 pointer-events-none"
                   style={{
-                    left: `calc(6px + ${vis.c} * ((100% - 6px) / 9))`,
-                    width: `calc((200% - 66px) / 9)`,
-                    top: `calc(6px + ${vis.r + 1} * ((100% - 6px) / 9) - 9px)`,
+                    left: `calc(${gapPx}px + ${vis.c} * ((100% - ${gapPx}px) / ${boardSize}))`,
+                    width: `calc((200% - ${(boardSize + 2) * gapPx}px) / ${boardSize})`,
+                    top: `calc(${gapPx}px + ${vis.r + 1} * ((100% - ${gapPx}px) / ${boardSize}) - ${wallOffset}px)`,
                     backgroundColor: wallColor,
                     backgroundImage:
                       'linear-gradient(180deg, rgba(255,255,255,0.4) 0%, rgba(0,0,0,0.15) 100%)',
@@ -532,9 +547,9 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
           )}
 
           {/* Placed Vertical Walls */}
-          {Array.from({ length: WALL_GRID_SIZE }).map((_, r) =>
-            Array.from({ length: WALL_GRID_SIZE }).map((_, c) => {
-              const wallOwner = estado.murosV[r][c];
+          {Array.from({ length: wallGridSize }).map((_, r) =>
+            Array.from({ length: wallGridSize }).map((_, c) => {
+              const wallOwner = estado.murosV[r]?.[c] ?? -1;
               if (wallOwner === -1) return null;
               const wallColor = getWallColor(wallOwner);
               const vis = toVisualIntersection(r, c);
@@ -551,9 +566,9 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                   }
                   className="absolute z-15 w-3 rounded-full border-2 border-[#2b2140] shadow-[2px_2px_0_#2b2140] flex flex-col items-center justify-between py-1 pointer-events-none"
                   style={{
-                    top: `calc(6px + ${vis.r} * ((100% - 6px) / 9))`,
-                    height: `calc((200% - 66px) / 9)`,
-                    left: `calc(6px + ${vis.c + 1} * ((100% - 6px) / 9) - 9px)`,
+                    top: `calc(${gapPx}px + ${vis.r} * ((100% - ${gapPx}px) / ${boardSize}))`,
+                    height: `calc((200% - ${(boardSize + 2) * gapPx}px) / ${boardSize})`,
+                    left: `calc(${gapPx}px + ${vis.c + 1} * ((100% - ${gapPx}px) / ${boardSize}) - ${wallOffset}px)`,
                     backgroundColor: wallColor,
                     backgroundImage:
                       'linear-gradient(90deg, rgba(255,255,255,0.4) 0%, rgba(0,0,0,0.15) 100%)',
@@ -575,13 +590,13 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                   key={`player-entity-${player.id}`}
                   className="absolute flex items-center justify-center pointer-events-none"
                   style={{
-                    width: 'calc((100% - 60px) / 9)',
-                    height: 'calc((100% - 60px) / 9)',
+                    width: `calc((100% - ${(boardSize + 1) * gapPx}px) / ${boardSize})`,
+                    height: `calc((100% - ${(boardSize + 1) * gapPx}px) / ${boardSize})`,
                   }}
                   initial={false}
                   animate={{
-                    left: `calc(6px + ${vis.c} * ((100% - 6px) / 9))`,
-                    top: `calc(6px + ${vis.r} * ((100% - 6px) / 9))`,
+                    left: `calc(${gapPx}px + ${vis.c} * ((100% - ${gapPx}px) / ${boardSize}))`,
+                    top: `calc(${gapPx}px + ${vis.r} * ((100% - ${gapPx}px) / ${boardSize}))`,
                   }}
                   transition={
                     animacionesReducidas
@@ -627,7 +642,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                         ropa={player.ropa}
                         ropaColor={player.ropaColor}
                         aura={player.aura}
-                        size={46}
+                        size={charSize}
                         inGame={true}
                         isActive={estado.turnoActual === player.id}
                         isDancing={estado.ganador === player.id}
@@ -642,8 +657,8 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
           {/* Clickable Intersections Overlay for Wall Placement */}
           {estado.modoAccion === 'muro' && esTurnoHumano && !bloqueadoPorAnimacion && (
             <div className="absolute inset-0 pointer-events-auto z-30">
-              {Array.from({ length: WALL_GRID_SIZE }).map((_, vr) =>
-                Array.from({ length: WALL_GRID_SIZE }).map((_, vc) => {
+              {Array.from({ length: wallGridSize }).map((_, vr) =>
+                Array.from({ length: wallGridSize }).map((_, vc) => {
                   const logical = toLogicalIntersection(vr, vc);
                   const isCurrentHovered =
                     hoveredIntersection &&
@@ -659,8 +674,8 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                       onMouseEnter={() => updatePreview(logical.r, logical.c)}
                       className="absolute w-10 h-10 sm:w-11 sm:h-11 rounded-full -translate-x-1/2 -translate-y-1/2 flex items-center justify-center cursor-pointer group"
                       style={{
-                        left: `calc(6px + ${vc + 1} * ((100% - 6px) / 9) - 3px)`,
-                        top: `calc(6px + ${vr + 1} * ((100% - 6px) / 9) - 3px)`,
+                        left: `calc(${gapPx}px + ${vc + 1} * ((100% - ${gapPx}px) / ${boardSize}) - ${hitOffset}px)`,
+                        top: `calc(${gapPx}px + ${vr + 1} * ((100% - ${gapPx}px) / ${boardSize}) - ${hitOffset}px)`,
                       }}
                     >
                       <div
@@ -700,16 +715,16 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                     style={
                       estado.orientacionMuro === 'H'
                         ? {
-                            left: `calc(6px + ${vis.c} * ((100% - 6px) / 9))`,
-                            width: `calc((200% - 66px) / 9)`,
-                            top: `calc(6px + ${vis.r + 1} * ((100% - 6px) / 9) - 9px)`,
-                            height: '12px',
+                            left: `calc(${gapPx}px + ${vis.c} * ((100% - ${gapPx}px) / ${boardSize}))`,
+                            width: `calc((200% - ${(boardSize + 2) * gapPx}px) / ${boardSize})`,
+                            top: `calc(${gapPx}px + ${vis.r + 1} * ((100% - ${gapPx}px) / ${boardSize}) - ${wallOffset}px)`,
+                            height: `${wallThickness}px`,
                           }
                         : {
-                            top: `calc(6px + ${vis.r} * ((100% - 6px) / 9))`,
-                            height: `calc((200% - 66px) / 9)`,
-                            left: `calc(6px + ${vis.c + 1} * ((100% - 6px) / 9) - 9px)`,
-                            width: '12px',
+                            top: `calc(${gapPx}px + ${vis.r} * ((100% - ${gapPx}px) / ${boardSize}))`,
+                            height: `calc((200% - ${(boardSize + 2) * gapPx}px) / ${boardSize})`,
+                            left: `calc(${gapPx}px + ${vis.c + 1} * ((100% - ${gapPx}px) / ${boardSize}) - ${wallOffset}px)`,
+                            width: `${wallThickness}px`,
                           }
                     }
                   >

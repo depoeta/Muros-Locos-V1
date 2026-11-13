@@ -16,6 +16,7 @@ import {
   RegDeAvatar,
   AvatarTipoDeAura,
   AvatarTipoDeRopa,
+  TamanoTablero,
   TipoDeJugador,
   UserCuenta,
 } from '../types/murosLocos';
@@ -570,6 +571,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
   onShowToast,
 }) => {
   const [numJugadores, setNumJugadores] = useState<2 | 4>(2);
+  const [tamanoTablero, setTamanoTablero] = useState<TamanoTablero>(9);
   const [modalAspectoAbierto, setModalAspectoAbierto] = useState(false);
 
   // Carga automática del terreno y personaje predeterminados del user si existen
@@ -711,6 +713,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
       segundosPorTurno,
       esTorneo,
       totalRondasTorneo,
+      tamanoTablero,
       temaTablero,
       // Giro completamente desactivado (vista fija sin rotaciones)
       rotationMode: false,
@@ -841,6 +844,39 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
                 🎉 4 Jugadores
               </button>
             </div>
+          </div>
+        </div>
+
+        {/* Tamaño del Tablero (3 tamaños: 5x5, 7x7, 9x9) */}
+        <div className="flex flex-col items-center gap-1">
+          <span className="text-xs font-extrabold uppercase tracking-wider text-[#593922]">
+            Tamaño de la Mesa
+          </span>
+          <div className="grid grid-cols-3 gap-1.5 p-1 bg-[#ede4d0] rounded-2xl border-3 border-[#2b2140] shadow-[0_3px_0_#2b2140] w-full">
+            {(
+              [
+                { val: 5, label: '5×5', sub: 'Relámpago' },
+                { val: 7, label: '7×7', sub: 'Rápido' },
+                { val: 9, label: '9×9', sub: 'Clásico' },
+              ] as const
+            ).map((op) => (
+              <button
+                key={op.val}
+                type="button"
+                onClick={() => {
+                  setTamanoTablero(op.val);
+                  sounds.playClick();
+                }}
+                className={`py-1.5 px-1 rounded-xl font-black text-xs transition-all cursor-pointer flex flex-col items-center leading-tight ${
+                  tamanoTablero === op.val
+                    ? 'bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                    : 'text-[#86542d] hover:text-[#2b2140]'
+                }`}
+              >
+                <span>{op.label}</span>
+                <span className="text-[9px] font-bold opacity-80">{op.sub}</span>
+              </button>
+            ))}
           </div>
         </div>
 

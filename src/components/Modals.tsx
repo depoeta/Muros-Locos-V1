@@ -27,6 +27,7 @@ import {
   UserRol,
   SalaPersonalizada,
   SolicitudResetRanking,
+  TamanoTablero,
   TemaTablero,
 } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
@@ -1860,9 +1861,6 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
   const [textoBajaConfirmacion, setTextoBajaConfirmacion] = useState('');
   const [nombre, setNombre] = useState('');
   const [clave, setClave] = useState('');
-  const [color, setColor] = useState('#ff6b6b');
-  const [hat, setHat] = useState<AvatarTipoDeGorro>('corona');
-  const [temaRegistro, setTemaRegistro] = useState<TemaTablero>('madera');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
 
@@ -1874,16 +1872,6 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
   const [cambioClaveOk, setCambioClaveOk] = useState(false);
 
   const [perfilNombre, setPerfilNombre] = useState<string>(() => userActual?.nombre || '');
-  const [perfilHat, setPerfilHat] = useState<AvatarTipoDeGorro>(() => userActual?.avatarHat || 'corona');
-  const [perfilColor, setPerfilColor] = useState<string>(
-    () => userActual?.avatarColor || '#ff6b6b'
-  );
-  const [perfilTema, setPerfilTema] = useState<TemaTablero>(
-    () => userActual?.temaTablero || 'madera'
-  );
-  const [desbloqueosPuntos, setDesbloqueosPuntos] = useState<Record<string, number>>(() =>
-    obtenerDesbloqueosLocales()
-  );
   const [guardandoPreferencias, setGuardandoPreferencias] = useState(false);
   const [guardadoOkMsg, setGuardadoOkMsg] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -1899,7 +1887,6 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
       setTodasLasCuentas(nuevas);
     });
     sincronizarConNube(false).then(() => setTodasLasCuentas(cargarCuentas())).catch(() => {});
-    obtenerDesbloqueosPersonajesAsync().then((d) => setDesbloqueosPuntos(d)).catch(() => {});
     return () => {
       unsubDiag();
       unsubNube();
@@ -1913,17 +1900,8 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
   useEffect(() => {
     if (userActual) {
       setPerfilNombre(userActual.nombre || '');
-      setPerfilHat(userActual.avatarHat || 'corona');
-      setPerfilColor(userActual.avatarColor || '#ff6b6b');
-      setPerfilTema(userActual.temaTablero || 'madera');
     }
-  }, [
-    userActual?.id,
-    userActual?.nombre,
-    userActual?.avatarHat,
-    userActual?.avatarColor,
-    userActual?.temaTablero,
-  ]);
+  }, [userActual?.id, userActual?.nombre]);
 
   const comunidadLista = useMemo(() => {
     return Object.values(todasLasCuentas).sort((a, b) => {
@@ -1959,7 +1937,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
     setErrorMsg(null);
     setCargando(true);
     try {
-      const res = await registrarUserAsync(nombre, clave, color, hat, temaRegistro);
+      const res = await registrarUserAsync(nombre, clave, '#ff6b6b', 'corona', 'madera');
       if (res.ok && res.user) {
         onLoginSuccess(res.user);
         onCerrar();
@@ -2046,8 +2024,8 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
               <>
                 <div className="flex items-center gap-3 p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm">
                   <CartoonCharacter
-                    color={perfilColor}
-                    hat={perfilHat}
+                    color={userActual.avatarColor}
+                    hat={userActual.avatarHat}
                     ropa={userActual.avatarRopa}
                     ropaColor={userActual.avatarRopaColor}
                     aura={userActual.avatarAura}
@@ -2081,12 +2059,9 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                     <span className="text-xs font-black text-[#2b8a3e] block">
                       {userActual.puntos} puntos acumulados
                     </span>
-                    {(perfilNombre.trim() !== userActual.nombre ||
-                      perfilHat !== userActual.avatarHat ||
-                      perfilColor !== userActual.avatarColor ||
-                      perfilTema !== (userActual.temaTablero || 'madera')) && (
+                    {userActual.id !== 'admin' && perfilNombre.trim() !== userActual.nombre && (
                       <span className="text-[10px] font-black text-[#d9480f] block mt-0.5">
-                        👀 Cambios sin guardar · Pulsa Guardar abajo
+                        👀 Nombre sin guardar · Pulsa Guardar abajo
                       </span>
                     )}
                   </div>
@@ -2107,25 +2082,25 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                   </div>
                 </div>
 
-                {/* Personaje, Nombre y Terreno Predeterminados */}
-                <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] flex flex-col gap-2 shadow-sm text-left">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
-                      Perfil, Personaje y Terreno
-                    </span>
-                    {toastMsg && (
-                      <span className="text-[10px] text-[#e03131] font-black animate-pulse">
-                        {toastMsg}
+                {/* Nombre visible en Perfil */}
+                {userActual.id !== 'admin' && (
+                  <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] flex flex-col gap-2 shadow-sm text-left">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
+                        Nombre de Perfil
                       </span>
-                    )}
-                    {guardadoOkMsg && (
-                      <span className="text-[10px] text-[#2b8a3e] font-black animate-bounce">
-                        ✓ ¡Guardado!
-                      </span>
-                    )}
-                  </div>
+                      {toastMsg && (
+                        <span className="text-[10px] text-[#e03131] font-black animate-pulse">
+                          {toastMsg}
+                        </span>
+                      )}
+                      {guardadoOkMsg && (
+                        <span className="text-[10px] text-[#2b8a3e] font-black animate-bounce">
+                          ✓ ¡Guardado!
+                        </span>
+                      )}
+                    </div>
 
-                  {userActual.id !== 'admin' && (
                     <div>
                       <label className="text-[10px] font-bold text-[#86542d] block mb-0.5">
                         Nombre visible (3 a 15 caracteres):
@@ -2139,114 +2114,49 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                         className="w-full text-xs font-bold text-[#2b2140] bg-[#f8f9fa] border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-[#ffd43b]"
                       />
                     </div>
-                  )}
 
-                  <div className="grid grid-cols-5 gap-1.5 mt-1">
-                    {RegDeAvatar.map((h) => {
-                      const puntosReq = desbloqueosPuntos[h.id] ?? h.puntosRequeridos;
-                      const unlocked =
-                        puntosReq === 0 ||
-                        (userActual.puntos || 0) >= puntosReq ||
-                        userActual.rol === 'dev' ||
-                        userActual.rol === 'admin' ||
-                        userActual.id === 'admin';
-                      return (
-                        <button
-                          key={h.id}
-                          type="button"
-                          onClick={() => {
-                            if (!unlocked) {
-                              sounds.playError();
-                              setToastMsg(`🔒 Requiere ${puntosReq} pts`);
-                              setTimeout(() => setToastMsg(null), 2500);
-                              return;
-                            }
-                            sounds.playClick();
-                            setPerfilHat(h.id);
-                            setPerfilColor(h.colorDefault);
-                          }}
-                          className={`relative py-1.5 px-1 rounded-xl text-xs border-2 border-[#2b2140] cursor-pointer flex flex-col items-center gap-0.5 transition-all ${
-                            !unlocked
-                              ? 'bg-[#e9ecef] opacity-60'
-                              : perfilHat === h.id
-                              ? 'bg-[#ffd43b] shadow-sm -translate-y-0.5 font-black'
-                              : 'bg-[#fff8e7] hover:bg-white'
-                          }`}
-                          title={unlocked ? h.nombre : `Requiere ${puntosReq} puntos`}
-                        >
-                          {!unlocked && (
-                            <span className="absolute top-0.5 right-0.5 text-[8px]">🔒</span>
-                          )}
-                          <span className="text-base">{h.emoji}</span>
-                          <span className="text-[9px] font-bold truncate max-w-full">{h.nombre}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {/* Selector de Terreno Predeterminado */}
-                  <div className="grid grid-cols-4 gap-1 mt-1">
-                    {TEMAS_LISTA.map((t) => (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => {
-                          sounds.playClick();
-                          setPerfilTema(t.id);
-                        }}
-                        className={`py-1.5 px-1 rounded-xl text-[10px] font-black border-2 border-[#2b2140] cursor-pointer transition-all ${
-                          perfilTema === t.id ? `${t.bg} shadow-xs -translate-y-0.5` : 'bg-[#f8f9fa]'
-                        }`}
-                      >
-                        {t.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  <button
-                    type="button"
-                    disabled={guardandoPreferencias}
-                    onClick={async () => {
-                      sounds.playClick();
-                      const cleanName = perfilNombre.trim();
-                      if (userActual.id !== 'admin' && (cleanName.length < 3 || cleanName.length > 15)) {
-                        sounds.playError();
-                        setToastMsg('⚠️ Nombre entre 3 y 15 caracteres');
-                        setTimeout(() => setToastMsg(null), 2500);
-                        return;
-                      }
-                      setGuardandoPreferencias(true);
-                      try {
-                        const res = await actualizarCuentaAsync(userActual, {
-                          nombre: userActual.id !== 'admin' ? cleanName : undefined,
-                          avatarHat: perfilHat,
-                          avatarColor: perfilColor,
-                          temaTablero: perfilTema,
-                        });
-                        if (res.ok && res.user) {
-                          onLoginSuccess(res.user);
-                          setGuardadoOkMsg(true);
-                          setTimeout(() => setGuardadoOkMsg(false), 2500);
-                        } else {
+                    <button
+                      type="button"
+                      disabled={guardandoPreferencias}
+                      onClick={async () => {
+                        sounds.playClick();
+                        const cleanName = perfilNombre.trim();
+                        if (cleanName.length < 3 || cleanName.length > 15) {
                           sounds.playError();
-                          setToastMsg(res.error || '⚠️ No se pudo guardar');
+                          setToastMsg('⚠️ Nombre entre 3 y 15 caracteres');
                           setTimeout(() => setToastMsg(null), 2500);
+                          return;
                         }
-                      } catch {
-                        setToastMsg('⚠️ Error de red');
-                        setTimeout(() => setToastMsg(null), 2500);
-                      } finally {
-                        setGuardandoPreferencias(false);
-                      }
-                    }}
-                    className="w-full py-1.5 rounded-xl font-black text-xs bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer mt-1 flex items-center justify-center gap-1.5"
-                  >
-                    <span>💾</span>
-                    <span>
-                      {guardandoPreferencias ? 'Guardando...' : 'Guardar Predeterminados'}
-                    </span>
-                  </button>
-                </div>
+                        setGuardandoPreferencias(true);
+                        try {
+                          const res = await actualizarCuentaAsync(userActual, {
+                            nombre: cleanName,
+                          });
+                          if (res.ok && res.user) {
+                            onLoginSuccess(res.user);
+                            setGuardadoOkMsg(true);
+                            setTimeout(() => setGuardadoOkMsg(false), 2500);
+                          } else {
+                            sounds.playError();
+                            setToastMsg(res.error || '⚠️ No se pudo guardar');
+                            setTimeout(() => setToastMsg(null), 2500);
+                          }
+                        } catch {
+                          setToastMsg('⚠️ Error de red');
+                          setTimeout(() => setToastMsg(null), 2500);
+                        } finally {
+                          setGuardandoPreferencias(false);
+                        }
+                      }}
+                      className="w-full py-1.5 rounded-xl font-black text-xs bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer mt-1 flex items-center justify-center gap-1.5"
+                    >
+                      <span>💾</span>
+                      <span>
+                        {guardandoPreferencias ? 'Guardando...' : 'Guardar Nombre'}
+                      </span>
+                    </button>
+                  </div>
+                )}
 
                 {(userActual.rol === 'dev' ||
                   userActual.rol === 'admin' ||
@@ -2551,7 +2461,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
             >
               <div>
                 <label className="text-xs font-bold text-[#86542d] block mb-0.5">
-                  Nombre de user:
+                  {tab === 'login' ? 'User ID:' : 'Nombre / User ID:'}
                 </label>
                 <input
                   type="text"
@@ -2560,7 +2470,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                   required
                   value={nombre}
                   onChange={(e) => setNombre(e.target.value)}
-                  placeholder={tab === 'login' ? 'Tu user o Admin Supremo' : 'Tu nombre (3-15 caracteres)'}
+                  placeholder={tab === 'login' ? 'Tu User ID' : 'Tu nombre / ID inicial (3-15 caracteres)'}
                   className="w-full text-xs font-bold text-[#2b2140] bg-white border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-[#ffd43b]"
                 />
               </div>
@@ -2578,69 +2488,6 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                   className="w-full text-xs font-bold text-[#2b2140] bg-white border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-[#ffd43b]"
                 />
               </div>
-
-              {tab === 'registro' && (
-                <>
-                  <div>
-                    <label className="text-xs font-bold text-[#86542d] block mb-1">
-                      Personaje Predeterminado (Vista Previa):
-                    </label>
-                    <div className="p-2 mb-1.5 bg-white rounded-xl border-2 border-[#2b2140] flex items-center gap-2.5">
-                      <CartoonCharacter color={color} hat={hat} size={46} showShadow={false} />
-                      <div className="text-left min-w-0">
-                        <span className="text-xs font-black text-[#2b2140] block truncate">
-                          {RegDeAvatar.find((p) => p.id === hat)?.nombre || 'Corona'}
-                        </span>
-                        <span className="text-[10px] font-semibold text-[#86542d] block">
-                          Terreno: {TEMAS_LISTA.find((t) => t.id === temaRegistro)?.label}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-5 gap-1">
-                      {RegDeAvatar.filter((p) => p.puntosRequeridos === 0).map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => {
-                            sounds.playClick();
-                            setHat(item.id);
-                            setColor(item.colorDefault);
-                          }}
-                          className={`py-1 rounded-xl text-sm border-2 border-[#2b2140] cursor-pointer flex flex-col items-center gap-0.5 ${
-                            hat === item.id ? 'bg-[#ffd43b] shadow-sm -translate-y-0.5' : 'bg-white'
-                          }`}
-                        >
-                          <span>{item.emoji}</span>
-                          <span className="text-[8px] font-bold truncate max-w-full px-0.5">{item.nombre}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="text-xs font-bold text-[#86542d] block mb-1">
-                      Terreno Predeterminado:
-                    </label>
-                    <div className="grid grid-cols-4 gap-1">
-                      {TEMAS_LISTA.map((t) => (
-                        <button
-                          key={t.id}
-                          type="button"
-                          onClick={() => {
-                            sounds.playClick();
-                            setTemaRegistro(t.id);
-                          }}
-                          className={`py-1 rounded-xl text-[10px] font-black border-2 border-[#2b2140] cursor-pointer ${
-                            temaRegistro === t.id ? `${t.bg} -translate-y-0.5` : 'bg-white'
-                          }`}
-                        >
-                          {t.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </>
-              )}
 
               {errorMsg && (
                 <div className="p-2 bg-[#ffe3e3] text-[#c92a2a] text-xs font-bold rounded-xl border border-[#2b2140] text-center">
@@ -2716,7 +2563,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const [nuevaSalaNombre, setNuevaSalaNombre] = useState('');
   const [nuevaSalaMaxJugadores, setNuevaSalaMaxJugadores] = useState<2 | 4>(2);
   const [nuevaSalaModo, setNuevaSalaModo] = useState<'estandar' | 'caos' | 'tactico'>('estandar');
-  const [nuevaSalaTablero, setNuevaSalaTablero] = useState<7 | 9>(9);
+  const [nuevaSalaTablero, setNuevaSalaTablero] = useState<TamanoTablero>(9);
   const [nuevaSalaMensaje, setNuevaSalaMensaje] = useState('');
 
   // Confirmaciones
@@ -4523,11 +4370,12 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       <label className="font-bold text-[#86542d] block text-[11px]">Tablero:</label>
                       <select
                         value={nuevaSalaTablero}
-                        onChange={(e) => setNuevaSalaTablero(Number(e.target.value) as 7 | 9)}
+                        onChange={(e) => setNuevaSalaTablero(Number(e.target.value) as TamanoTablero)}
                         className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-1.5 py-1 font-bold text-xs cursor-pointer"
                       >
-                        <option value={9}>9 × 9 (Clásico)</option>
+                        <option value={5}>5 × 5 (Relámpago)</option>
                         <option value={7}>7 × 7 (Rápido)</option>
+                        <option value={9}>9 × 9 (Clásico)</option>
                       </select>
                     </div>
                   </div>

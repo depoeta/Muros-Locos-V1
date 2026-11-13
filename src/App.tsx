@@ -15,6 +15,7 @@ import {
   InfoNivel,
   ConfigDePartida,
   PantallaApp,
+  TamanoTablero,
   TemaTablero,
 } from './types/murosLocos';
 import {
@@ -25,6 +26,7 @@ import {
   ejecutarAccionMuro,
   ejecutarTurnoBot,
   iniciarPartida,
+  normalizarTamanoTablero,
   obtenerCaminoPista,
   sounds,
 } from './game/murosLocosEngine';
@@ -929,11 +931,12 @@ export const App: React.FC = () => {
     showToast(`🎲 ¡Reto Aleatorio vs ${botNombre}!`);
   };
 
-  const handleIniciarPartidaOnline = (maxJugadores: 2 | 4) => {
+  const handleIniciarPartidaOnline = (maxJugadores: 2 | 4, tamanoTablero?: TamanoTablero) => {
     partidaContabilizadaRef.current = false;
     const session = onlineService.getActiveSession();
     const lobby = onlineService.getLobbyPlayers();
-    const num = maxJugadores;
+    const num: 2 | 4 = maxJugadores === 2 ? 2 : 4;
+    const boardSize = normalizarTamanoTablero(tamanoTablero ?? session?.tamanoTablero ?? onlineService.getTamanoTablero());
 
     const liveRole = onlineService.getRole();
     const role = liveRole || session?.role || 'host';
@@ -971,6 +974,7 @@ export const App: React.FC = () => {
       permitirPistas: false,
       modoConTiempo: true,
       segundosPorTurno: 45,
+      tamanoTablero: boardSize,
       temaTablero: userActual?.temaTablero || ajustes.temaTablero || 'madera',
       rotationMode: false,
     };

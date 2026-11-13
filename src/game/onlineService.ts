@@ -21,7 +21,9 @@ import {
   MensajeOnline,
   OrientacionMuro,
   SesionOnlineActiva,
+  TamanoTablero,
 } from '../types/murosLocos';
+import { normalizarTamanoTablero } from './murosLocosEngine';
 import { getApiBaseUrl, obtenerTokenSesion } from './storage';
 
 export const SESSION_STORAGE_KEY = 'muros_locos_active_online_session';
@@ -126,7 +128,7 @@ async function gatherLocalDescription(
 }
 
 export type OnlineEventCallback = {
-  onLobbyUpdate?: (players: InfoJugadorOnline[], maxPlayers: 2 | 4) => void;
+  onLobbyUpdate?: (players: InfoJugadorOnline[], maxPlayers: 2 | 4, tamanoTablero?: TamanoTablero) => void;
   onLobbyFull?: (maxPlayers: 2 | 4) => void;
   onGameStart?: (initialState: EstadoDeJuego) => void;
   onStateSync?: (state: EstadoDeJuego) => void;
@@ -172,6 +174,7 @@ class OnlineManager {
   private myPeerId: string = '';
   private myCuentaId?: string;
   private maxPlayers: 2 | 4 = 2;
+  private tamanoTablero: TamanoTablero = 9;
   private myPlayerId: number = 0;
   private myName: string = '';
   private myColor: string = '#ff6b6b';
@@ -320,6 +323,10 @@ class OnlineManager {
     return this.lobbyPlayers;
   }
 
+  public getTamanoTablero(): TamanoTablero {
+    return this.tamanoTablero;
+  }
+
   public saveActiveSession() {
     if (!this.roomCode || !this.role) return;
     try {
@@ -335,6 +342,7 @@ class OnlineManager {
         myRopa: this.myRopa,
         myRopaColor: this.myRopaColor,
         myAura: this.myAura,
+        tamanoTablero: this.tamanoTablero,
         lastState: this.currentGameState || undefined,
         timestamp: Date.now(),
       };
@@ -668,8 +676,11 @@ class OnlineManager {
       if (changed) {
         this.lobbyPlayers = remoteList;
         this.maxPlayers = sala.maxJugadores === 4 ? 4 : 2;
+        if (sala.tamanoTablero !== undefined) {
+          this.tamanoTablero = normalizarTamanoTablero(sala.tamanoTablero);
+        }
         this.saveActiveSession();
-        this.callbacks.onLobbyUpdate?.([...this.lobbyPlayers], this.maxPlayers);
+        this.callbacks.onLobbyUpdate?.([...this.lobbyPlayers], this.maxPlayers, this.tamanoTablero);
       }
     }
 
@@ -782,6 +793,7 @@ class OnlineManager {
               type: 'LOBBY_UPDATE',
               roomCode: this.roomCode,
               maxJugadores: this.maxPlayers,
+              tamanoTablero: this.tamanoTablero,
               jugadores: [...this.lobbyPlayers],
             } satisfies MensajeOnline)
         );
@@ -845,6 +857,7 @@ class OnlineManager {
       ropa?: AvatarTipoDeRopa;
       ropaColor?: string;
       aura?: AvatarTipoDeAura;
+      tamanoTablero?: TamanoTablero;
     }
   ): Promise<string> {
     this.cleanUp();
@@ -854,7 +867,8 @@ class OnlineManager {
     this.role = 'host';
     this.roomCode = normalizeRoomCode(code) || generarCodigoSala();
     this.roomPublica = publica;
-    this.maxPlayers = maxPlayers;
+    this.maxPlayers = maxPlayers === 4 ? 4 : 2;
+    this.tamanoTablero = normalizarTamanoTablero(opciones?.tamanoTablero);
     this.myPlayerId = 0;
     this.myCuentaId = opciones?.cuentaId;
     this.myName = hostName.trim() || 'Anfitrión';
@@ -899,6 +913,7 @@ class OnlineManager {
         ropaColor: this.myRopaColor,
         aura: this.myAura,
         maxJugadores: this.maxPlayers,
+        tamanoTablero: this.tamanoTablero,
         publica: this.roomPublica,
         jugadores: this.lobbyPlayers,
         creadoEn: Date.now(),
@@ -922,7 +937,7 @@ class OnlineManager {
     this.diagnosticData.dataChannelState = 'open';
     this.addDiagnosticLog('info', `Sala ${this.roomCode} abierta y lista para recibir jugadores`);
 
-    this.callbacks.onLobbyUpdate?.([...this.lobbyPlayers], this.maxPlayers);
+    this.callbacks.onLobbyUpdate?.([...this.lobbyPlayers], this.maxPlayers, this.tamanoTablero);
     return this.roomCode;
   }
 
@@ -1028,6 +1043,7 @@ class OnlineManager {
 
     const sala = data.sala;
     this.maxPlayers = sala.maxJugadores === 4 ? 4 : 2;
+    this.tamanoTablero = normalizarTamanoTablero(sala.tamanoTablero);
     this.lobbyPlayers = Array.isArray(sala.jugadores) ? sala.jugadores : [];
     this.lastMsgSeq = typeof sala.seq === 'number' ? sala.seq : 0;
 
@@ -1069,7 +1085,7 @@ class OnlineManager {
     this.startRoomSyncLoop();
     this.startDiagnosticPingLoop();
 
-    this.callbacks.onLobbyUpdate?.([...this.lobbyPlayers], this.maxPlayers);
+    this.callbacks.onLobbyUpdate?.([...this.lobbyPlayers], this.maxPlayers, this.tamanoTablero);
   }
 
   private bindClientDataChannel(dc: RTCDataChannel) {
@@ -1384,7 +1400,10 @@ class OnlineManager {
 
     if (msg.type === 'LOBBY_UPDATE') {
       this.roomCode = msg.roomCode;
-      this.maxPlayers = msg.maxJugadores;
+      this.maxPlayers = msg.maxJugadores === 4 ? 4 : 2;
+      if (msg.tamanoTablero !== undefined) {
+        this.tamanoTablero = normalizarTamanoTablero(msg.tamanoTablero);
+      }
       this.lobbyPlayers = msg.jugadores;
 
       const me = msg.jugadores.find((p) => p.peerId === this.myPeerId);
@@ -1398,7 +1417,7 @@ class OnlineManager {
       }
 
       this.saveActiveSession();
-      this.callbacks.onLobbyUpdate?.(msg.jugadores, msg.maxJugadores);
+      this.callbacks.onLobbyUpdate?.(msg.jugadores, this.maxPlayers, this.tamanoTablero);
     } else if (msg.type === 'START_GAME') {
       if (msg._startId && msg._startId === this.lastHandledStartId) {
         return;
@@ -1470,6 +1489,7 @@ class OnlineManager {
       type: 'LOBBY_UPDATE',
       roomCode: this.roomCode,
       maxJugadores: this.maxPlayers,
+      tamanoTablero: this.tamanoTablero,
       jugadores: list,
     };
     const serialized = JSON.stringify(updateMsg);
@@ -1480,7 +1500,7 @@ class OnlineManager {
         } catch {}
       }
     }
-    this.callbacks.onLobbyUpdate?.(list, this.maxPlayers);
+    this.callbacks.onLobbyUpdate?.(list, this.maxPlayers, this.tamanoTablero);
   }
 
   public startGameAsHost(initialState: EstadoDeJuego) {
@@ -1679,6 +1699,7 @@ class OnlineManager {
           ropaColor: info.ropaColor ?? this.myRopaColor,
           aura: info.aura || this.myAura,
           maxJugadores: info.maxJugadores || this.maxPlayers,
+          tamanoTablero: info.tamanoTablero || this.tamanoTablero,
           publica: true,
           jugadores: this.lobbyPlayers.length > 0 ? this.lobbyPlayers : undefined,
           jugadoresConectados: Math.max(1, this.lobbyPlayers.length || 1),

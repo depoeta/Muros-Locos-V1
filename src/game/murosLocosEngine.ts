@@ -14,6 +14,7 @@ import {
   EstadisticasJugador,
   JugadorEnJuego,
   OrientacionMuro,
+  TamanoTablero,
 } from '../types/murosLocos';
 
 // =========================================================================
@@ -227,17 +228,25 @@ export const sounds = new SoundSystem();
 export const BOARD_SIZE = 9;
 export const WALL_GRID_SIZE = 8;
 
-export function coordToAlgebraic(r: number, c: number): string {
+export function normalizarTamanoTablero(valor: unknown): TamanoTablero {
+  const num = Number(valor);
+  if (num === 5 || num === 7 || num === 9) {
+    return num;
+  }
+  return 9;
+}
+
+export function coordToAlgebraic(r: number, c: number, boardSize: number = BOARD_SIZE): string {
   const colLetter = String.fromCharCode(65 + c);
-  const rowNum = 9 - r;
+  const rowNum = boardSize - r;
   return `${colLetter}${rowNum}`;
 }
 
-export function createEmptyGrid(val: number = -1): number[][] {
+export function createEmptyGrid(val: number = -1, wallGridSize: number = WALL_GRID_SIZE): number[][] {
   const g: number[][] = [];
-  for (let r = 0; r < WALL_GRID_SIZE; r++) {
+  for (let r = 0; r < wallGridSize; r++) {
     const row: number[] = [];
-    for (let c = 0; c < WALL_GRID_SIZE; c++) {
+    for (let c = 0; c < wallGridSize; c++) {
       row.push(val);
     }
     g.push(row);
@@ -283,7 +292,14 @@ export function crearEstadoTorneo(totalRondas: number, numJugadores: number): Es
 
 export function inicializarPartida(config: ConfigDePartida): EstadoDeJuego {
   const n = config.numJugadores;
-  const initialWalls = n === 2 ? 10 : 5;
+  const boardSize = normalizarTamanoTablero(config.tamanoTablero);
+  const wallGridSize = boardSize - 1;
+  const mid = Math.floor(boardSize / 2);
+  const last = boardSize - 1;
+
+  const murosPorTamano2P: Record<TamanoTablero, number> = { 5: 4, 7: 7, 9: 10 };
+  const murosPorTamano4P: Record<TamanoTablero, number> = { 5: 2, 7: 4, 9: 5 };
+  const initialWalls = n === 2 ? murosPorTamano2P[boardSize] : murosPorTamano4P[boardSize];
 
   let jugadores: JugadorEnJuego[] = [];
 
@@ -299,8 +315,8 @@ export function inicializarPartida(config: ConfigDePartida): EstadoDeJuego {
         ropa: config.jugadores[0]?.ropa || 'ninguna',
         ropaColor: config.jugadores[0]?.ropaColor,
         aura: config.jugadores[0]?.aura || 'ninguna',
-        r: 8,
-        c: 4,
+        r: last,
+        c: mid,
         muros: initialWalls,
         targetType: 'row',
         targetValue: 0,
@@ -317,10 +333,10 @@ export function inicializarPartida(config: ConfigDePartida): EstadoDeJuego {
         ropaColor: config.jugadores[1]?.ropaColor,
         aura: config.jugadores[1]?.aura || 'ninguna',
         r: 0,
-        c: 4,
+        c: mid,
         muros: initialWalls,
         targetType: 'row',
-        targetValue: 8,
+        targetValue: last,
         estadisticas: createInitialStats(),
       },
     ];
@@ -336,8 +352,8 @@ export function inicializarPartida(config: ConfigDePartida): EstadoDeJuego {
         ropa: config.jugadores[0]?.ropa || 'ninguna',
         ropaColor: config.jugadores[0]?.ropaColor,
         aura: config.jugadores[0]?.aura || 'ninguna',
-        r: 8,
-        c: 4,
+        r: last,
+        c: mid,
         muros: initialWalls,
         targetType: 'row',
         targetValue: 0,
@@ -353,11 +369,11 @@ export function inicializarPartida(config: ConfigDePartida): EstadoDeJuego {
         ropa: config.jugadores[1]?.ropa || 'ninguna',
         ropaColor: config.jugadores[1]?.ropaColor,
         aura: config.jugadores[1]?.aura || 'ninguna',
-        r: 4,
+        r: mid,
         c: 0,
         muros: initialWalls,
         targetType: 'col',
-        targetValue: 8,
+        targetValue: last,
         estadisticas: createInitialStats(),
       },
       {
@@ -371,10 +387,10 @@ export function inicializarPartida(config: ConfigDePartida): EstadoDeJuego {
         ropaColor: config.jugadores[2]?.ropaColor,
         aura: config.jugadores[2]?.aura || 'ninguna',
         r: 0,
-        c: 4,
+        c: mid,
         muros: initialWalls,
         targetType: 'row',
-        targetValue: 8,
+        targetValue: last,
         estadisticas: createInitialStats(),
       },
       {
@@ -387,8 +403,8 @@ export function inicializarPartida(config: ConfigDePartida): EstadoDeJuego {
         ropa: config.jugadores[3]?.ropa || 'ninguna',
         ropaColor: config.jugadores[3]?.ropaColor,
         aura: config.jugadores[3]?.aura || 'ninguna',
-        r: 4,
-        c: 8,
+        r: mid,
+        c: last,
         muros: initialWalls,
         targetType: 'col',
         targetValue: 0,
@@ -408,9 +424,10 @@ export function inicializarPartida(config: ConfigDePartida): EstadoDeJuego {
 
   return {
     n,
+    tamanoTablero: boardSize,
     jugadores,
-    murosH: createEmptyGrid(-1),
-    murosV: createEmptyGrid(-1),
+    murosH: createEmptyGrid(-1, wallGridSize),
+    murosV: createEmptyGrid(-1, wallGridSize),
     turnoActual: turnoInicial,
     turnosTotales: 0,
     terminada: false,
@@ -421,7 +438,7 @@ export function inicializarPartida(config: ConfigDePartida): EstadoDeJuego {
     caminoPista: null,
     historial: [],
     registroAcciones: [],
-    config,
+    config: { ...config, tamanoTablero: boardSize },
     tiempoRestante: config.segundosPorTurno || 30,
     pensandoBot: false,
     ultimoMensaje: msjInicial,
@@ -430,11 +447,13 @@ export function inicializarPartida(config: ConfigDePartida): EstadoDeJuego {
 }
 
 export function isH(r: number, c: number, murosH: number[][]): boolean {
-  return r >= 0 && r < WALL_GRID_SIZE && c >= 0 && c < WALL_GRID_SIZE && murosH[r][c] !== -1;
+  const gridSize = murosH.length;
+  return r >= 0 && r < gridSize && c >= 0 && c < gridSize && murosH[r][c] !== -1;
 }
 
 export function isV(r: number, c: number, murosV: number[][]): boolean {
-  return r >= 0 && r < WALL_GRID_SIZE && c >= 0 && c < WALL_GRID_SIZE && murosV[r][c] !== -1;
+  const gridSize = murosV.length;
+  return r >= 0 && r < gridSize && c >= 0 && c < gridSize && murosV[r][c] !== -1;
 }
 
 export function bloqueado(
@@ -453,6 +472,7 @@ export function bloqueado(
 }
 
 export function movimientosLegales(jugador: JugadorEnJuego, estado: EstadoDeJuego): Coordenada[] {
+  const boardSize = estado.murosH.length > 0 ? estado.murosH.length + 1 : BOARD_SIZE;
   const res: Coordenada[] = [];
   const direcciones = [
     { dr: -1, dc: 0 },
@@ -471,7 +491,7 @@ export function movimientosLegales(jugador: JugadorEnJuego, estado: EstadoDeJueg
     }
     const nr = jugador.r + dr;
     const nc = jugador.c + dc;
-    if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) {
+    if (nr < 0 || nr >= boardSize || nc < 0 || nc >= boardSize) {
       continue;
     }
 
@@ -485,9 +505,9 @@ export function movimientosLegales(jugador: JugadorEnJuego, estado: EstadoDeJueg
     const jc = nc + dc;
     const canJumpStraight =
       jr >= 0 &&
-      jr < BOARD_SIZE &&
+      jr < boardSize &&
       jc >= 0 &&
-      jc < BOARD_SIZE &&
+      jc < boardSize &&
       !bloqueado(nr, nc, dr, dc, estado.murosH, estado.murosV) &&
       !ocupadoPor(jr, jc);
 
@@ -511,7 +531,7 @@ export function movimientosLegales(jugador: JugadorEnJuego, estado: EstadoDeJueg
       if (!bloqueado(nr, nc, er, ec, estado.murosH, estado.murosV)) {
         const sr = nr + er;
         const sc = nc + ec;
-        if (sr >= 0 && sr < BOARD_SIZE && sc >= 0 && sc < BOARD_SIZE && !ocupadoPor(sr, sc)) {
+        if (sr >= 0 && sr < boardSize && sc >= 0 && sc < boardSize && !ocupadoPor(sr, sc)) {
           if (!res.some((p) => p.r === sr && p.c === sc)) {
             res.push({ r: sr, c: sc });
           }
@@ -523,9 +543,16 @@ export function movimientosLegales(jugador: JugadorEnJuego, estado: EstadoDeJueg
   return res;
 }
 
-export function esMeta(jugador: JugadorEnJuego, r: number, c: number, numJugadores: number = 2): boolean {
+export function esMeta(
+  jugador: JugadorEnJuego,
+  r: number,
+  c: number,
+  numJugadores: number = 2,
+  boardSize: number = BOARD_SIZE
+): boolean {
   if (numJugadores === 4) {
-    if ((r === 0 || r === 8) && (c === 0 || c === 8)) {
+    const last = boardSize - 1;
+    if ((r === 0 || r === last) && (c === 0 || c === last)) {
       return false;
     }
   }
@@ -542,17 +569,18 @@ export function bfsCamino(
   desde?: Coordenada,
   numJugadores: number = 2
 ): { distancia: number; camino: Coordenada[] } {
+  const boardSize = murosH.length > 0 ? murosH.length + 1 : BOARD_SIZE;
   const start = desde || { r: jugador.r, c: jugador.c };
 
-  if (esMeta(jugador, start.r, start.c, numJugadores)) {
+  if (esMeta(jugador, start.r, start.c, numJugadores, boardSize)) {
     return { distancia: 0, camino: [start] };
   }
 
-  const dist: number[][] = Array.from({ length: BOARD_SIZE }, () =>
-    Array(BOARD_SIZE).fill(Infinity)
+  const dist: number[][] = Array.from({ length: boardSize }, () =>
+    Array(boardSize).fill(Infinity)
   );
-  const parent: (Coordenada | null)[][] = Array.from({ length: BOARD_SIZE }, () =>
-    Array(BOARD_SIZE).fill(null)
+  const parent: (Coordenada | null)[][] = Array.from({ length: boardSize }, () =>
+    Array(boardSize).fill(null)
   );
 
   const queue: Coordenada[] = [start];
@@ -570,7 +598,7 @@ export function bfsCamino(
   while (queue.length > 0) {
     const cur = queue.shift()!;
 
-    if (esMeta(jugador, cur.r, cur.c, numJugadores)) {
+    if (esMeta(jugador, cur.r, cur.c, numJugadores, boardSize)) {
       goalNode = cur;
       break;
     }
@@ -579,7 +607,7 @@ export function bfsCamino(
       if (!bloqueado(cur.r, cur.c, dr, dc, murosH, murosV)) {
         const nr = cur.r + dr;
         const nc = cur.c + dc;
-        if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE) {
+        if (nr >= 0 && nr < boardSize && nc >= 0 && nc < boardSize) {
           if (dist[nr][nc] === Infinity) {
             dist[nr][nc] = dist[cur.r][cur.c] + 1;
             parent[nr][nc] = cur;
@@ -612,7 +640,8 @@ export function validarMuro(
   murosV: number[][],
   jugadores: JugadorEnJuego[]
 ): 'ok' | 'fuera' | 'solape' | 'bloquea' {
-  if (r < 0 || r >= WALL_GRID_SIZE || c < 0 || c >= WALL_GRID_SIZE) {
+  const wallGridSize = murosH.length;
+  if (r < 0 || r >= wallGridSize || c < 0 || c >= wallGridSize) {
     return 'fuera';
   }
 
@@ -697,8 +726,9 @@ export function aplicarMovimiento(
     jugador.estadisticas.saltos++;
   }
 
-  const notacionOrigen = coordToAlgebraic(origenCoordenada.r, origenCoordenada.c);
-  const notacionDestino = coordToAlgebraic(destino.r, destino.c);
+  const boardSize = estado.murosH.length > 0 ? estado.murosH.length + 1 : BOARD_SIZE;
+  const notacionOrigen = coordToAlgebraic(origenCoordenada.r, origenCoordenada.c, boardSize);
+  const notacionDestino = coordToAlgebraic(destino.r, destino.c, boardSize);
   estado.registroAcciones.push({
     id: `act_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
     turnoNumero: estado.turnosTotales + 1,
@@ -718,7 +748,7 @@ export function aplicarMovimiento(
 
   actualizarDesventaja(estado);
 
-  if (esMeta(jugador, jugador.r, jugador.c, estado.n)) {
+  if (esMeta(jugador, jugador.r, jugador.c, estado.n, boardSize)) {
     estado.terminada = true;
     estado.ganador = estado.turnoActual;
     const msg = `👑 ¡${jugador.nombre} ha ganado la partida!`;
@@ -770,7 +800,8 @@ export function aplicarMuro(
     }
   }
 
-  const notacionMuro = `${String.fromCharCode(65 + c)}${9 - r}`;
+  const boardSize = estado.murosH.length > 0 ? estado.murosH.length + 1 : BOARD_SIZE;
+  const notacionMuro = coordToAlgebraic(r, c, boardSize);
   const orientacionTexto = orientacion === 'H' ? 'Horizontal' : 'Vertical';
   estado.registroAcciones.push({
     id: `act_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -884,6 +915,8 @@ export function calcularJugadaBot(
   | { tipo: 'mover'; coord: Coordenada }
   | { tipo: 'muro'; orientacion: OrientacionMuro; coord: Coordenada }
   | { tipo: 'pasar' } {
+  const wallGridSize = estado.murosH.length > 0 ? estado.murosH.length : WALL_GRID_SIZE;
+  const boardSize = wallGridSize + 1;
   const moves = movimientosLegales(jugador, estado);
 
   if (moves.length === 0 && jugador.muros === 0) {
@@ -916,8 +949,8 @@ export function calcularJugadaBot(
       if (leadingRival) {
         const rivalDist0 = bfsCamino(leadingRival, estado.murosH, estado.murosV, undefined, estado.n).distancia;
         for (let tries = 0; tries < 20; tries++) {
-          const r = Math.floor(Math.random() * WALL_GRID_SIZE);
-          const c = Math.floor(Math.random() * WALL_GRID_SIZE);
+          const r = Math.floor(Math.random() * wallGridSize);
+          const c = Math.floor(Math.random() * wallGridSize);
           const o: OrientacionMuro = Math.random() < 0.5 ? 'H' : 'V';
           if (validarMuro(o, r, c, estado.murosH, estado.murosV, estado.jugadores) === 'ok') {
             if (o === 'H') estado.murosH[r][c] = jugador.id;
@@ -956,7 +989,7 @@ export function calcularJugadaBot(
     ? bfsCamino(leadingRival, estado.murosH, estado.murosV, undefined, estado.n).distancia
     : Infinity;
 
-  const winningMove = moves.find((m) => esMeta(jugador, m.r, m.c, estado.n));
+  const winningMove = moves.find((m) => esMeta(jugador, m.r, m.c, estado.n, boardSize));
   if (winningMove) {
     return { tipo: 'mover', coord: winningMove };
   }
@@ -984,7 +1017,7 @@ export function calcularJugadaBot(
           for (const dc of [-1, 0, 1]) {
             const wr = pt.r + dr;
             const wc = pt.c + dc;
-            if (wr >= 0 && wr < WALL_GRID_SIZE && wc >= 0 && wc < WALL_GRID_SIZE) {
+            if (wr >= 0 && wr < wallGridSize && wc >= 0 && wc < wallGridSize) {
               candidateWalls.push({ o: 'H', r: wr, c: wc });
               candidateWalls.push({ o: 'V', r: wr, c: wc });
             }
@@ -1059,7 +1092,7 @@ export function calcularJugadaBot(
         for (const dc of [-1, 0, 1]) {
           const wr = pt.r + dr;
           const wc = pt.c + dc;
-          if (wr >= 0 && wr < WALL_GRID_SIZE && wc >= 0 && wc < WALL_GRID_SIZE) {
+          if (wr >= 0 && wr < wallGridSize && wc >= 0 && wc < wallGridSize) {
             candidatePool.push({ o: 'H', r: wr, c: wc });
             candidatePool.push({ o: 'V', r: wr, c: wc });
           }
@@ -1116,8 +1149,9 @@ export function calcularJugadaBot(
 function buscarCualquierMuroValido(
   estado: EstadoDeJuego
 ): { tipo: 'muro'; orientacion: OrientacionMuro; coord: Coordenada } | null {
-  for (let r = 0; r < WALL_GRID_SIZE; r++) {
-    for (let c = 0; c < WALL_GRID_SIZE; c++) {
+  const wallGridSize = estado.murosH.length > 0 ? estado.murosH.length : WALL_GRID_SIZE;
+  for (let r = 0; r < wallGridSize; r++) {
+    for (let c = 0; c < wallGridSize; c++) {
       for (const o of ['H', 'V'] as OrientacionMuro[]) {
         if (validarMuro(o, r, c, estado.murosH, estado.murosV, estado.jugadores) === 'ok') {
           return { tipo: 'muro', orientacion: o, coord: { r, c } };
@@ -1136,6 +1170,9 @@ export function calcularDesglosePuntos(
 ): DesglosePuntos {
   const esGanador = estado.ganador === jugador.id;
   const stats = jugador.estadisticas;
+  const boardSize = estado.murosH.length > 0 ? estado.murosH.length + 1 : BOARD_SIZE;
+  const mid = Math.floor(boardSize / 2);
+  const last = boardSize - 1;
 
   // Sistema de puntos gradual:
   // - Victoria: +5 pts (derrota o empate: 0 pts)
@@ -1155,13 +1192,13 @@ export function calcularDesglosePuntos(
           rivalACasillaDeGanar = true;
         }
 
-        // Puesto inicial de cada jugador según el número de participantes
+        // Puesto inicial de cada jugador según el número de participantes y tamaño del tablero
         const startPos =
           (estado.n === 2
-            ? { 0: { r: 8, c: 4 }, 1: { r: 0, c: 4 } }[otro.id]
-            : { 0: { r: 8, c: 4 }, 1: { r: 4, c: 0 }, 2: { r: 0, c: 4 }, 3: { r: 4, c: 8 } }[otro.id]) || {
+            ? { 0: { r: last, c: mid }, 1: { r: 0, c: mid } }[otro.id]
+            : { 0: { r: last, c: mid }, 1: { r: mid, c: 0 }, 2: { r: 0, c: mid }, 3: { r: mid, c: last } }[otro.id]) || {
             r: 0,
-            c: 4,
+            c: mid,
           };
         const distManhattan = Math.abs(otro.r - startPos.r) + Math.abs(otro.c - startPos.c);
         // Si el oponente está a 2 casillas o menos de su puesto inicial al ganar: +2 pts extra

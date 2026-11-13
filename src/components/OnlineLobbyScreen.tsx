@@ -17,6 +17,7 @@ import {
   RegDeAvatar,
   InfoSalaPublica,
   SalaPersonalizada,
+  TamanoTablero,
   UserCuenta,
 } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
@@ -219,7 +220,7 @@ interface OnlineLobbyScreenProps {
   userActual?: UserCuenta | null;
   codigoSalaInicial?: string | null;
   onConsumirSalaInicial?: () => void;
-  onIniciarPartidaOnline: (maxJugadores: 2 | 4) => void;
+  onIniciarPartidaOnline: (maxJugadores: 2 | 4, tamanoTablero: TamanoTablero) => void;
   onVolverAlMenu: () => void;
   onShowToast: (msg: string) => void;
 }
@@ -247,6 +248,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
   );
   const [roomCode, setRoomCode] = useState<string>('');
   const [maxJugadores, setMaxJugadores] = useState<2 | 4>(2);
+  const [tamanoTablero, setTamanoTablero] = useState<TamanoTablero>(9);
   const [publicarEnLista, setPublicarEnLista] = useState<boolean>(true);
   const [salasDinamicas, setSalasDinamicas] = useState<InfoSalaPublica[]>([]);
   const [salasPersonalizadas, setSalasPersonalizadas] = useState<SalaPersonalizada[]>([]);
@@ -319,9 +321,10 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
 
   useEffect(() => {
     onlineService.setCallbacks({
-      onLobbyUpdate: (players, max) => {
+      onLobbyUpdate: (players, max, tablero) => {
         setJugadoresEnLobby([...players]);
         setMaxJugadores(max);
+        if (tablero) setTamanoTablero(tablero);
         setRoomCode(onlineService.getRoomCode());
         setEsAnfitrionLocal(onlineService.getRole() === 'host');
         setTab('en_sala');
@@ -402,7 +405,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
     }
   }, [codigoSalaInicial]);
 
-  const handleEntrarSalaPublica = async (salaId: string, maxP: 2 | 4) => {
+  const handleEntrarSalaPublica = async (salaId: string, maxP: 2 | 4, tablero?: TamanoTablero) => {
     const code = normalizeRoomCode(salaId);
     if (code.length < 3) return;
     sounds.playClick();
@@ -410,6 +413,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
     setErrorMsg(null);
     setRoomCode(code);
     setMaxJugadores(maxP);
+    if (tablero) setTamanoTablero(tablero);
 
     const joinName = (userActual?.nombre || nombre || 'Invitado').trim();
 
@@ -451,6 +455,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
         ropa,
         ropaColor,
         aura,
+        tamanoTablero,
       });
       setConectando(false);
       setErrorMsg(null);
@@ -531,11 +536,11 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
   useEffect(() => {
     if (isHost && tab === 'en_sala' && jugadoresEnLobby.length >= maxJugadores) {
       const timer = setTimeout(() => {
-        onIniciarPartidaRef.current(maxJugadores);
+        onIniciarPartidaRef.current(maxJugadores, tamanoTablero);
       }, 1000);
       return () => clearTimeout(timer);
     }
-  }, [isHost, tab, jugadoresEnLobby.length, maxJugadores]);
+  }, [isHost, tab, jugadoresEnLobby.length, maxJugadores, tamanoTablero]);
 
   const userPoints = userActual?.puntos || 0;
   const esStaffPrivilegiado = userActual?.rol === 'admin' || userActual?.rol === 'dev';
@@ -739,7 +744,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                         disabled={conectando}
                         onClick={() => {
                           setCodigoInput(sp.codigo);
-                          handleEntrarSalaPublica(sp.codigo, sp.maxJugadores);
+                          handleEntrarSalaPublica(sp.codigo, sp.maxJugadores, sp.tamanoTablero);
                         }}
                         className="p-2 rounded-xl border-2 border-[#2b2140] bg-white hover:bg-[#fff3bf] active:translate-y-0.5 shadow-[0_2px_0_#2b2140] flex items-center justify-between gap-2 text-left transition-all cursor-pointer"
                       >
@@ -758,7 +763,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                             </span>
                           )}
                           <span className="text-[9px] text-[#86542d] font-bold block mt-0.5">
-                            {sp.maxJugadores} Jugadores · Mod: {sp.creador}
+                            {sp.maxJugadores} Jugadores · {sp.tamanoTablero || 9}×{sp.tamanoTablero || 9} · Mod: {sp.creador}
                           </span>
                         </div>
                         <span className="text-[10px] bg-[#51cf66] text-[#134e20] font-black px-2 py-1 rounded-lg border border-[#2b2140] shrink-0 shadow-xs">
@@ -782,7 +787,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                         disabled={conectando}
                         onClick={() => {
                           setCodigoInput(sala.codigo);
-                          handleEntrarSalaPublica(sala.codigo, sala.maxJugadores);
+                          handleEntrarSalaPublica(sala.codigo, sala.maxJugadores, sala.tamanoTablero);
                         }}
                         className="p-2.5 rounded-xl border-2 border-[#2b2140] bg-[#e7f5ff] hover:bg-[#d0ebff] active:translate-y-0.5 shadow-[0_2px_0_#2b2140] flex items-center gap-2.5 text-left transition-all cursor-pointer"
                       >
@@ -801,7 +806,8 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                           </span>
                           <span className="text-[10px] text-[#1864ab] font-bold block">
                             Anfitrión: {sala.anfitrion} •{' '}
-                            {sala.jugadoresConectados || 1}/{sala.maxJugadores} jugadores
+                            {sala.jugadoresConectados || 1}/{sala.maxJugadores} jug. •{' '}
+                            {sala.tamanoTablero || 9}×{sala.tamanoTablero || 9}
                           </span>
                         </div>
                         <span className="text-[10px] bg-[#ffd43b] text-[#5c3c00] font-black px-1.5 py-0.5 rounded border border-[#2b2140] shrink-0">
@@ -854,6 +860,36 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                     }`}
                   >
                     {num} Jugadores
+                  </button>
+                ))}
+              </div>
+
+              <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
+                Tamaño de la Mesa
+              </span>
+              <div className="grid grid-cols-3 gap-1.5">
+                {(
+                  [
+                    { val: 5, label: '5×5', sub: 'Relámpago' },
+                    { val: 7, label: '7×7', sub: 'Rápido' },
+                    { val: 9, label: '9×9', sub: 'Clásico' },
+                  ] as const
+                ).map((op) => (
+                  <button
+                    key={op.val}
+                    type="button"
+                    onClick={() => {
+                      sounds.playClick();
+                      setTamanoTablero(op.val);
+                    }}
+                    className={`py-2 px-1 rounded-xl font-black text-xs border-2 border-[#2b2140] transition-all cursor-pointer flex flex-col items-center leading-tight ${
+                      tamanoTablero === op.val
+                        ? 'bg-[#ffd43b] text-[#5c3c00] shadow-[0_3px_0_#2b2140] -translate-y-0.5'
+                        : 'bg-[#fff8e7] text-[#593922] hover:bg-white'
+                    }`}
+                  >
+                    <span>{op.label}</span>
+                    <span className="text-[9px] font-bold opacity-80">{op.sub}</span>
                   </button>
                 ))}
               </div>
@@ -962,7 +998,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
           <div className="p-3.5 bg-white rounded-2xl border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140] flex flex-col gap-2 flex-1">
             <div className="flex items-center justify-between pb-1 border-b-2 border-[#2b2140]/10">
               <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
-                Jugadores Conectados ({jugadoresEnLobby.length}/{maxJugadores})
+                Jugadores ({jugadoresEnLobby.length}/{maxJugadores}) · Mesa {tamanoTablero}×{tamanoTablero}
               </span>
               <span className="text-xs font-bold text-[#86542d]">
                 {jugadoresEnLobby.length >= 2 ? '✅ Sala lista' : '⏳ Esperando rival...'}
@@ -1044,7 +1080,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
               {isHost && (
                 <button
                   type="button"
-                  onClick={() => onIniciarPartidaOnline(maxJugadores)}
+                  onClick={() => onIniciarPartidaOnline(maxJugadores, tamanoTablero)}
                   className="w-full py-2.5 bg-[#ffd43b] text-[#5c3c00] rounded-xl border-2 border-[#2b2140] font-black text-sm shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer"
                 >
                   ▶ Iniciar Partida Ahora Mismo

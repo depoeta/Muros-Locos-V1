@@ -1291,7 +1291,7 @@ export async function iniciarSesionAsync(
   const cleanNombre = nombre.trim();
   const cleanClave = clave.trim();
   if (!cleanNombre || !cleanClave) {
-    return { ok: false, error: 'Ingresa tu user y contraseña.' };
+    return { ok: false, error: 'Ingresa tu User ID y contraseña.' };
   }
 
   try {
@@ -1317,7 +1317,7 @@ export async function iniciarSesionAsync(
       return { ok: true, user: obteneruserActual() || user };
     }
 
-    return { ok: false, error: data?.error || 'User o contraseña incorrectos.' };
+    return { ok: false, error: data?.error || 'User ID o contraseña incorrectos.' };
   } catch {
     return {
       ok: false,

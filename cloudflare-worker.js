@@ -862,7 +862,7 @@ async function d1LeerSalasPersonalizadas(d1) {
       creadorRol: r.creador_rol,
       maxJugadores: Number(r.max_jugadores) || 2,
       modoMuros: r.modo_muros || 'estandar',
-      tamanoTablero: Number(r.tamano_tablero) === 7 ? 7 : 9,
+      tamanoTablero: normalizarTamanoTablero(r.tamano_tablero),
       destacada: Boolean(r.destacada),
       mensajeEspecial: r.mensaje_especial || '',
       creadoEn: Number(r.creado_en) || Date.now(),
@@ -892,7 +892,7 @@ async function d1GuardarSalaPersonalizada(d1, sala) {
         sala.creadorRol || 'mod',
         sala.maxJugadores === 4 ? 4 : 2,
         sala.modoMuros || 'estandar',
-        sala.tamanoTablero === 7 ? 7 : 9,
+        normalizarTamanoTablero(sala.tamanoTablero),
         sala.destacada ? 1 : 0,
         sala.mensajeEspecial || '',
         sala.creadoEn || Date.now()
@@ -916,6 +916,12 @@ async function d1EliminarSalaPersonalizada(d1, codigo) {
 
 function normalizarCodigoSala(raw) {
   return String(raw || '').toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+}
+
+function normalizarTamanoTablero(raw) {
+  const num = Number(raw);
+  if (num === 5 || num === 7 || num === 9) return num;
+  return 9;
 }
 
 async function d1LimpiarSalasExpiradas(d1) {
@@ -969,7 +975,7 @@ async function d1LeerSalaOnline(d1, codigo) {
         creadoEn: Number(customRow.creado_en) || ahora,
         ultimoCambio: ahora,
         modoMuros: customRow.modo_muros || 'estandar',
-        tamanoTablero: Number(customRow.tamano_tablero) === 7 ? 7 : 9,
+        tamanoTablero: normalizarTamanoTablero(customRow.tamano_tablero),
         esOficialStaff: true,
       };
       await d1GuardarSalaOnline(d1, limpio, salaNueva);
@@ -1218,17 +1224,14 @@ async function manejarPeticionApi(request, env) {
     let cuentaEncontrada = null;
     for (const acc of Object.values(cuentas)) {
       if (!acc || typeof acc !== 'object' || acc.id === 'admin') continue;
-      if (
-        String(acc.nombre || '').trim().toLowerCase() === busqueda ||
-        String(acc.id || '').trim().toLowerCase() === busqueda
-      ) {
+      if (String(acc.id || '').trim().toLowerCase() === busqueda) {
         cuentaEncontrada = acc;
         break;
       }
     }
 
     if (!cuentaEncontrada) {
-      return new Response(JSON.stringify({ ok: false, error: 'User no encontrado. Regístrate para jugar.' }), {
+      return new Response(JSON.stringify({ ok: false, error: 'User ID no encontrado. Usa tu ID exacto o regístrate.' }), {
         status: 404,
         headers: cabecerasJson,
       });
@@ -2346,7 +2349,7 @@ async function manejarPeticionApi(request, env) {
         creadoEn: ahora,
         maxJugadores: body.maxJugadores === 4 ? 4 : 2,
         modoMuros: body.modoMuros === 'caos' ? 'caos' : (body.modoMuros === 'tactico' ? 'tactico' : 'estandar'),
-        tamanoTablero: body.tamanoTablero === 7 ? 7 : 9,
+        tamanoTablero: normalizarTamanoTablero(body.tamanoTablero),
         destacada: true,
         mensajeEspecial: String(body.mensajeEspecial || '').trim().slice(0, 80),
       };
@@ -3062,7 +3065,7 @@ async function manejarPeticionApi(request, env) {
         creadoEn: existente?.creadoEn || ahora,
         ultimoCambio: ahora,
         modoMuros: existente?.modoMuros || room.modoMuros,
-        tamanoTablero: existente?.tamanoTablero || room.tamanoTablero,
+        tamanoTablero: normalizarTamanoTablero(existente?.tamanoTablero ?? room.tamanoTablero),
         esOficialStaff: Boolean(existente?.esOficialStaff),
       };
 
@@ -3119,7 +3122,7 @@ async function manejarPeticionApi(request, env) {
             seq: sala.seq || 0,
             ultimoCambio: sala.ultimoCambio || sala.creadoEn || 0,
             modoMuros: sala.modoMuros,
-            tamanoTablero: sala.tamanoTablero,
+            tamanoTablero: normalizarTamanoTablero(sala.tamanoTablero),
             esOficialStaff: Boolean(sala.esOficialStaff),
             mensajesNuevos,
           },
