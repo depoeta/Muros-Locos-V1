@@ -329,7 +329,7 @@ export async function pingServidor(): Promise<{ ok: boolean; dbConectado: boolea
   }
 }
 
-export function iniciarEscuchaNube(intervalMs: number = 90000): () => void {
+export function iniciarEscuchaNube(intervalMs: number = 30000): () => void {
   const interval = setInterval(() => {
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
     pingServidor().catch(() => {});

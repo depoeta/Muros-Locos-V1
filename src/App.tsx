@@ -240,10 +240,10 @@ export const App: React.FC = () => {
   const modalActivoRef = useRef<ModalType>(modalActivo);
   modalActivoRef.current = modalActivo;
 
-  // Sincronización inicial, sesiones revocadas y escucha ligera cada 90s contra la Database
+  // Sincronización inicial, sesiones revocadas y escucha ligera cada 30s contra la Database
   useEffect(() => {
     sincronizarConNube(false).catch(() => {});
-    const stopListener = iniciarEscuchaNube(90000);
+    const stopListener = iniciarEscuchaNube(30000);
     const unsubs = suscribirCambiosNube(({ cuentas }) => {
       const current = userActualRef.current;
       if (current && current.id !== 'admin') {
