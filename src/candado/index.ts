@@ -4,5 +4,10 @@
  */
 
 export { CandadoGame } from './CandadoGame';
+export { CandadoOnlineView } from './CandadoOnlineView';
 export * from './types';
 export * from './candadoEngine';
+export * from './candadoCrypto';
+export * from './candadoPuntosApi';
+export { candadoOnlineService } from './candadoOnlineService';
+

@@ -10,10 +10,20 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { EstiloVisual, UserCuenta } from '../types/murosLocos';
 import { candadoAudio } from './candadoAudio';
 import {
+  DIGITOS_LOGICO,
+  DIGITOS_MAYOR_MENOR,
   formatearNumeroConCeros,
   iniciarPartidaCandado,
+  normalizarConfigCandado,
   registrarIntentoCandado,
 } from './candadoEngine';
+import { CandadoOnlineView } from './CandadoOnlineView';
+import { candadoOnlineService } from './candadoOnlineService';
+import {
+  calcularPreviewPuntosLocal,
+  generarMatchIdCandado,
+  reportarPuntosCandadoAsync,
+} from './candadoPuntosApi';
 import { CandadoVault } from './CandadoVault';
 import {
   CandadoConfig,
@@ -25,6 +35,7 @@ import {
   ModoCandado,
   NivelProximidad,
   NotaDigito,
+  ResumenPuntosCandado,
 } from './types';
 
 interface CandadoGameProps {
@@ -34,8 +45,19 @@ interface CandadoGameProps {
   estiloVisual?: EstiloVisual;
   onToggleEstiloVisual?: () => void;
   onToggleSonido?: () => void;
+  onPuntosActualizados?: (nuevosPuntos: number) => void;
   onVolverAMurosLocos: () => void;
 }
+
+const ETIQUETAS_DIGITOS: Record<DigitosCandado, { icono: string; metal: string }> = {
+  4: { icono: '🥉', metal: 'Bronce' },
+  5: { icono: '🛡️', metal: 'Acero' },
+  6: { icono: '👑', metal: 'Real' },
+  8: { icono: '💠', metal: 'Titanio' },
+  10: { icono: '🔮', metal: 'Cuántica' },
+  14: { icono: '⚡', metal: 'Élite' },
+  16: { icono: '🌌', metal: 'Maestra' },
+};
 
 const OPCIONES_INTENTOS: { valor: LimiteIntentosCandado; etiqueta: string; desc: string }[] = [
   { valor: 0, etiqueta: '∞', desc: 'Ilimitado' },
@@ -94,6 +116,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
   estiloVisual: estiloProp = 'clasico',
   onToggleEstiloVisual,
   onToggleSonido,
+  onPuntosActualizados,
   onVolverAMurosLocos,
 }) => {
   const [estiloLocal, setEstiloLocal] = useState<EstiloVisual>(estiloProp);
@@ -103,6 +126,9 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
   const [menuJuegosAbierto, setMenuJuegosAbierto] = useState(false);
   const [mostrarReglas, setMostrarReglas] = useState(false);
   const [registroAmpliado, setRegistroAmpliado] = useState(false);
+  const [modalModoAbierto, setModalModoAbierto] = useState(false);
+
+  const [modalidadJuego, setModalidadJuego] = useState<'local' | 'p2p'>('local');
 
   const [config, setConfig] = useState<CandadoConfig>({
     modo: 'logico',
@@ -110,9 +136,15 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
     maxIntentos: 0,
     permitirRepetidos: false,
   });
+  const [draftConfig, setDraftConfig] = useState<CandadoConfig>(config);
 
   const [pantalla, setPantalla] = useState<'config' | 'juego'>('config');
   const [estado, setEstado] = useState<EstadoCandado | null>(null);
+  const [matchIdLocal, setMatchIdLocal] = useState<string>('');
+  const [resumenPuntosLocal, setResumenPuntosLocal] = useState<ResumenPuntosCandado>({
+    estado: 'idle',
+    puntosOtorgados: 0,
+  });
   const [entradaActual, setEntradaActual] = useState<string[]>(['', '', '', '']);
   const [cursorIdx, setCursorIdx] = useState<number>(0);
   const [tiempoSegundos, setTiempoSegundos] = useState<number>(0);
@@ -123,6 +155,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
   const [notasDigitos, setNotasDigitos] = useState<Record<string, NotaDigito>>({});
 
   const errorTimeoutRef = useRef<number | null>(null);
+  const localMatchReportadoRef = useRef<string>('');
 
   useEffect(() => {
     candadoAudio.setEnabled(sonidoActivo);
@@ -147,9 +180,14 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
     }, 2200);
   }, []);
 
-  const iniciarNuevaPartida = useCallback((cfg: CandadoConfig) => {
+  const iniciarNuevaPartida = useCallback((cfgRaw: CandadoConfig) => {
+    const cfg = normalizarConfigCandado(cfgRaw);
     const nuevoEstado = iniciarPartidaCandado(cfg);
+    setConfig(cfg);
     setEstado(nuevoEstado);
+    setMatchIdLocal(generarMatchIdCandado('cndl'));
+    setResumenPuntosLocal({ estado: 'idle', puntosOtorgados: 0 });
+    localMatchReportadoRef.current = '';
     setEntradaActual(new Array(cfg.digitos).fill(''));
     setCursorIdx(0);
     setTiempoSegundos(0);
@@ -157,35 +195,101 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
     setModoNotas(false);
     setNotasDigitos({});
     setRegistroAmpliado(false);
+    setModalModoAbierto(false);
+    setModalidadJuego('local');
     setPantalla('juego');
   }, []);
+
+  // Acreditar puntos en modo Local cuando se descifra el candado
+  useEffect(() => {
+    if (!estado || estado.fase !== 'ganada' || !matchIdLocal) return;
+    if (localMatchReportadoRef.current === matchIdLocal) return;
+    localMatchReportadoRef.current = matchIdLocal;
+
+    if (!userActual) {
+      setResumenPuntosLocal({
+        estado: 'invitado',
+        puntosOtorgados: 0,
+        mensaje: 'Inicia sesión para acumular tus puntos.',
+      });
+      return;
+    }
+
+    let cancelado = false;
+    setResumenPuntosLocal({ estado: 'enviando', puntosOtorgados: 0 });
+
+    reportarPuntosCandadoAsync({
+      matchId: matchIdLocal,
+      modalidad: 'local',
+      modo: estado.config.modo,
+      digitos: estado.config.digitos,
+      conLimite: estado.config.maxIntentos > 0,
+      intentosUsados: estado.intentos.length,
+      resultado: 'victoria',
+    }).then((resp) => {
+      if (cancelado) return;
+      if (!resp.ok) {
+        setResumenPuntosLocal({
+          estado: 'error',
+          puntosOtorgados: 0,
+          mensaje: resp.error || 'No se pudieron registrar los puntos.',
+        });
+        return;
+      }
+      if (typeof resp.puntosTotales === 'number') {
+        onPuntosActualizados?.(resp.puntosTotales);
+      }
+      setResumenPuntosLocal({
+        estado:
+          resp.puntosOtorgados === 0 && resp.cupoDiarioRestante === 0
+            ? 'cupo_agotado'
+            : 'acreditado',
+        puntosOtorgados: resp.puntosOtorgados,
+        puntosTotales: resp.puntosTotales,
+        cupoDiarioRestante: resp.cupoDiarioRestante,
+        mensaje:
+          resp.puntosOtorgados === 0 && resp.cupoDiarioRestante === 0
+            ? 'Tope diario de 100 pts en Candado alcanzado por hoy.'
+            : undefined,
+      });
+    });
+
+    return () => {
+      cancelado = true;
+    };
+  }, [estado?.fase, matchIdLocal, userActual, onPuntosActualizados]);
+
+  const abrirModalModo = useCallback(() => {
+    candadoAudio.playDialTick();
+    setDraftConfig(normalizarConfigCandado(pantalla === 'juego' && estado ? estado.config : config));
+    setModalModoAbierto(true);
+  }, [pantalla, estado, config]);
 
   const digitosUsadosEnEntrada = useMemo(
     () => new Set(entradaActual.filter((d) => d !== '')),
     [entradaActual]
   );
 
-  const confirmadosPorPosicion = useMemo<(string | null)[]>(() => {
-    if (!estado || estado.config.modo !== 'logico') return [];
-    const arr: (string | null)[] = new Array(estado.config.digitos).fill(null);
+  // Punto medio: cualquier dígito confirmado como exacto (🟩) queda en verde leve fijo en el teclado
+  const confirmadosEnHistorial = useMemo<Set<string>>(() => {
+    const set = new Set<string>();
+    if (!estado || estado.config.modo !== 'logico') return set;
     for (const it of estado.intentos as IntentoLogico[]) {
-      it.digitos.forEach((ev, idx) => {
+      for (const ev of it.digitos) {
         if (ev.estado === 'exacto') {
-          arr[idx] = ev.digito;
+          set.add(ev.digito);
         }
-      });
+      }
     }
-    return arr;
+    return set;
   }, [estado]);
 
   const ciclarNota = useCallback((d: string) => {
     candadoAudio.playDialTick();
-    setNotasDigitos((prev) => {
-      const actual = prev[d] || 'neutro';
-      const siguiente: NotaDigito =
-        actual === 'neutro' ? 'descartado' : actual === 'descartado' ? 'posible' : 'neutro';
-      return { ...prev, [d]: siguiente };
-    });
+    setNotasDigitos((prev) => ({
+      ...prev,
+      [d]: prev[d] === 'descartado' ? 'neutro' : 'descartado',
+    }));
   }, []);
 
   const ingresarDigito = useCallback(
@@ -300,7 +404,15 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
   }, [estado, entradaActual, dispararError]);
 
   useEffect(() => {
-    if (pantalla !== 'juego' || !estado || estado.fase !== 'jugando' || mostrarReglas || registroAmpliado) {
+    if (
+      modalidadJuego !== 'local' ||
+      pantalla !== 'juego' ||
+      !estado ||
+      estado.fase !== 'jugando' ||
+      mostrarReglas ||
+      registroAmpliado ||
+      modalModoAbierto
+    ) {
       return;
     }
     const onKeyDown = (e: KeyboardEvent) => {
@@ -328,10 +440,12 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
+    modalidadJuego,
     pantalla,
     estado,
     mostrarReglas,
     registroAmpliado,
+    modalModoAbierto,
     ingresarDigito,
     borrarDigito,
     limpiarEntrada,
@@ -375,7 +489,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                 <span className="text-[10px] font-black opacity-65 tabular-nums w-5 shrink-0">
                   #{itemA.numero}
                 </span>
-                <div className="flex items-center gap-1 flex-1 justify-center">
+                <div className="flex flex-wrap items-center gap-1 flex-1 justify-center min-w-0">
                   {itemA.digitos.map((ev, dIdx) => (
                     <div
                       key={dIdx}
@@ -387,7 +501,13 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                           : 'No está en la clave'
                       }
                       className={`${
-                        compacta ? 'w-7 h-7 text-xs' : 'w-8 h-8 text-sm'
+                        estado.config.digitos >= 8
+                          ? compacta
+                            ? 'w-6 h-6 text-[11px]'
+                            : 'w-7 h-7 text-xs'
+                          : compacta
+                          ? 'w-7 h-7 text-xs'
+                          : 'w-8 h-8 text-sm'
                       } rounded-lg flex flex-col items-center justify-center font-mono font-black tabular-nums border ${
                         ev.estado === 'exacto'
                           ? 'bg-[#51cf66] text-[#134e20] border-[#2b8a3e]'
@@ -510,9 +630,10 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
             >
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   candadoAudio.playDialTick();
                   setMenuJuegosAbierto(false);
+                  await candadoOnlineService.leaveRoom();
                   onVolverAMurosLocos();
                 }}
                 className={
@@ -597,29 +718,74 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
             ❓ Reglas
           </button>
 
-          {pantalla === 'juego' && (
-            <button
-              type="button"
-              onClick={() => {
-                candadoAudio.playDialTick();
-                setPantalla('config');
-              }}
+          {userActual && (
+            <span
               className={
                 esMinimalista
-                  ? 'px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 text-[11px] font-semibold cursor-pointer'
-                  : 'px-2.5 py-1 rounded-2xl bg-[#ffd43b] hover:bg-[#fcc419] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-[11px] font-black cursor-pointer'
+                  ? 'hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-400/30 text-amber-200 text-[11px] font-bold tabular-nums'
+                  : 'hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-2xl bg-[#fff3bf] border-2 border-[#2b2140] text-[#5c3c00] text-[11px] font-black tabular-nums'
               }
+              title="Tus puntos acumulados"
             >
-              ⚙️ Modo
-            </button>
+              ⭐ {userActual.puntos} pts
+            </span>
+          )}
+
+          {modalidadJuego === 'local' && pantalla === 'juego' && estado && (
+            <>
+              <button
+                type="button"
+                onClick={abrirModalModo}
+                className={
+                  esMinimalista
+                    ? 'px-2.5 py-1 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-400/35 text-[11px] font-semibold cursor-pointer tabular-nums'
+                    : 'px-2.5 py-1 rounded-2xl bg-[#ffd43b] hover:bg-[#fcc419] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-[11px] font-black cursor-pointer tabular-nums'
+                }
+                title="Cambiar modo de juego o cantidad de dígitos"
+              >
+                🎛️ {estado.config.digitos}D · Modo
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  candadoAudio.playDialTick();
+                  setPantalla('config');
+                }}
+                className={
+                  esMinimalista
+                    ? 'px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 text-[11px] font-semibold cursor-pointer'
+                    : 'px-2.5 py-1 rounded-2xl bg-white hover:bg-[#fff9db] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-[11px] font-black cursor-pointer'
+                }
+              >
+                ⚙️ Inicio
+              </button>
+            </>
           )}
         </div>
       </header>
 
       {/* ===================================================================== */}
-      {/* PANTALLA DE CONFIGURACIÓN LOCAL (BETA COMPACTA)                      */}
+      {/* MODO ONLINE P2P AISLADO                                               */}
       {/* ===================================================================== */}
-      {pantalla === 'config' && (
+      {modalidadJuego === 'p2p' && (
+        <CandadoOnlineView
+          userActual={userActual}
+          esMinimalista={esMinimalista}
+          animacionesReducidas={animacionesReducidas}
+          configInicial={{ ...config, tiempoTurnoSeg: 45 }}
+          onPuntosActualizados={onPuntosActualizados}
+          onVolverALocal={async () => {
+            await candadoOnlineService.leaveRoom();
+            setModalidadJuego('local');
+            setPantalla('config');
+          }}
+        />
+      )}
+
+      {/* ===================================================================== */}
+      {/* PANTALLA DE CONFIGURACIÓN LOCAL                                       */}
+      {/* ===================================================================== */}
+      {modalidadJuego === 'local' && pantalla === 'config' && (
         <main className="w-full max-w-lg my-auto py-2 flex flex-col">
           <div
             className={
@@ -647,7 +813,9 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                       : 'text-[11px] font-bold text-[#6c4f3d] mt-0.5'
                   }
                 >
-                  {userActual ? `${userActual.nombre} · ` : ''}Beta Local (sin registro de puntos aún)
+                  {userActual
+                    ? `${userActual.nombre} · ⭐ ${userActual.puntos} pts`
+                    : 'Deducción numérica · Local y Duelo P2P'}
                 </p>
               </div>
               <button
@@ -663,76 +831,38 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               </button>
             </div>
 
-            {/* 1. Mecánica A o B */}
-            <div className="mb-3">
-              <label
+            {/* Selector principal de modalidad: Local vs Duelo P2P */}
+            <div className="grid grid-cols-2 gap-2 mb-3.5">
+              <button
+                type="button"
+                onClick={() => candadoAudio.playDialTick()}
                 className={
                   esMinimalista
-                    ? 'block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5'
-                    : 'block text-[11px] font-black uppercase tracking-wider text-[#593922] mb-1.5'
+                    ? 'py-2 px-3 rounded-2xl bg-emerald-500/20 border-2 border-emerald-400 text-emerald-100 text-xs font-black text-left cursor-pointer'
+                    : 'py-2 px-3 rounded-2xl bg-[#d3f9d8] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-[#134e20] text-xs font-black text-left cursor-pointer'
                 }
               >
-                1. Mecánica de juego
-              </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {(
-                  [
-                    {
-                      id: 'logico' as ModoCandado,
-                      icono: '🧠',
-                      titulo: 'Candado Lógico',
-                      sub: '🟩 Exacto · 🟨 Desubicado · ⬛ Ausente',
-                    },
-                    {
-                      id: 'mayor_menor' as ModoCandado,
-                      icono: '🌡️',
-                      titulo: 'Mayor / Menor',
-                      sub: '↑ Alto / ↓ Bajo + Frío o Caliente',
-                    },
-                  ]
-                ).map((m) => {
-                  const activo = config.modo === m.id;
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => {
-                        candadoAudio.playDialTick();
-                        setConfig((prev) => ({ ...prev, modo: m.id }));
-                      }}
-                      className={`p-2.5 rounded-2xl text-left transition-all cursor-pointer ${
-                        activo
-                          ? esMinimalista
-                            ? 'bg-emerald-500/20 border-2 border-emerald-400 text-white'
-                            : 'bg-[#d3f9d8] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] text-[#134e20]'
-                          : esMinimalista
-                          ? 'bg-slate-800/70 border border-white/10 text-slate-300 hover:bg-slate-800'
-                          : 'bg-white border-2 border-[#2b2140]/55 text-[#2b2140] hover:bg-[#fff9db]'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-black text-xs sm:text-sm flex items-center gap-1.5">
-                          <span>{m.icono}</span>
-                          <span>{m.titulo}</span>
-                        </span>
-                        {activo && <span className="text-xs font-black">✓</span>}
-                      </div>
-                      <span
-                        className={
-                          esMinimalista
-                            ? 'block text-[10px] text-slate-400 mt-0.5 leading-snug'
-                            : 'block text-[10px] font-bold opacity-80 mt-0.5 leading-snug'
-                        }
-                      >
-                        {m.sub}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+                <span className="block">🏠 Solo / Local</span>
+                <span className="text-[10px] opacity-80 font-bold">Hasta +22 pts · Tu ritmo</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  candadoAudio.playDialTick();
+                  setModalidadJuego('p2p');
+                }}
+                className={
+                  esMinimalista
+                    ? 'py-2 px-3 rounded-2xl bg-slate-800/80 hover:bg-slate-800 border border-white/15 text-slate-200 text-xs font-black text-left cursor-pointer transition-all'
+                    : 'py-2 px-3 rounded-2xl bg-white hover:bg-[#e7f5ff] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-[#1864ab] text-xs font-black text-left cursor-pointer transition-all'
+                }
+              >
+                <span className="block">🌐 Duelo P2P 1v1</span>
+                <span className="text-[10px] opacity-80 font-bold">Salas Online · SHA-256</span>
+              </button>
             </div>
 
-            {/* 2. Dígitos (4 a 6) */}
+            {/* Resumen interactivo de Modo de Juego y Dígitos (estilo Aspecto de Muros Locos) */}
             <div className="mb-3">
               <label
                 className={
@@ -741,40 +871,63 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                     : 'block text-[11px] font-black uppercase tracking-wider text-[#593922] mb-1.5'
                 }
               >
-                2. Dígitos (4 a 6)
+                1. Modo de juego y dígitos
               </label>
-              <div className="grid grid-cols-3 gap-2">
-                {([4, 5, 6] as DigitosCandado[]).map((num) => {
-                  const activo = config.digitos === num;
-                  const metal = num === 4 ? '🥉 Bronce' : num === 5 ? '🛡️ Acero' : '👑 Real';
-                  return (
-                    <button
-                      key={num}
-                      type="button"
-                      onClick={() => {
-                        candadoAudio.playDialTick();
-                        setConfig((prev) => ({ ...prev, digitos: num }));
-                      }}
-                      className={`min-h-[44px] px-2 py-1.5 rounded-xl flex flex-col items-center justify-center transition-all cursor-pointer ${
-                        activo
-                          ? esMinimalista
-                            ? 'bg-indigo-500/25 border-2 border-indigo-400 text-white'
-                            : 'bg-[#ffd43b] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] text-[#2b2140]'
-                          : esMinimalista
-                          ? 'bg-slate-800/70 border border-white/10 text-slate-300 hover:bg-slate-800'
-                          : 'bg-white border-2 border-[#2b2140]/55 text-[#2b2140] hover:bg-[#fff9db]'
-                      }`}
+
+              <button
+                type="button"
+                onClick={abrirModalModo}
+                className={
+                  esMinimalista
+                    ? 'w-full p-3 rounded-2xl bg-slate-800/85 hover:bg-slate-800 border border-white/15 flex items-center justify-between gap-3 text-left cursor-pointer transition-all'
+                    : 'w-full p-3 rounded-2xl bg-white hover:bg-[#fff9db] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] active:translate-y-0.5 flex items-center justify-between gap-3 text-left cursor-pointer transition-all'
+                }
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-black text-sm">
+                      {config.modo === 'logico' ? '🧠 Candado Lógico' : '🌡️ Mayor / Menor'}
+                    </span>
+                    <span
+                      className={
+                        esMinimalista
+                          ? 'px-2 py-0.5 rounded-lg bg-indigo-500/20 text-indigo-200 border border-indigo-400/30 text-[11px] font-bold tabular-nums'
+                          : 'px-2 py-0.5 rounded-lg bg-[#ffd43b] text-[#2b2140] border border-[#2b2140] text-[11px] font-black tabular-nums'
+                      }
                     >
-                      <span className="font-black text-sm tabular-nums">{num} Dígitos</span>
-                      <span className="text-[10px] font-bold opacity-80">{metal}</span>
-                    </button>
-                  );
-                })}
-              </div>
+                      {ETIQUETAS_DIGITOS[config.digitos].icono} {config.digitos} Dígitos (
+                      {ETIQUETAS_DIGITOS[config.digitos].metal})
+                    </span>
+                  </div>
+                  <p
+                    className={
+                      esMinimalista
+                        ? 'text-[11px] text-slate-400 mt-1 truncate'
+                        : 'text-[11px] font-bold text-[#6c4f3d] mt-1 truncate'
+                    }
+                  >
+                    {config.modo === 'logico'
+                      ? config.permitirRepetidos
+                        ? '4 a 16 dígitos · Dígitos repetidos permitidos'
+                        : '4 a 10 dígitos · Dígitos únicos sin repetir'
+                      : '4 a 10 dígitos · ↑ Alto / ↓ Bajo + Proximidad'}
+                  </p>
+                </div>
+
+                <span
+                  className={
+                    esMinimalista
+                      ? 'px-2.5 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 text-xs font-bold shrink-0'
+                      : 'px-2.5 py-1.5 rounded-xl bg-[#d3f9d8] border-2 border-[#2b2140] text-[#134e20] text-xs font-black shrink-0'
+                  }
+                >
+                  🎛️ Elegir
+                </span>
+              </button>
             </div>
 
-            {/* 3. Límite de intentos */}
-            <div className="mb-3">
+            {/* 2. Límite de intentos */}
+            <div className="mb-3.5">
               <label
                 className={
                   esMinimalista
@@ -782,7 +935,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                     : 'block text-[11px] font-black uppercase tracking-wider text-[#593922] mb-1.5'
                 }
               >
-                3. Intentos (Ilimitado por defecto)
+                2. Intentos (Ilimitado por defecto)
               </label>
               <div className="grid grid-cols-5 gap-1.5">
                 {OPCIONES_INTENTOS.map((op) => {
@@ -817,38 +970,6 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               </div>
             </div>
 
-            {config.modo === 'logico' && (
-              <div className="mb-3.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    candadoAudio.playDialTick();
-                    setConfig((prev) => ({ ...prev, permitirRepetidos: !prev.permitirRepetidos }));
-                  }}
-                  className={
-                    esMinimalista
-                      ? 'w-full px-3 py-2 rounded-xl bg-slate-800/80 border border-white/10 flex items-center justify-between text-xs font-semibold cursor-pointer'
-                      : 'w-full px-3 py-2 rounded-xl bg-white border-2 border-[#2b2140] flex items-center justify-between text-xs font-black cursor-pointer'
-                  }
-                >
-                  <span>
-                    {config.permitirRepetidos
-                      ? '🔁 Dígitos repetidos permitidos'
-                      : '✨ Dígitos únicos sin repetir'}
-                  </span>
-                  <span
-                    className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${
-                      config.permitirRepetidos
-                        ? 'bg-[#ffd43b] text-[#2b2140]'
-                        : 'bg-[#d3f9d8] text-[#134e20]'
-                    }`}
-                  >
-                    {config.permitirRepetidos ? 'Repetidos ON' : 'Únicos'}
-                  </span>
-                </button>
-              </div>
-            )}
-
             <button
               type="button"
               onClick={() => {
@@ -861,19 +982,19 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                   : 'w-full min-h-[44px] py-2.5 rounded-2xl bg-[#51cf66] hover:bg-[#40c057] text-[#134e20] border-2 border-[#2b2140] shadow-[0_4px_0_#2b2140] active:translate-y-0.5 active:shadow-none font-black text-sm cursor-pointer transition-all'
               }
             >
-              🔓 Abrir Candado en Local
+              🔓 Abrir Candado (+{calcularPreviewPuntosLocal(config, config.maxIntentos > 0 ? Math.min(config.digitos + 2, config.maxIntentos) : config.digitos + 2)} pts máx.)
             </button>
           </div>
         </main>
       )}
 
       {/* ===================================================================== */}
-      {/* PANTALLA DE JUEGO ACTIVO (GEOMETRÍA FIJA — ZERO LAYOUT SHIFT)         */}
+      {/* PANTALLA DE JUEGO ACTIVO LOCAL (GEOMETRÍA FIJA — ZERO LAYOUT SHIFT)   */}
       {/* ===================================================================== */}
-      {pantalla === 'juego' && estado && (
+      {modalidadJuego === 'local' && pantalla === 'juego' && estado && (
         <main className="w-full max-w-4xl flex flex-col md:grid md:grid-cols-[minmax(0,390px)_minmax(0,1fr)] items-center md:items-start justify-center gap-2.5 sm:gap-4 mt-1">
           {/* Columna izquierda: Bóveda + Franja fija de estado + Teclado */}
-          <section className="w-full max-w-[390px] flex flex-col items-center gap-2">
+          <section className="w-full max-w-[400px] flex flex-col items-center gap-2">
             <CandadoVault
               digitos={estado.config.digitos}
               entradaActual={
@@ -892,7 +1013,6 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               errorShake={errorShake}
               esMinimalista={esMinimalista}
               animacionesReducidas={animacionesReducidas}
-              confirmadosPorPosicion={confirmadosPorPosicion}
             />
 
             {/* Franja de altura fija (h-7) para avisos / rango sin mover el teclado */}
@@ -963,6 +1083,24 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                   · {estado.intentos.length} intentos · {tiempoSegundos}s
                 </p>
 
+                {estado.fase === 'ganada' && (
+                  <div className="mt-2 text-xs font-black">
+                    {resumenPuntosLocal.estado === 'acreditado' && (
+                      <span className="px-2.5 py-1 rounded-xl bg-white/80 text-[#134e20] border border-[#2b2140] inline-block">
+                        ⭐ +{resumenPuntosLocal.puntosOtorgados} pts acreditados
+                      </span>
+                    )}
+                    {resumenPuntosLocal.estado === 'enviando' && (
+                      <span className="opacity-80">⏳ Registrando puntos...</span>
+                    )}
+                    {(resumenPuntosLocal.estado === 'cupo_agotado' ||
+                      resumenPuntosLocal.estado === 'invitado' ||
+                      resumenPuntosLocal.estado === 'error') && (
+                      <span className="text-[11px] opacity-85">{resumenPuntosLocal.mensaje}</span>
+                    )}
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-2 mt-3">
                   <button
                     type="button"
@@ -1006,7 +1144,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                       }
                     >
                       {modoNotas
-                        ? 'Toca números para tachar/marcar'
+                        ? 'Toca números para tachar / destachar'
                         : 'Usa botones o tu teclado (0–9)'}
                     </span>
                     <button
@@ -1025,7 +1163,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                           : 'bg-white text-[#2b2140] border border-[#2b2140]/60'
                       }`}
                     >
-                      {modoNotas ? '📝 Notas: ON' : '📝 Notas'}
+                      {modoNotas ? '✏️ Tachar: ON' : '✏️ Tachar'}
                     </button>
                   </div>
                 )}
@@ -1033,9 +1171,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                 <div className="grid grid-cols-5 gap-1.5">
                   {['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].map((d) => {
                     const nota = notasDigitos[d] || 'neutro';
-                    const esConfirmadoEnCursor =
-                      estado.config.modo === 'logico' &&
-                      confirmadosPorPosicion[cursorIdx] === d;
+                    const esExactoEnHistorial =
+                      estado.config.modo === 'logico' && confirmadosEnHistorial.has(d);
                     const yaEnSlot =
                       estado.config.modo === 'logico' &&
                       !estado.config.permitirRepetidos &&
@@ -1046,15 +1183,15 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                         key={d}
                         type="button"
                         onClick={() => ingresarDigito(d)}
-                        className={`relative h-10 sm:h-11 rounded-xl font-mono font-black text-base tabular-nums transition-all cursor-pointer active:translate-y-0.5 ${
+                        className={`relative h-10 sm:h-11 rounded-xl font-mono font-black text-base tabular-nums transition-colors cursor-pointer active:translate-y-0.5 ${
                           nota === 'descartado'
                             ? esMinimalista
                               ? 'bg-slate-950/80 text-slate-600 border border-white/5 line-through'
                               : 'bg-[#dee2e6] text-[#868e96] border-2 border-[#adb5bd] line-through'
-                            : esConfirmadoEnCursor || nota === 'posible'
+                            : esExactoEnHistorial
                             ? esMinimalista
-                              ? 'bg-emerald-500/30 text-emerald-200 border-2 border-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.3)]'
-                              : 'bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                              ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-400/50'
+                              : 'bg-[#d3f9d8] hover:bg-[#b2f2bb] text-[#134e20] border-2 border-[#40c057] shadow-[0_2px_0_#2b2140]'
                             : yaEnSlot
                             ? esMinimalista
                               ? 'bg-indigo-500/25 text-indigo-200 border border-indigo-400/50'
@@ -1065,11 +1202,6 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                         }`}
                       >
                         <span>{d}</span>
-                        {esConfirmadoEnCursor && nota !== 'descartado' && (
-                          <span className="absolute top-0.5 right-1 text-[8px] font-black leading-none">
-                            ✓
-                          </span>
-                        )}
                       </button>
                     );
                   })}
@@ -1151,6 +1283,239 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
         </main>
       )}
 
+      {/* Modal selector de Modo de Juego y Dígitos (estilo Aspecto de Muros Locos) */}
+      {modalModoAbierto && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4"
+          onClick={() => setModalModoAbierto(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className={
+              esMinimalista
+                ? 'w-full max-w-lg max-h-[90dvh] rounded-3xl bg-slate-900 border border-white/15 p-4 sm:p-5 shadow-2xl text-slate-100 flex flex-col overflow-hidden'
+                : 'w-full max-w-lg max-h-[90dvh] rounded-3xl bg-[#fff8e7] border-4 border-[#2b2140] p-4 sm:p-5 shadow-[0_10px_0_#2b2140,0_20px_35px_rgba(0,0,0,0.35)] text-[#2b2140] flex flex-col overflow-hidden'
+            }
+          >
+            {/* Cabecera del Modal */}
+            <div className="flex items-center justify-between gap-2 pb-3 border-b border-current/15 shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-2xl leading-none">🎛️</span>
+                <div className="min-w-0">
+                  <h3 className="text-base sm:text-lg font-black leading-tight truncate">
+                    Modo de Juego y Dígitos
+                  </h3>
+                  <p className="text-[11px] font-bold opacity-75 truncate">
+                    Elige la mecánica y la longitud de la clave
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalModoAbierto(false)}
+                className="w-8 h-8 rounded-xl bg-black/10 hover:bg-black/20 font-black text-sm cursor-pointer shrink-0"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Contenido desplazable */}
+            <div className="flex-1 min-h-0 overflow-y-auto py-3 space-y-3.5 pr-0.5">
+              {/* 1. Elegir Modo de Juego */}
+              <div>
+                <label className="block text-[11px] font-black uppercase tracking-wider opacity-75 mb-1.5">
+                  1. Elige el modo de juego
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {(
+                    [
+                      {
+                        id: 'logico' as ModoCandado,
+                        icono: '🧠',
+                        titulo: 'Candado Lógico',
+                        sub: '4 a 16 dígitos · 🟩 Exacto · 🟨 Lugar · ⬛ Ausente',
+                      },
+                      {
+                        id: 'mayor_menor' as ModoCandado,
+                        icono: '🌡️',
+                        titulo: 'Mayor / Menor',
+                        sub: '4 a 10 dígitos · ↑ Alto / ↓ Bajo + Proximidad',
+                      },
+                    ]
+                  ).map((m) => {
+                    const activo = draftConfig.modo === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          candadoAudio.playDialTick();
+                          setDraftConfig((prev) =>
+                            normalizarConfigCandado({ ...prev, modo: m.id })
+                          );
+                        }}
+                        className={`p-2.5 rounded-2xl text-left transition-all cursor-pointer ${
+                          activo
+                            ? esMinimalista
+                              ? 'bg-emerald-500/20 border-2 border-emerald-400 text-white'
+                              : 'bg-[#d3f9d8] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] text-[#134e20]'
+                            : esMinimalista
+                            ? 'bg-slate-800/70 border border-white/10 text-slate-300 hover:bg-slate-800'
+                            : 'bg-white border-2 border-[#2b2140]/55 text-[#2b2140] hover:bg-[#fff9db]'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-black text-xs sm:text-sm flex items-center gap-1.5">
+                            <span>{m.icono}</span>
+                            <span>{m.titulo}</span>
+                          </span>
+                          {activo && <span className="text-xs font-black">✓</span>}
+                        </div>
+                        <span className="block text-[10px] font-bold opacity-80 mt-0.5 leading-snug">
+                          {m.sub}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 2. Elegir Cantidad de Dígitos */}
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <label className="text-[11px] font-black uppercase tracking-wider opacity-75">
+                    2. Elige los dígitos
+                  </label>
+                  <span className="text-[10px] font-bold opacity-70">
+                    {draftConfig.modo === 'logico'
+                      ? 'Disponibles: 4 a 16 dígitos'
+                      : 'Mayor / Menor: hasta 10 dígitos'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                  {(draftConfig.modo === 'logico' ? DIGITOS_LOGICO : DIGITOS_MAYOR_MENOR).map(
+                    (num) => {
+                      const activo = draftConfig.digitos === num;
+                      const info = ETIQUETAS_DIGITOS[num];
+                      return (
+                        <button
+                          key={num}
+                          type="button"
+                          onClick={() => {
+                            candadoAudio.playDialTick();
+                            setDraftConfig((prev) =>
+                              normalizarConfigCandado({ ...prev, digitos: num })
+                            );
+                          }}
+                          className={`min-h-[50px] px-2 py-1.5 rounded-2xl flex flex-col items-center justify-center transition-all cursor-pointer ${
+                            activo
+                              ? esMinimalista
+                                ? 'bg-indigo-500/25 border-2 border-indigo-400 text-white'
+                                : 'bg-[#ffd43b] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] text-[#2b2140]'
+                              : esMinimalista
+                              ? 'bg-slate-800/70 border border-white/10 text-slate-300 hover:bg-slate-800'
+                              : 'bg-white border-2 border-[#2b2140]/55 text-[#2b2140] hover:bg-[#fff9db]'
+                          }`}
+                        >
+                          <span className="font-black text-xs sm:text-sm tabular-nums leading-tight">
+                            {num} Dígitos
+                          </span>
+                          <span className="text-[10px] font-bold opacity-80 leading-tight mt-0.5">
+                            {info.icono} {info.metal}
+                          </span>
+                        </button>
+                      );
+                    }
+                  )}
+                </div>
+              </div>
+
+              {/* 3. Repetidos (solo en Candado Lógico) */}
+              {draftConfig.modo === 'logico' && (
+                <div>
+                  <label className="block text-[11px] font-black uppercase tracking-wider opacity-75 mb-1.5">
+                    3. Regla de dígitos
+                  </label>
+                  <button
+                    type="button"
+                    disabled={draftConfig.digitos > 10}
+                    onClick={() => {
+                      candadoAudio.playDialTick();
+                      setDraftConfig((prev) =>
+                        normalizarConfigCandado({
+                          ...prev,
+                          permitirRepetidos: !prev.permitirRepetidos,
+                        })
+                      );
+                    }}
+                    className={`w-full px-3 py-2 rounded-xl flex items-center justify-between text-xs font-black transition-all ${
+                      draftConfig.digitos > 10 ? 'opacity-80 cursor-not-allowed' : 'cursor-pointer'
+                    } ${
+                      esMinimalista
+                        ? 'bg-slate-800/80 border border-white/15'
+                        : 'bg-white border-2 border-[#2b2140]'
+                    }`}
+                  >
+                    <span className="text-left">
+                      {draftConfig.digitos > 10
+                        ? '🔁 Repetidos obligatorios (14–16 dígitos)'
+                        : draftConfig.permitirRepetidos
+                        ? '🔁 Dígitos repetidos permitidos'
+                        : '✨ Dígitos únicos sin repetir'}
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-black shrink-0 ${
+                        draftConfig.permitirRepetidos
+                          ? 'bg-[#ffd43b] text-[#2b2140]'
+                          : 'bg-[#d3f9d8] text-[#134e20]'
+                      }`}
+                    >
+                      {draftConfig.permitirRepetidos ? 'Repetidos ON' : 'Únicos'}
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Pie del Modal (Botones de Confirmar / Cancelar) */}
+            <div className="pt-3 border-t border-current/15 flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setModalModoAbierto(false)}
+                className={
+                  esMinimalista
+                    ? 'flex-1 min-h-[42px] rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 font-bold text-xs cursor-pointer'
+                    : 'flex-1 min-h-[42px] rounded-xl bg-white hover:bg-[#f1f3f5] border-2 border-[#2b2140] font-black text-xs cursor-pointer'
+                }
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const finalCfg = normalizarConfigCandado(draftConfig);
+                  candadoAudio.playDigitInput();
+                  if (pantalla === 'juego') {
+                    iniciarNuevaPartida(finalCfg);
+                  } else {
+                    setConfig(finalCfg);
+                    setModalModoAbierto(false);
+                  }
+                }}
+                className={
+                  esMinimalista
+                    ? 'flex-[2] min-h-[42px] rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs sm:text-sm cursor-pointer shadow-lg'
+                    : 'flex-[2] min-h-[42px] rounded-xl bg-[#51cf66] hover:bg-[#40c057] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] active:translate-y-0.5 font-black text-xs sm:text-sm cursor-pointer'
+                }
+              >
+                {pantalla === 'juego' ? '🔓 Aplicar y Nueva Partida' : '✓ Aplicar Selección'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal Registro Ampliado */}
       {registroAmpliado && estado && (
         <div
@@ -1211,19 +1576,23 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
             <div className="space-y-2.5 text-xs leading-relaxed font-semibold">
               <div className="p-2.5 rounded-2xl bg-black/5">
                 <strong className="block text-sm font-black mb-0.5">🧠 Mecánica A — Candado Lógico</strong>
-                Adivina la combinación de 4 a 6 dígitos. Cada ficha muestra:
+                Adivina la combinación de 4 a 16 dígitos. Cada ficha muestra:
                 <ul className="mt-1 space-y-0.5 list-disc list-inside">
-                  <li>🟩 <strong>✓ Verde:</strong> Dígito correcto en su posición exacta.</li>
+                  <li>🟩 <strong>✓ Verde:</strong> Dígito correcto en su posición exacta (se marca en verde leve en el teclado).</li>
                   <li>🟨 <strong>↔ Amarillo:</strong> Existe en la clave pero en otra posición.</li>
-                  <li>⬛ <strong>✕ Gris:</strong> No aparece en esa cantidad.</li>
+                  <li>⬛ <strong>✕ Gris:</strong> No aparece en esa cantidad. Usa <strong>✏️ Tachar</strong> para descartar números.</li>
                 </ul>
               </div>
               <div className="p-2.5 rounded-2xl bg-black/5">
                 <strong className="block text-sm font-black mb-0.5">🌡️ Mecánica B — Mayor / Menor</strong>
-                El candado es un número secreto de 4 a 6 dígitos (incluye ceros al inicio). Recibes dirección (<strong>↑ Más alto</strong> / <strong>↓ Más bajo</strong>), rango reducido y temperatura de cercanía.
+                El candado es un número secreto de 4 a 10 dígitos (incluye ceros al inicio). Recibes dirección (<strong>↑ Más alto</strong> / <strong>↓ Más bajo</strong>), rango reducido y temperatura de cercanía.
+              </div>
+              <div className="p-2.5 rounded-2xl bg-black/5">
+                <strong className="block text-sm font-black mb-0.5">🌐 Duelos Online P2P (1v1)</strong>
+                Cada jugador protege su propia clave secreta sellada con <strong>SHA-256</strong> desde el turno 1. Si el Jugador 1 acierta primero, el Jugador 2 tiene su intento igualador para empatar. Al final ambos códigos se revelan y verifican automáticamente.
               </div>
               <p className="text-[11px] opacity-80">
-                Beta Local: puedes elegir 10, 12, 15, 20 intentos o dejarlo en <strong>Ilimitado</strong>.
+                Puntos: ganar en Local o Duelo P2P suma únicamente <strong>⭐ puntos</strong> a tu cuenta (máximo 100 pts diarios en Candado) sin modificar tus estadísticas de Muros Locos.
               </p>
             </div>
           </div>

@@ -21,7 +21,6 @@ interface CandadoVaultProps {
   errorShake: boolean;
   esMinimalista: boolean;
   animacionesReducidas: boolean;
-  confirmadosPorPosicion?: (string | null)[];
 }
 
 function formatMMSS(sec: number): string {
@@ -43,7 +42,6 @@ export const CandadoVault: React.FC<CandadoVaultProps> = ({
   errorShake,
   esMinimalista,
   animacionesReducidas,
-  confirmadosPorPosicion = [],
 }) => {
   const temaMaterial =
     digitos === 4
@@ -62,20 +60,66 @@ export const CandadoVault: React.FC<CandadoVaultProps> = ({
           arcoColor: esMinimalista ? '#94a3b8' : '#adb5bd',
           insignia: '🛡️ 5 Díg.',
         }
-      : {
+      : digitos === 6
+      ? {
           titulo: 'Bóveda Real',
           cuerpoGrad: esMinimalista ? 'from-violet-900/90 to-slate-950' : 'from-[#9775fa] to-[#5f3dc4]',
           borde: esMinimalista ? 'border-purple-400/50' : 'border-[#2b2140]',
           arcoColor: '#ffd43b',
           insignia: '👑 6 Díg.',
+        }
+      : digitos === 8
+      ? {
+          titulo: 'Bóveda Titanio',
+          cuerpoGrad: esMinimalista ? 'from-cyan-900/90 to-slate-950' : 'from-[#22b8cf] to-[#0b7285]',
+          borde: esMinimalista ? 'border-cyan-400/50' : 'border-[#2b2140]',
+          arcoColor: esMinimalista ? '#22d3ee' : '#99e9f2',
+          insignia: '💠 8 Díg.',
+        }
+      : digitos === 10
+      ? {
+          titulo: 'Bóveda Cuántica',
+          cuerpoGrad: esMinimalista ? 'from-emerald-900/90 to-slate-950' : 'from-[#20c997] to-[#087f5b]',
+          borde: esMinimalista ? 'border-emerald-400/50' : 'border-[#2b2140]',
+          arcoColor: esMinimalista ? '#34d399' : '#63e6be',
+          insignia: '🔮 10 Díg.',
+        }
+      : digitos === 14
+      ? {
+          titulo: 'Bóveda Élite',
+          cuerpoGrad: esMinimalista ? 'from-rose-900/90 to-slate-950' : 'from-[#ff6b6b] to-[#a61e4d]',
+          borde: esMinimalista ? 'border-rose-400/50' : 'border-[#2b2140]',
+          arcoColor: esMinimalista ? '#fb7185' : '#ffa8a8',
+          insignia: '⚡ 14 Díg.',
+        }
+      : {
+          titulo: 'Bóveda Maestra',
+          cuerpoGrad: esMinimalista ? 'from-fuchsia-950/90 to-slate-950' : 'from-[#be4bdb] to-[#3b5bdb]',
+          borde: esMinimalista ? 'border-fuchsia-400/50' : 'border-[#2b2140]',
+          arcoColor: '#ffd43b',
+          insignia: '🌌 16 Díg.',
         };
 
   const abierta = fase === 'ganada';
   const bloqueada = fase === 'perdida';
 
+  const gridCols =
+    digitos <= 6
+      ? digitos
+      : digitos === 8
+      ? 4
+      : digitos === 10
+      ? 5
+      : digitos === 14
+      ? 7
+      : 8;
+
+  const slotHeightClass = digitos >= 8 ? 'h-9 sm:h-10 text-base sm:text-lg' : 'h-11 sm:h-12 text-xl sm:text-2xl';
+  const gridGapClass = digitos >= 14 ? 'gap-1' : 'gap-1.5 sm:gap-2';
+
   return (
     <div
-      className={`relative w-full max-w-[390px] flex flex-col items-center select-none ${
+      className={`relative w-full max-w-[400px] flex flex-col items-center select-none ${
         errorShake && !animacionesReducidas ? 'animate-[shake_0.28s_ease-in-out]' : ''
       }`}
     >
@@ -160,7 +204,7 @@ export const CandadoVault: React.FC<CandadoVaultProps> = ({
           </span>
         </div>
 
-        {/* Visor de Dígitos */}
+        {/* Visor de Dígitos (limpio, sin pistas dentro de la bóveda) */}
         <div
           className={`rounded-xl p-2 ${
             esMinimalista
@@ -169,15 +213,12 @@ export const CandadoVault: React.FC<CandadoVaultProps> = ({
           }`}
         >
           <div
-            className="grid gap-1.5 sm:gap-2 justify-center"
-            style={{ gridTemplateColumns: `repeat(${digitos}, minmax(0, 1fr))` }}
+            className={`grid ${gridGapClass} justify-center`}
+            style={{ gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }}
           >
             {Array.from({ length: digitos }).map((_, idx) => {
               const val = entradaActual[idx] ?? '';
               const seleccionado = idx === cursorIdx && fase === 'jugando';
-              const confirmadoAqui = modo === 'logico' ? confirmadosPorPosicion[idx] ?? null : null;
-              const esVerdeExacto = val !== '' && confirmadoAqui !== null && val === confirmadoAqui;
-              const esGuiaVerde = val === '' && confirmadoAqui !== null && fase === 'jugando';
 
               return (
                 <button
@@ -185,33 +226,20 @@ export const CandadoVault: React.FC<CandadoVaultProps> = ({
                   type="button"
                   onClick={() => onSelectSlot(idx)}
                   disabled={fase !== 'jugando'}
-                  aria-label={`Dígito ${idx + 1}: ${val || (esGuiaVerde ? `confirmado ${confirmadoAqui}` : 'vacío')}`}
-                  className={`relative h-11 sm:h-12 rounded-xl flex items-center justify-center font-mono font-black text-xl sm:text-2xl tabular-nums transition-all cursor-pointer select-none ${
+                  aria-label={`Dígito ${idx + 1}: ${val || 'vacío'}`}
+                  className={`relative ${slotHeightClass} rounded-xl flex items-center justify-center font-mono font-black tabular-nums transition-all cursor-pointer select-none ${
                     abierta
                       ? 'bg-[#d3f9d8] text-[#134e20] border-2 border-[#40c057] shadow-[0_0_10px_rgba(81,207,102,0.45)]'
                       : bloqueada
                       ? 'bg-[#ffe3e3] text-[#c92a2a] border-2 border-[#fa5252]'
-                      : esVerdeExacto
-                      ? `bg-[#d3f9d8] text-[#134e20] border-2 ${
-                          seleccionado
-                            ? 'border-[#ffd43b] ring-2 ring-[#ffd43b]/70'
-                            : 'border-[#40c057]'
-                        } shadow-[0_0_8px_rgba(81,207,102,0.35)]`
                       : seleccionado
                       ? 'bg-[#fff9db] text-[#2b2140] border-2 border-[#ffd43b] shadow-[0_0_0_2px_rgba(255,212,59,0.45)]'
                       : val !== ''
                       ? 'bg-white text-[#2b2140] border-2 border-[#495057]'
-                      : esGuiaVerde
-                      ? 'bg-[#193327] text-[#69db7c]/85 border border-[#40c057]/65 hover:border-[#69db7c]'
                       : 'bg-[#2c2240] text-white/35 border border-white/15 hover:border-white/35'
                   }`}
                 >
-                  <span>{val !== '' ? val : esGuiaVerde ? confirmadoAqui : '•'}</span>
-                  {esVerdeExacto && fase === 'jugando' && (
-                    <span className="absolute top-0.5 right-1 text-[9px] font-black text-[#2b8a3e] leading-none">
-                      ✓
-                    </span>
-                  )}
+                  <span>{val !== '' ? val : '•'}</span>
                   {seleccionado && (
                     <span className="absolute bottom-0.5 w-3.5 h-0.5 rounded-full bg-[#f08c00]" />
                   )}

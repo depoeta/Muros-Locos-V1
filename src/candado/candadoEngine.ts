@@ -16,6 +16,25 @@ import {
   NivelProximidad,
 } from './types';
 
+export const DIGITOS_LOGICO: DigitosCandado[] = [4, 5, 6, 8, 10, 14, 16];
+export const DIGITOS_MAYOR_MENOR: DigitosCandado[] = [4, 5, 6, 8, 10];
+
+export function normalizarConfigCandado(config: CandadoConfig): CandadoConfig {
+  let digitos = config.digitos;
+  if (config.modo === 'mayor_menor' && digitos > 10) {
+    digitos = 10;
+  }
+  // Con 14 o 16 dígitos es matemáticamente obligatorio permitir repetidos (solo hay 10 cifras 0–9)
+  const permitirRepetidos =
+    config.modo === 'logico' && digitos > 10 ? true : Boolean(config.permitirRepetidos);
+
+  return {
+    ...config,
+    digitos,
+    permitirRepetidos,
+  };
+}
+
 function enteroAleatorio(maxExclusivo: number): number {
   if (maxExclusivo <= 1) return 0;
   if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
@@ -36,7 +55,7 @@ export function generarSecreto(
   modo: ModoCandado,
   permitirRepetidos: boolean
 ): string {
-  if (modo === 'logico' && !permitirRepetidos) {
+  if (modo === 'logico' && !permitirRepetidos && digitos <= 10) {
     const pool = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
     for (let i = pool.length - 1; i > 0; i--) {
       const j = enteroAleatorio(i + 1);
@@ -55,7 +74,8 @@ export function generarSecreto(
 }
 
 export function formatearNumeroConCeros(valor: number, digitos: DigitosCandado): string {
-  const clamped = Math.max(0, Math.min(10 ** digitos - 1, Math.floor(valor)));
+  const safeDigits = Math.min(digitos, 10);
+  const clamped = Math.max(0, Math.min(10 ** safeDigits - 1, Math.floor(valor)));
   return String(clamped).padStart(digitos, '0');
 }
 
@@ -166,11 +186,13 @@ export function evaluarIntentoMayorMenor(
   };
 }
 
-export function iniciarPartidaCandado(config: CandadoConfig): EstadoCandado {
+export function iniciarPartidaCandado(configRaw: CandadoConfig): EstadoCandado {
+  const config = normalizarConfigCandado(configRaw);
   const ahora = Date.now();
-  const maxValor = 10 ** config.digitos - 1;
+  const safeDigits = Math.min(config.digitos, 10);
+  const maxValor = 10 ** safeDigits - 1;
   return {
-    config: { ...config },
+    config,
     secreto: generarSecreto(config.digitos, config.modo, config.permitirRepetidos),
     fase: 'jugando',
     intentos: [],

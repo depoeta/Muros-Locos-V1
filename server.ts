@@ -620,6 +620,100 @@ function normalizarTamanoTablero(raw: any): 5 | 7 | 9 {
   return 9;
 }
 
+const MAX_CANDADO_DIARIO = 100;
+const DIGITOS_CANDADO_LOGICO = [4, 5, 6, 8, 10, 14, 16];
+const DIGITOS_CANDADO_MAYOR_MENOR = [4, 5, 6, 8, 10];
+
+function normalizarJuegoSala(raw: any): 'muros' | 'candado' {
+  return String(raw || '').trim().toLowerCase() === 'candado' ? 'candado' : 'muros';
+}
+
+function normalizarModoCandado(raw: any): 'logico' | 'mayor_menor' {
+  return String(raw || '').trim().toLowerCase() === 'mayor_menor' ? 'mayor_menor' : 'logico';
+}
+
+function normalizarDigitosCandado(raw: any, modo: 'logico' | 'mayor_menor'): number {
+  const num = Number(raw);
+  const lista = modo === 'mayor_menor' ? DIGITOS_CANDADO_MAYOR_MENOR : DIGITOS_CANDADO_LOGICO;
+  return lista.includes(num) ? num : 4;
+}
+
+function normalizarMaxIntentosCandado(raw: any): number {
+  const num = Number(raw);
+  return [0, 10, 12, 15, 20].includes(num) ? num : 0;
+}
+
+function normalizarTiempoTurnoCandado(raw: any): number {
+  const num = Number(raw);
+  return [0, 30, 45, 60].includes(num) ? num : 45;
+}
+
+function calcularPuntosCandadoServidor(params: {
+  modalidad: 'local' | 'p2p';
+  modo: string;
+  digitos: number;
+  conLimite: boolean;
+  intentosUsados: number;
+  resultado: string;
+  abandono: boolean;
+}): number {
+  const d = normalizarDigitosCandado(params.digitos, normalizarModoCandado(params.modo));
+  const intentos = Math.max(0, Math.floor(Number(params.intentosUsados) || 0));
+
+  if (params.modalidad === 'p2p') {
+    if (params.abandono) return 0;
+    if (params.resultado === 'victoria') {
+      return 10 + Math.min(6, Math.max(0, d - 4));
+    }
+    if (params.resultado === 'empate') {
+      return 6;
+    }
+    return 2;
+  }
+
+  if (params.resultado !== 'victoria' || intentos < 1) return 0;
+
+  const tablaLocal: Record<number, { base: number; limiteRapido: number; bonoRapido: number; bonoLimite: number }> = {
+    4: { base: 3, limiteRapido: 6, bonoRapido: 1, bonoLimite: 1 },
+    5: { base: 5, limiteRapido: 7, bonoRapido: 2, bonoLimite: 2 },
+    6: { base: 8, limiteRapido: 8, bonoRapido: 3, bonoLimite: 3 },
+    8: { base: 10, limiteRapido: 10, bonoRapido: 3, bonoLimite: 2 },
+    10: { base: 12, limiteRapido: 12, bonoRapido: 4, bonoLimite: 2 },
+    14: { base: 14, limiteRapido: 15, bonoRapido: 4, bonoLimite: 2 },
+    16: { base: 16, limiteRapido: 18, bonoRapido: 4, bonoLimite: 2 },
+  };
+  const regla = tablaLocal[d] || tablaLocal[4];
+  let total = regla.base;
+  if (intentos <= regla.limiteRapido) total += regla.bonoRapido;
+  if (params.conLimite) total += regla.bonoLimite;
+  return total;
+}
+
+function limpiarCandadoPuntosMeta(metaRaw: any) {
+  const meta = metaRaw && typeof metaRaw === 'object' ? metaRaw : {};
+  const diarios = meta.diarios && typeof meta.diarios === 'object' ? { ...meta.diarios } : {};
+  const matches = meta.matches && typeof meta.matches === 'object' ? { ...meta.matches } : {};
+  const hoyUtc = new Date().toISOString().slice(0, 10);
+
+  for (const [uid, info] of Object.entries(diarios) as [string, any][]) {
+    if (!info || info.fecha !== hoyUtc) {
+      delete diarios[uid];
+    }
+  }
+
+  const limiteTiempo = Date.now() - 48 * 60 * 60 * 1000;
+  const entradas = (Object.entries(matches) as [string, any][])
+    .filter(([, m]) => m && Number(m.creadoEn || 0) >= limiteTiempo)
+    .sort((a, b) => Number(a[1]?.creadoEn || 0) - Number(b[1]?.creadoEn || 0));
+
+  const matchesLimpios: Record<string, any> = {};
+  for (const [k, v] of entradas.slice(-300)) {
+    matchesLimpios[k] = v;
+  }
+
+  return { diarios, matches: matchesLimpios };
+}
+
 function limpiarSalasExpiradas() {
   const salasRaw = leerJson(ARCHIVO_SALAS_ONLINE, {}) as Record<string, any>;
   const ahora = Date.now();
@@ -1844,6 +1938,329 @@ app.post('/api/partidas/sincronizar', async (req, res) => {
   res.json({ ok: true, dbBound: true, sincronizadas });
 });
 
+app.get('/api/candado/puntos', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  if (!sesion || !sesion.userId || (sesion as any).revocada) {
+    return res.status(401).json({ ok: false, error: 'Sesión no válida o expirada.' });
+  }
+
+  const cuentas = dbObtenerTodasCuentas();
+  const acc = cuentas[sesion.userId] || (sesion.userId === 'admin' ? construirPerfilSupremo(null) : null);
+  if (!acc) {
+    return res.status(404).json({ ok: false, error: 'Cuenta no encontrada.' });
+  }
+
+  const matchId = String(req.query.matchId || '').trim();
+  const meta = limpiarCandadoPuntosMeta(leerConfig('candado_puntos_meta', {}));
+  const hoyUtc = new Date().toISOString().slice(0, 10);
+  const usadoHoy = meta.diarios[acc.id]?.fecha === hoyUtc ? Number(meta.diarios[acc.id].pts) || 0 : 0;
+  const cupoDiarioRestante = Math.max(0, MAX_CANDADO_DIARIO - usadoHoy);
+  const rec = matchId ? meta.matches[matchId] : null;
+
+  return res.json({
+    ok: true,
+    dbBound: true,
+    matchId: matchId || null,
+    estado: rec?.estado || null,
+    confirmado: rec?.estado === 'confirmado',
+    pendienteConsenso: rec?.estado === 'pendiente',
+    conflicto: rec?.estado === 'conflicto',
+    puntosOtorgados: rec?.resultados?.[acc.id] ?? 0,
+    puntosTotales: Math.max(0, Number(acc.puntos) || 0),
+    cupoDiarioRestante,
+  });
+});
+
+app.post('/api/candado/puntos', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  if (!sesion || !sesion.userId || (sesion as any).revocada) {
+    return res.status(401).json({ ok: false, error: 'Sesión no válida o expirada.' });
+  }
+
+  const cuentas = dbObtenerTodasCuentas();
+  const acc = cuentas[sesion.userId] || (sesion.userId === 'admin' ? construirPerfilSupremo(null) : null);
+  if (!acc) {
+    return res.status(404).json({ ok: false, error: 'Cuenta no encontrada.' });
+  }
+
+  const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
+  const matchId = String(body.matchId || '').trim();
+  if (!matchId || matchId.length < 6 || matchId.length > 96) {
+    return res.status(400).json({ ok: false, error: 'matchId inválido.' });
+  }
+
+  const modalidad = body.modalidad === 'p2p' ? 'p2p' : 'local';
+  const modo = normalizarModoCandado(body.modo);
+  const digitos = normalizarDigitosCandado(body.digitos, modo);
+  const intentosUsados = Math.max(0, Math.floor(Number(body.intentosUsados) || 0));
+  const conLimite = Boolean(body.conLimite);
+  const resultado =
+    body.resultado === 'victoria' || body.resultado === 'empate' ? body.resultado : 'derrota';
+  const abandono = Boolean(body.abandono);
+  const codigoSala = normalizarCodigoSala(body.codigoSala);
+  const rivalCuentaIdRaw = String(body.rivalCuentaId || '').trim().toLowerCase();
+  const rivalCuentaId =
+    rivalCuentaIdRaw && rivalCuentaIdRaw !== acc.id && cuentas[rivalCuentaIdRaw]
+      ? rivalCuentaIdRaw
+      : '';
+  const abandonoPorDesconexion = Boolean(body.abandonoPorDesconexion);
+
+  const meta = limpiarCandadoPuntosMeta(leerConfig('candado_puntos_meta', {}));
+  const hoyUtc = new Date().toISOString().slice(0, 10);
+  const obtenerCupo = (uid: string) => {
+    const dInfo = meta.diarios[uid];
+    const usado = dInfo && dInfo.fecha === hoyUtc ? Math.max(0, Number(dInfo.pts) || 0) : 0;
+    return { usado, restante: Math.max(0, MAX_CANDADO_DIARIO - usado) };
+  };
+
+  const acreditacionSoloPuntos = (targetAcc: any, ptsBase: number) => {
+    const { usado, restante } = obtenerCupo(targetAcc.id);
+    const otorgados = Math.min(Math.max(0, ptsBase), restante);
+    if (otorgados > 0) {
+      targetAcc.puntos = Math.max(0, (Number(targetAcc.puntos) || 0) + otorgados);
+      targetAcc.ultimaConexion = new Date().toISOString();
+      dbGuardarCuentaCompleta(targetAcc, true);
+      meta.diarios[targetAcc.id] = { fecha: hoyUtc, pts: usado + otorgados };
+    }
+    return {
+      otorgados,
+      cupoRestante: Math.max(0, MAX_CANDADO_DIARIO - (usado + otorgados)),
+    };
+  };
+
+  const existente = meta.matches[matchId];
+
+  // MODO LOCAL
+  if (modalidad === 'local') {
+    if (existente) {
+      return res.status(409).json({
+        ok: false,
+        duplicado: true,
+        error: 'Esta partida de Candado ya fue acreditada.',
+        puntosOtorgados: 0,
+        puntosTotales: Math.max(0, Number(acc.puntos) || 0),
+      });
+    }
+
+    const ptsBase = calcularPuntosCandadoServidor({
+      modalidad: 'local',
+      modo,
+      digitos,
+      conLimite,
+      intentosUsados,
+      resultado,
+      abandono: false,
+    });
+
+    const { otorgados, cupoRestante } = acreditacionSoloPuntos(acc, ptsBase);
+    meta.matches[matchId] = {
+      modalidad: 'local',
+      estado: 'confirmado',
+      cuentaId: acc.id,
+      resultados: { [acc.id]: otorgados },
+      creadoEn: Date.now(),
+    };
+    guardarConfig('candado_puntos_meta', meta);
+
+    return res.json({
+      ok: true,
+      dbBound: true,
+      confirmado: true,
+      puntosOtorgados: otorgados,
+      puntosTotales: Math.max(0, Number(acc.puntos) || 0),
+      cupoDiarioRestante: cupoRestante,
+      topeDiarioAlcanzado: ptsBase > 0 && otorgados < ptsBase,
+    });
+  }
+
+  // MODO ONLINE P2P
+  if (existente && existente.estado === 'confirmado') {
+    const yaOtorgados = existente.resultados?.[acc.id] ?? 0;
+    return res.json({
+      ok: true,
+      dbBound: true,
+      confirmado: true,
+      puntosOtorgados: yaOtorgados,
+      puntosTotales: Math.max(0, Number(acc.puntos) || 0),
+      cupoDiarioRestante: obtenerCupo(acc.id).restante,
+    });
+  }
+
+  if (existente && existente.estado === 'conflicto') {
+    return res.status(409).json({
+      ok: false,
+      conflicto: true,
+      error: 'Los resultados del duelo P2P entraron en conflicto.',
+    });
+  }
+
+  const sala = codigoSala ? leerSalaOnline(codigoSala) : null;
+  const verificarSalaAbandono = () => {
+    if (!sala || sala.juego !== 'candado') return false;
+    const estaEnSala =
+      Array.isArray(sala.jugadores) &&
+      sala.jugadores.some(
+        (j: any) =>
+          j &&
+          (j.cuentaId === acc.id ||
+            String(j.nombre || '').toLowerCase() === String(acc.nombre || '').toLowerCase())
+      );
+    if (!estaEnSala) return false;
+    const hayPlayerLeft =
+      Array.isArray(sala.mensajes) &&
+      sala.mensajes.some(
+        (m: any) =>
+          m?.msg?.type === 'PLAYER_LEFT' &&
+          String(m.msg.nombre || '').toLowerCase() !== String(acc.nombre || '').toLowerCase()
+      );
+    const hayRivalDesconectado =
+      Array.isArray(sala.jugadores) &&
+      sala.jugadores.some((j: any) => j && j.cuentaId !== acc.id && j.conectado === false);
+    return hayPlayerLeft || hayRivalDesconectado;
+  };
+
+  const rivalEsInvitado =
+    !rivalCuentaId &&
+    sala &&
+    sala.juego === 'candado' &&
+    Array.isArray(sala.jugadores) &&
+    sala.jugadores.some((j: any) => j && !j.cuentaId && j.nombre !== acc.nombre);
+
+  if ((abandonoPorDesconexion && resultado === 'victoria' && verificarSalaAbandono()) || rivalEsInvitado) {
+    const ptsBase = calcularPuntosCandadoServidor({
+      modalidad: 'p2p',
+      modo,
+      digitos,
+      conLimite: false,
+      intentosUsados,
+      resultado,
+      abandono,
+    });
+    const { otorgados, cupoRestante } = acreditacionSoloPuntos(acc, ptsBase);
+    meta.matches[matchId] = {
+      modalidad: 'p2p',
+      estado: 'confirmado',
+      codigoSala,
+      resultados: { [acc.id]: otorgados },
+      creadoEn: existente?.creadoEn || Date.now(),
+    };
+    guardarConfig('candado_puntos_meta', meta);
+
+    return res.json({
+      ok: true,
+      dbBound: true,
+      confirmado: true,
+      puntosOtorgados: otorgados,
+      puntosTotales: Math.max(0, Number(acc.puntos) || 0),
+      cupoDiarioRestante: cupoRestante,
+    });
+  }
+
+  if (!rivalCuentaId) {
+    return res.status(400).json({
+      ok: false,
+      error: 'No se pudo verificar el duelo P2P en la sala para acreditar puntos.',
+    });
+  }
+
+  const rec = existente || {
+    modalidad: 'p2p',
+    estado: 'pendiente',
+    codigoSala,
+    modo,
+    digitos,
+    reportes: {},
+    resultados: {},
+    creadoEn: Date.now(),
+  };
+
+  rec.reportes[acc.id] = {
+    cuentaId: acc.id,
+    rivalCuentaId,
+    resultado,
+    modo,
+    digitos,
+    intentosUsados,
+    abandono,
+    ts: Date.now(),
+  };
+
+  const repA = rec.reportes[acc.id];
+  const repB = rec.reportes[rivalCuentaId];
+
+  if (!repB) {
+    meta.matches[matchId] = rec;
+    guardarConfig('candado_puntos_meta', meta);
+    return res.json({
+      ok: true,
+      dbBound: true,
+      pendienteConsenso: true,
+      confirmado: false,
+      puntosOtorgados: 0,
+      puntosTotales: Math.max(0, Number(acc.puntos) || 0),
+      cupoDiarioRestante: obtenerCupo(acc.id).restante,
+    });
+  }
+
+  const mismaConfig = repA.modo === repB.modo && repA.digitos === repB.digitos;
+  const desenlaceCompatible =
+    (repA.resultado === 'victoria' && repB.resultado === 'derrota') ||
+    (repA.resultado === 'derrota' && repB.resultado === 'victoria') ||
+    (repA.resultado === 'empate' && repB.resultado === 'empate');
+
+  if (!mismaConfig || !desenlaceCompatible) {
+    rec.estado = 'conflicto';
+    meta.matches[matchId] = rec;
+    guardarConfig('candado_puntos_meta', meta);
+    return res.status(409).json({
+      ok: false,
+      conflicto: true,
+      error: 'Los reportes del duelo P2P no coinciden entre ambos jugadores.',
+    });
+  }
+
+  const accRival = cuentas[rivalCuentaId];
+  const ptsBaseA = calcularPuntosCandadoServidor({
+    modalidad: 'p2p',
+    modo: repA.modo,
+    digitos: repA.digitos,
+    conLimite: false,
+    intentosUsados: repA.intentosUsados,
+    resultado: repA.resultado,
+    abandono: repA.abandono,
+  });
+  const ptsBaseB = calcularPuntosCandadoServidor({
+    modalidad: 'p2p',
+    modo: repB.modo,
+    digitos: repB.digitos,
+    conLimite: false,
+    intentosUsados: repB.intentosUsados,
+    resultado: repB.resultado,
+    abandono: repB.abandono,
+  });
+
+  const resA = acreditacionSoloPuntos(acc, ptsBaseA);
+  const resB = accRival ? acreditacionSoloPuntos(accRival, ptsBaseB) : { otorgados: 0, cupoRestante: MAX_CANDADO_DIARIO };
+
+  rec.estado = 'confirmado';
+  rec.resultados = {
+    [acc.id]: resA.otorgados,
+    ...(accRival ? { [accRival.id]: resB.otorgados } : {}),
+  };
+  meta.matches[matchId] = rec;
+  guardarConfig('candado_puntos_meta', meta);
+
+  return res.json({
+    ok: true,
+    dbBound: true,
+    confirmado: true,
+    pendienteConsenso: false,
+    puntosOtorgados: resA.otorgados,
+    puntosTotales: Math.max(0, Number(acc.puntos) || 0),
+    cupoDiarioRestante: resA.cupoRestante,
+  });
+});
+
 app.get('/api/semanal', (_req, res) => {
   const w = obtenerInfoSemana();
   dbAsegurarSemanaEnRanking(w);
@@ -2012,11 +2429,22 @@ app.post('/api/semanal', (_req, res) => {
   res.json({ ok: true, dbBound: true });
 });
 
-app.get('/api/salas', (_req, res) => {
+app.get('/api/salas', (req, res) => {
   limpiarSalasExpiradas();
+  const juegoParam = String(req.query.juego || '').trim().toLowerCase();
+  const filtroJuego = juegoParam === 'candado' ? 'candado' : 'muros';
+  const filtroDigitosRaw = Number(req.query.digitos || '0');
+  const filtroDigitos = Number.isFinite(filtroDigitosRaw) && filtroDigitosRaw > 0 ? filtroDigitosRaw : 0;
+
   const salasRaw = leerJson(ARCHIVO_SALAS_ONLINE, {}) as Record<string, any>;
   const validas = Object.values(salasRaw)
-    .filter((r: any) => r && r.publica !== false && !r.enPartida && (r.jugadoresConectados || 0) < (r.maxJugadores || 2))
+    .filter((r: any) => {
+      if (!r) return false;
+      const juegoSala = normalizarJuegoSala(r.juego);
+      if (juegoSala !== filtroJuego) return false;
+      if (filtroDigitos && Number(r.digitosCandado) !== filtroDigitos) return false;
+      return r.publica !== false && !r.enPartida && (r.jugadoresConectados || 0) < (r.maxJugadores || 2);
+    })
     .sort((a: any, b: any) => (b.creadoEn || 0) - (a.creadoEn || 0));
   res.json(validas);
 });
@@ -2029,9 +2457,10 @@ app.post('/api/salas', (req, res) => {
 
   const ahora = Date.now();
   const existente = leerSalaOnline(codigo);
+  const juego = normalizarJuegoSala(room.juego ?? existente?.juego);
   const esPublica = room.publica !== undefined ? Boolean(room.publica) : existente?.publica ?? true;
   const hostPeerId = room.hostPeerId || existente?.hostPeerId || `host_${codigo.toLowerCase()}`;
-  const maxJugadores = room.maxJugadores === 4 ? 4 : existente?.maxJugadores || 2;
+  const maxJugadores = juego === 'candado' ? 2 : room.maxJugadores === 4 ? 4 : existente?.maxJugadores || 2;
   const anfitrion = String(room.anfitrion || existente?.anfitrion || 'Anfitrión').trim();
   const color = room.color || existente?.color || '#ff6b6b';
   const hat = room.hat || existente?.hat || 'corona';
@@ -2046,8 +2475,16 @@ app.post('/api/salas', (req, res) => {
       ? existente.jugadores
       : [{ id: 0, peerId: hostPeerId, cuentaId: room.cuentaId, nombre: anfitrion, color, hat, ropa, ropaColor, aura, listo: true, conectado: true, esAnfitrion: true }];
 
+  const modoCandado = normalizarModoCandado(room.modoCandado ?? existente?.modoCandado);
+  const digitosCandado = normalizarDigitosCandado(room.digitosCandado ?? existente?.digitosCandado, modoCandado);
+  const permitirRepetidosCandado =
+    modoCandado === 'logico' && digitosCandado > 10
+      ? true
+      : Boolean(room.permitirRepetidos ?? existente?.permitirRepetidos ?? false);
+
   const salaCompleta = {
     codigo,
+    juego,
     nombre: String(room.nombre || existente?.nombre || `Sala de ${anfitrion}`).trim(),
     anfitrion,
     hostPeerId,
@@ -2069,6 +2506,15 @@ app.post('/api/salas', (req, res) => {
     modoMuros: existente?.modoMuros || room.modoMuros,
     tamanoTablero: normalizarTamanoTablero(existente?.tamanoTablero ?? room.tamanoTablero),
     esOficialStaff: Boolean(existente?.esOficialStaff),
+    ...(juego === 'candado'
+      ? {
+          modoCandado,
+          digitosCandado,
+          permitirRepetidos: permitirRepetidosCandado,
+          maxIntentos: normalizarMaxIntentosCandado(room.maxIntentos ?? existente?.maxIntentos),
+          tiempoTurnoSeg: normalizarTiempoTurnoCandado(room.tiempoTurnoSeg ?? existente?.tiempoTurnoSeg),
+        }
+      : {}),
   };
 
   guardarSalaOnline(codigo, salaCompleta);
@@ -2084,11 +2530,13 @@ app.get('/api/salas/:codigo', (req, res) => {
   const mensajesNuevos = Array.isArray(sala.mensajes)
     ? sala.mensajes.filter((m: any) => m && m.seq > since && (!peerId || m.from !== peerId) && (!m.to || m.to === peerId))
     : [];
+  const juego = normalizarJuegoSala(sala.juego);
 
   res.json({
     ok: true,
     sala: {
       codigo: sala.codigo,
+      juego,
       nombre: sala.nombre,
       anfitrion: sala.anfitrion,
       hostPeerId: sala.hostPeerId,
@@ -2102,6 +2550,15 @@ app.get('/api/salas/:codigo', (req, res) => {
       modoMuros: sala.modoMuros,
       tamanoTablero: normalizarTamanoTablero(sala.tamanoTablero),
       esOficialStaff: Boolean(sala.esOficialStaff),
+      ...(juego === 'candado'
+        ? {
+            modoCandado: normalizarModoCandado(sala.modoCandado),
+            digitosCandado: normalizarDigitosCandado(sala.digitosCandado, normalizarModoCandado(sala.modoCandado)),
+            permitirRepetidos: Boolean(sala.permitirRepetidos),
+            maxIntentos: normalizarMaxIntentosCandado(sala.maxIntentos),
+            tiempoTurnoSeg: normalizarTiempoTurnoCandado(sala.tiempoTurnoSeg),
+          }
+        : {}),
       mensajesNuevos,
     },
   });
@@ -2225,7 +2682,7 @@ app.post('/api/salas/:codigo/msg', (req, res) => {
       if (!Array.isArray(sala.mensajes)) sala.mensajes = [];
       sala.mensajes.push({ seq: sala.seq, from: String(body.from || ''), to: body.to ? String(body.to) : null, msg: body.msg, ts: Date.now() });
       if (sala.mensajes.length > 40) sala.mensajes = sala.mensajes.slice(-40);
-      if (body.msg.type === 'START_GAME') sala.enPartida = true;
+      if (body.msg.type === 'START_GAME' || body.msg.type === 'CANDADO_START') sala.enPartida = true;
     }
     return { seq: sala.seq || 0 };
   });

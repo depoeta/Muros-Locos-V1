@@ -1235,7 +1235,7 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* MINIJUEGO AISLADO: CANDADO (BETA LOCAL) */}
+      {/* MINIJUEGO AISLADO: CANDADO (LOCAL + P2P + SOLO PUNTOS) */}
       {juegoActivo === 'candado' && (
         <CandadoGame
           userActual={userActual}
@@ -1247,6 +1247,10 @@ export const App: React.FC = () => {
               guardarAjustes(next);
               return next;
             });
+          }}
+          onPuntosActualizados={(nuevosPuntos) => {
+            setuserActual((prev) => (prev ? { ...prev, puntos: nuevosPuntos } : prev));
+            sincronizarConNube(true).catch(() => {});
           }}
           onVolverAMurosLocos={() => {
             setJuegoActivo('muros');
