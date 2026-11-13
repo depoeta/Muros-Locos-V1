@@ -554,9 +554,10 @@ function dbLeerRanking(): Record<string, any> {
     }
     rachaActual = tmp;
 
-    const key = String(row.nombre || id).trim().toLowerCase();
-    salida[key] = {
-      id,
+    const idCanonico = String(id || row.nombre || '').trim().toLowerCase();
+    if (!idCanonico) continue;
+    salida[idCanonico] = {
+      id: idCanonico,
       nombre: row.nombre || id,
       puntosTotales: Number(row.puntos) || 0,
       partidas: Number(row.total_partida) || 0,
@@ -2276,10 +2277,11 @@ app.get('/api/semanal', (_req, res) => {
 
   for (const r of Object.values(rankRaw) as any[]) {
     if (!r) continue;
-    const key = String(r.nombre || r.id).trim().toLowerCase();
+    const key = String(r.id || r.nombre || '').trim().toLowerCase();
+    if (!key) continue;
     if (r.semana_actual_id === w.semanaActualId && (Number(r.semana_actual_part) > 0 || Number(r.semana_actual_pts) > 0)) {
       jugadoresActual[key] = {
-        id: r.id,
+        id: key,
         nombre: r.nombre || r.id,
         avatarColor: r.avatar_color || '#ff6b6b',
         avatarHat: r.avatar_hat || 'corona',
@@ -2293,7 +2295,7 @@ app.get('/api/semanal', (_req, res) => {
     }
     if (r.semana_pasada_id === w.semanaPasadaId && Number(r.semana_pasada_pts) > 0) {
       jugadoresPasada[key] = {
-        id: r.id,
+        id: key,
         nombre: r.nombre || r.id,
         avatarColor: r.avatar_color || '#ff6b6b',
         avatarHat: r.avatar_hat || 'corona',
@@ -2309,7 +2311,8 @@ app.get('/api/semanal', (_req, res) => {
 
   for (const acc of Object.values(cuentas)) {
     const hist = Array.isArray(acc.historialPartidas) ? acc.historialPartidas : [];
-    const key = String(acc.nombre || acc.id).trim().toLowerCase();
+    const key = String(acc.id || acc.nombre || '').trim().toLowerCase();
+    if (!key) continue;
     let actPts = 0, actPart = 0, actVic = 0;
     let pasPts = 0, pasPart = 0, pasVic = 0;
 

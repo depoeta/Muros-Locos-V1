@@ -1318,24 +1318,24 @@ export const App: React.FC = () => {
       {juegoActivo === 'muros' && screen === 'juego' && estado && (
         <div className="relative w-full max-w-6xl mx-auto flex-1 flex flex-col justify-start gap-1.5 sm:gap-2 p-1.5 sm:p-2.5 lg:p-3 z-10 min-h-0">
           {/* Barra superior de la partida con el ÚNICO botón de Aspecto */}
-          <div className="w-full flex items-center justify-between px-2.5 py-1.5 bg-white/80 backdrop-blur-xs rounded-2xl border-2 border-[#2b2140] shadow-sm shrink-0">
+          <div className="w-full flex items-center justify-between gap-1.5 px-2 sm:px-2.5 py-1.5 bg-white/80 backdrop-blur-xs rounded-2xl border-2 border-[#2b2140] shadow-sm shrink-0 min-w-0">
             <button
               onClick={handleVolverAlMenu}
-              className="py-1 px-2.5 rounded-xl bg-white border border-[#2b2140] text-xs font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] cursor-pointer transition-colors"
+              className="py-1 px-2 sm:px-2.5 rounded-xl bg-white border border-[#2b2140] text-xs font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] cursor-pointer transition-colors shrink-0"
             >
-              ◀ Salir
+              ◀ <span className="hidden xs:inline sm:inline">Salir</span>
             </button>
 
-            <div className="flex items-center gap-2 text-xs font-black text-[#593922]">
+            <div className="flex items-center justify-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs font-black text-[#593922] min-w-0 truncate">
               {estado.torneo && (
-                <span className="tabular-nums">
+                <span className="tabular-nums truncate">
                   Ronda {estado.torneo.rondaActual}/{estado.torneo.totalRondas}
                 </span>
               )}
-              {estado.modoOnline && <span>Sala {estado.codigoSala}</span>}
+              {estado.modoOnline && <span className="truncate">Sala {estado.codigoSala}</span>}
               {estado.config.modoConTiempo && (
                 <span
-                  className={`font-mono-num font-black tabular-nums ${
+                  className={`font-mono-num font-black tabular-nums shrink-0 ${
                     estado.tiempoRestante <= 5 ? 'text-[#c92a2a] animate-pulse' : 'text-[#2b2140]'
                   }`}
                 >
@@ -1344,14 +1344,14 @@ export const App: React.FC = () => {
               )}
             </div>
 
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
               <button
                 type="button"
                 onClick={() => {
                   sounds.playClick();
                   setModalAspectoAbierto(true);
                 }}
-                className="py-1 px-2.5 rounded-xl bg-white border border-[#2b2140] flex items-center gap-1 text-xs font-black text-[#2b2140] hover:bg-[#fff9db] cursor-pointer shadow-xs active:translate-y-0.5"
+                className="py-1 px-2 sm:px-2.5 rounded-xl bg-white border border-[#2b2140] flex items-center gap-1 text-xs font-black text-[#2b2140] hover:bg-[#fff9db] cursor-pointer shadow-xs active:translate-y-0.5"
                 title="Cambiar tu personaje o el terreno del tablero"
               >
                 <span>🎨</span>

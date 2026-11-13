@@ -22,7 +22,6 @@ import {
 } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
 import { AspectoModal } from './Modals';
-import { PWAInstallButton } from './PWAInstallControl';
 import { actualizarNombreInvitadoLocal } from '../game/storage';
 
 // =========================================================================
@@ -103,7 +102,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
       esMinimalista ? 'text-slate-100' : 'text-[#2b2140]'
     }`}>
       {/* Top Bar */}
-      <div className="w-full max-w-md flex items-center justify-between px-1 z-20 gap-2">
+      <div className="w-full max-w-lg flex items-center justify-between px-0.5 sm:px-1 z-20 gap-1.5 min-w-0">
         <div className="relative">
           <button
             type="button"
@@ -185,12 +184,12 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
                     <span className={esMinimalista ? 'text-xs font-bold text-indigo-200 block' : 'text-xs font-black text-[#1864ab] block'}>
                       🔐 Candado
                     </span>
-                    <span className={esMinimalista ? 'text-[9px] bg-indigo-500/30 text-indigo-200 px-1.5 py-0.5 rounded' : 'text-[9px] font-black bg-white text-[#1864ab] px-1.5 py-0.5 rounded border border-[#2b2140]'}>
-                      Beta
+                    <span className={esMinimalista ? 'text-[9px] bg-emerald-500/30 text-emerald-200 px-1.5 py-0.5 rounded' : 'text-[9px] font-black bg-[#d3f9d8] text-[#134e20] px-1.5 py-0.5 rounded border border-[#2b2140]'}>
+                      Nuevo
                     </span>
                   </div>
                   <span className={esMinimalista ? 'text-[10px] text-slate-400 block leading-tight mt-0.5' : 'text-[10px] font-bold text-[#364fc7] block leading-tight mt-0.5'}>
-                    Descifra la combinación · Modo local
+                    Descifra la clave · Local y Duelo P2P
                   </span>
                 </button>
               )}
@@ -219,9 +218,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
           </button>
         )}
 
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          <PWAInstallButton variant="compact" />
-
+        <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
           {esStaff && onAbrirAdmin && (
             <button
               onClick={() => {
@@ -230,8 +227,8 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
               }}
               className={
                 esMinimalista
-                  ? 'py-1 px-2.5 rounded-xl bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 font-bold text-xs cursor-pointer flex items-center gap-1 transition-all'
-                  : 'py-1 px-2.5 rounded-2xl bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] font-black text-xs cursor-pointer flex items-center gap-1 active:translate-y-0.5'
+                  ? 'py-1 px-2 sm:px-2.5 rounded-xl bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 font-bold text-xs cursor-pointer flex items-center gap-1 transition-all shrink-0'
+                  : 'py-1 px-2 sm:px-2.5 rounded-2xl bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] font-black text-xs cursor-pointer flex items-center gap-1 active:translate-y-0.5 shrink-0'
               }
               title={esDev ? 'Panel Dev Supremo' : esAdmin ? 'Panel de Administración' : 'Panel de Moderación (Salas Oficiales)'}
             >
@@ -247,46 +244,48 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
             }}
             className={
               esMinimalista
-                ? 'py-1 px-3 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/10 text-white transition-all cursor-pointer flex items-center gap-2 group shadow-sm'
-                : 'py-1 px-3 rounded-2xl bg-white border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fff9db] hover:-translate-y-0.5 active:translate-y-1 active:shadow-none transition-all cursor-pointer flex items-center gap-2 group'
+                ? 'py-1 px-2 sm:px-3 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/10 text-white transition-all cursor-pointer flex items-center gap-1.5 sm:gap-2 group shadow-sm min-w-0 max-w-full'
+                : 'py-1 px-2 sm:px-3 rounded-2xl bg-white border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fff9db] hover:-translate-y-0.5 active:translate-y-1 active:shadow-none transition-all cursor-pointer flex items-center gap-1.5 sm:gap-2 group min-w-0 max-w-full'
             }
             title="Gestionar perfil de user o iniciar sesión"
           >
             {userActual ? (
               <>
-                <CartoonCharacter
-                  color={userActual.avatarColor}
-                  hat={userActual.avatarHat}
-                  ropa={userActual.avatarRopa}
-                  ropaColor={userActual.avatarRopaColor}
-                  aura={userActual.avatarAura}
-                  size={26}
-                  showShadow={false}
-                />
-                <div className="text-left leading-tight">
-                  <div className="flex items-center gap-1">
-                    <span className={esMinimalista ? 'text-xs font-semibold text-slate-200 max-w-[95px] truncate' : 'text-xs font-black text-[#2b2140] max-w-[95px] truncate'}>
+                <div className="shrink-0">
+                  <CartoonCharacter
+                    color={userActual.avatarColor}
+                    hat={userActual.avatarHat}
+                    ropa={userActual.avatarRopa}
+                    ropaColor={userActual.avatarRopaColor}
+                    aura={userActual.avatarAura}
+                    size={26}
+                    showShadow={false}
+                  />
+                </div>
+                <div className="text-left leading-tight min-w-0">
+                  <div className="flex items-center gap-1 min-w-0">
+                    <span className={esMinimalista ? 'text-xs font-semibold text-slate-200 max-w-[78px] sm:max-w-[105px] truncate' : 'text-xs font-black text-[#2b2140] max-w-[78px] sm:max-w-[105px] truncate'}>
                       {userActual.nombre}
                     </span>
                     {esStaff && (
                       <span className={
                         esMinimalista
                           ? esDev
-                            ? 'text-[8px] bg-amber-400/20 text-amber-300 font-bold px-1 rounded border border-amber-400/30'
+                            ? 'text-[8px] bg-amber-400/20 text-amber-300 font-bold px-1 rounded border border-amber-400/30 shrink-0'
                             : esAdmin
-                            ? 'text-[8px] bg-blue-400/20 text-blue-300 font-bold px-1 rounded border border-blue-400/30'
-                            : 'text-[8px] bg-emerald-400/20 text-emerald-300 font-bold px-1 rounded border border-emerald-400/30'
+                            ? 'text-[8px] bg-blue-400/20 text-blue-300 font-bold px-1 rounded border border-blue-400/30 shrink-0'
+                            : 'text-[8px] bg-emerald-400/20 text-emerald-300 font-bold px-1 rounded border border-emerald-400/30 shrink-0'
                           : esDev
-                          ? 'text-[8px] bg-[#ffd43b] text-[#5c3c00] font-black px-1 rounded border border-[#2b2140]'
+                          ? 'text-[8px] bg-[#ffd43b] text-[#5c3c00] font-black px-1 rounded border border-[#2b2140] shrink-0'
                           : esAdmin
-                          ? 'text-[8px] bg-[#a5d8ff] text-[#1864ab] font-black px-1 rounded border border-[#2b2140]'
-                          : 'text-[8px] bg-[#b2f2bb] text-[#2b8a3e] font-black px-1 rounded border border-[#2b2140]'
+                          ? 'text-[8px] bg-[#a5d8ff] text-[#1864ab] font-black px-1 rounded border border-[#2b2140] shrink-0'
+                          : 'text-[8px] bg-[#b2f2bb] text-[#2b8a3e] font-black px-1 rounded border border-[#2b2140] shrink-0'
                       }>
-                        {userActual.id === 'admin' ? 'DEV SUPREMO' : esDev ? 'DEV' : esAdmin ? 'ADMIN' : 'MOD'}
+                        {userActual.id === 'admin' ? 'DEV' : esDev ? 'DEV' : esAdmin ? 'ADMIN' : 'MOD'}
                       </span>
                     )}
                   </div>
-                  <span className={esMinimalista ? 'text-[10px] font-semibold text-emerald-400 block' : 'text-[10px] font-bold text-[#2b8a3e] block'}>
+                  <span className={esMinimalista ? 'text-[10px] font-semibold text-emerald-400 block truncate' : 'text-[10px] font-bold text-[#2b8a3e] block truncate'}>
                     ⭐ {userActual.puntos} pts
                   </span>
                 </div>

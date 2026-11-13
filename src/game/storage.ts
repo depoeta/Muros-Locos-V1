@@ -452,7 +452,21 @@ export function cargarRanking(): Record<string, EntradaRanking> {
     if (parsed && typeof parsed === 'object') {
       Object.entries(parsed).forEach(([k, v]) => {
         const clean = normalizarEntradaRanking(k, v);
-        if (clean) out[k] = clean;
+        if (!clean) return;
+        const canonKey = (clean.id || k).trim().toLowerCase();
+        const prev = out[canonKey];
+        if (!prev) {
+          out[canonKey] = clean;
+        } else {
+          out[canonKey] = {
+            ...prev,
+            ...clean,
+            id: clean.id || prev.id,
+            puntosTotales: Math.max(prev.puntosTotales, clean.puntosTotales),
+            partidas: Math.max(prev.partidas, clean.partidas),
+            victorias: Math.max(prev.victorias, clean.victorias),
+          };
+        }
       });
     }
     return out;
@@ -582,16 +596,41 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
       if (rawRanking && typeof rawRanking === 'object') {
         Object.entries(rawRanking).forEach(([k, v]) => {
           const norm = normalizarEntradaRanking(k, v);
-          if (norm) rankingLimpio[k] = norm;
+          if (!norm) return;
+          const canonKey = (norm.id || k).trim().toLowerCase();
+          const prev = rankingLimpio[canonKey];
+          if (!prev) {
+            rankingLimpio[canonKey] = norm;
+          } else {
+            rankingLimpio[canonKey] = {
+              ...prev,
+              ...norm,
+              id: norm.id || prev.id,
+              puntosTotales: Math.max(prev.puntosTotales, norm.puntosTotales),
+              partidas: Math.max(prev.partidas, norm.partidas),
+              victorias: Math.max(prev.victorias, norm.victorias),
+              derrotas: Math.max(prev.derrotas || 0, norm.derrotas || 0),
+              empates: Math.max(prev.empates || 0, norm.empates || 0),
+            };
+          }
         });
       }
 
       Object.values(cuentasLimpias).forEach((acc) => {
-        if (!acc || acc.id === 'admin') return;
-        const key = acc.id;
-        const existing = rankingLimpio[key];
+        if (!acc) return;
+        const key = String(acc.id).trim().toLowerCase();
+        if (key === 'admin' && (acc.partidas || 0) === 0 && (acc.puntos || 0) === 0) return;
+
+        // Si el backend antiguo envió una entrada con la clave del nombre en lugar del ID, fusionarla y limpiarla
+        const legacyNameKey = String(acc.nombre || '').trim().toLowerCase();
+        const legacyByName = legacyNameKey && legacyNameKey !== key ? rankingLimpio[legacyNameKey] : undefined;
+        if (legacyByName && (!legacyByName.id || legacyByName.id === key)) {
+          delete rankingLimpio[legacyNameKey];
+        }
+
+        const existing = rankingLimpio[key] || (legacyByName && (!legacyByName.id || legacyByName.id === key) ? legacyByName : undefined);
         rankingLimpio[key] = {
-          id: acc.id,
+          id: key,
           nombre: acc.nombre,
           puntosTotales: Math.max(acc.puntos || 0, existing?.puntosTotales || 0),
           partidas: Math.max(acc.partidas || 0, existing?.partidas || 0),

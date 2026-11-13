@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Interfaz principal aislada del minijuego Candado (Beta Local — Mecánica A y Mecánica B).
+ * Interfaz principal aislada del minijuego Candado (Local y Duelo P2P 1v1 — Mecánica A y Mecánica B).
  * Geometría estable: el registro de intentos nunca empuja ni oculta el candado o el teclado.
  */
 
@@ -597,8 +597,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
       }`}
     >
       {/* Barra superior compacta con 🕹️ Juegos */}
-      <header className="w-full max-w-4xl flex items-center justify-between gap-2 z-30 mb-2">
-        <div className="relative">
+      <header className="w-full max-w-4xl flex items-center justify-between gap-1.5 z-30 mb-2 min-w-0">
+        <div className="relative shrink-0">
           <button
             type="button"
             onClick={() => {
@@ -670,7 +670,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
           )}
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1 sm:gap-1.5 min-w-0 flex-wrap justify-end">
           <button
             type="button"
             onClick={() => {
@@ -679,8 +679,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
             }}
             className={
               esMinimalista
-                ? 'flex items-center gap-1 bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-400/30 px-2.5 py-1 rounded-xl text-[11px] font-semibold cursor-pointer'
-                : 'flex items-center gap-1 bg-white hover:bg-[#fff9db] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] px-2.5 py-1 rounded-2xl text-[11px] font-black cursor-pointer'
+                ? 'flex items-center gap-1 bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-400/30 px-2 sm:px-2.5 py-1 rounded-xl text-[11px] font-semibold cursor-pointer shrink-0'
+                : 'flex items-center gap-1 bg-white hover:bg-[#fff9db] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] px-2 sm:px-2.5 py-1 rounded-2xl text-[11px] font-black cursor-pointer shrink-0'
             }
           >
             <span>{esMinimalista ? '🧸' : '✨'}</span>
@@ -693,8 +693,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               onClick={onToggleSonido}
               className={
                 esMinimalista
-                  ? 'w-8 h-8 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/15 flex items-center justify-center text-xs cursor-pointer'
-                  : 'w-8 h-8 rounded-2xl bg-white hover:bg-[#fff9db] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] flex items-center justify-center text-xs cursor-pointer'
+                  ? 'w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/15 flex items-center justify-center text-xs cursor-pointer shrink-0'
+                  : 'w-7 h-7 sm:w-8 sm:h-8 rounded-2xl bg-white hover:bg-[#fff9db] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] flex items-center justify-center text-xs cursor-pointer shrink-0'
               }
               title={sonidoActivo ? 'Silenciar efectos' : 'Activar efectos'}
               aria-label="Alternar sonido"
@@ -711,19 +711,21 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
             }}
             className={
               esMinimalista
-                ? 'px-2.5 py-1 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/15 text-[11px] font-semibold cursor-pointer'
-                : 'px-2.5 py-1 rounded-2xl bg-white hover:bg-[#fff9db] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-[11px] font-black cursor-pointer'
+                ? 'px-2 sm:px-2.5 py-1 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/15 text-[11px] font-semibold cursor-pointer shrink-0 flex items-center gap-1'
+                : 'px-2 sm:px-2.5 py-1 rounded-2xl bg-white hover:bg-[#fff9db] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-[11px] font-black cursor-pointer shrink-0 flex items-center gap-1'
             }
+            title="Ver reglas del Candado"
           >
-            ❓ Reglas
+            <span>❓</span>
+            <span className="hidden sm:inline">Reglas</span>
           </button>
 
           {userActual && (
             <span
               className={
                 esMinimalista
-                  ? 'hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-400/30 text-amber-200 text-[11px] font-bold tabular-nums'
-                  : 'hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-2xl bg-[#fff3bf] border-2 border-[#2b2140] text-[#5c3c00] text-[11px] font-black tabular-nums'
+                  ? 'hidden md:inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-400/30 text-amber-200 text-[11px] font-bold tabular-nums shrink-0'
+                  : 'hidden md:inline-flex items-center gap-1 px-2.5 py-1 rounded-2xl bg-[#fff3bf] border-2 border-[#2b2140] text-[#5c3c00] text-[11px] font-black tabular-nums shrink-0'
               }
               title="Tus puntos acumulados"
             >
@@ -738,8 +740,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                 onClick={abrirModalModo}
                 className={
                   esMinimalista
-                    ? 'px-2.5 py-1 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-400/35 text-[11px] font-semibold cursor-pointer tabular-nums'
-                    : 'px-2.5 py-1 rounded-2xl bg-[#ffd43b] hover:bg-[#fcc419] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-[11px] font-black cursor-pointer tabular-nums'
+                    ? 'px-2 sm:px-2.5 py-1 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-400/35 text-[11px] font-semibold cursor-pointer tabular-nums shrink-0'
+                    : 'px-2 sm:px-2.5 py-1 rounded-2xl bg-[#ffd43b] hover:bg-[#fcc419] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-[11px] font-black cursor-pointer tabular-nums shrink-0'
                 }
                 title="Cambiar modo de juego o cantidad de dígitos"
               >
@@ -753,11 +755,13 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                 }}
                 className={
                   esMinimalista
-                    ? 'px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 text-[11px] font-semibold cursor-pointer'
-                    : 'px-2.5 py-1 rounded-2xl bg-white hover:bg-[#fff9db] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-[11px] font-black cursor-pointer'
+                    ? 'px-2 sm:px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/15 text-[11px] font-semibold cursor-pointer shrink-0 flex items-center gap-1'
+                    : 'px-2 sm:px-2.5 py-1 rounded-2xl bg-white hover:bg-[#fff9db] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] text-[11px] font-black cursor-pointer shrink-0 flex items-center gap-1'
                 }
+                title="Volver al inicio de Candado"
               >
-                ⚙️ Inicio
+                <span>⚙️</span>
+                <span className="hidden sm:inline">Inicio</span>
               </button>
             </>
           )}

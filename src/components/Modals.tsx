@@ -968,20 +968,27 @@ export const RankingModal: React.FC<RankingModalProps> = ({
     }
 
     if (tab === 'global') {
-      const list = Object.values(rankingData)
-        .filter((r) => r.partidas > 0 || r.puntosTotales > 0)
-        .map((r) => ({
-          id: r.id,
-          nombre: r.nombre,
-          puntosTotales: r.puntosTotales,
-          partidas: r.partidas,
-          victorias: r.victorias,
-          avatarColor: r.avatarColor || '#ff6b6b',
-          avatarHat: r.avatarHat || 'corona',
-          avatarRopa: r.avatarRopa,
-          avatarRopaColor: r.avatarRopaColor,
-          avatarAura: r.avatarAura,
-        }));
+      const porId = new Map<string, DisplayRankEntry>();
+      for (const r of Object.values(rankingData)) {
+        if (r.partidas <= 0 && r.puntosTotales <= 0) continue;
+        const canonKey = (r.id || r.nombre).trim().toLowerCase();
+        const prev = porId.get(canonKey);
+        if (!prev || r.puntosTotales >= prev.puntosTotales) {
+          porId.set(canonKey, {
+            id: r.id || canonKey,
+            nombre: r.nombre,
+            puntosTotales: Math.max(prev?.puntosTotales || 0, r.puntosTotales),
+            partidas: Math.max(prev?.partidas || 0, r.partidas),
+            victorias: Math.max(prev?.victorias || 0, r.victorias),
+            avatarColor: r.avatarColor || '#ff6b6b',
+            avatarHat: r.avatarHat || 'corona',
+            avatarRopa: r.avatarRopa,
+            avatarRopaColor: r.avatarRopaColor,
+            avatarAura: r.avatarAura,
+          });
+        }
+      }
+      const list = Array.from(porId.values());
 
       list.sort((a, b) => {
         if (b.puntosTotales !== a.puntosTotales) return b.puntosTotales - a.puntosTotales;
@@ -994,20 +1001,27 @@ export const RankingModal: React.FC<RankingModalProps> = ({
     const board = tab === 'esta_semana' ? semanalData?.actual : semanalData?.pasada;
     if (!board || !board.jugadores) return [];
 
-    const list: DisplayRankEntry[] = Object.values(board.jugadores)
-      .filter((p) => p && p.partidas > 0)
-      .map((p) => ({
-        id: p.id,
-        nombre: p.nombre,
-        puntosTotales: p.puntos,
-        partidas: p.partidas,
-        victorias: p.victorias,
-        avatarColor: p.avatarColor || '#ff6b6b',
-        avatarHat: p.avatarHat || 'corona',
-        avatarRopa: p.avatarRopa,
-        avatarRopaColor: p.avatarRopaColor,
-        avatarAura: p.avatarAura,
-      }));
+    const porIdSemanal = new Map<string, DisplayRankEntry>();
+    for (const p of Object.values(board.jugadores)) {
+      if (!p || p.partidas <= 0) continue;
+      const canonKey = (p.id || p.nombre).trim().toLowerCase();
+      const prev = porIdSemanal.get(canonKey);
+      if (!prev || p.puntos >= prev.puntosTotales) {
+        porIdSemanal.set(canonKey, {
+          id: p.id || canonKey,
+          nombre: p.nombre,
+          puntosTotales: Math.max(prev?.puntosTotales || 0, p.puntos),
+          partidas: Math.max(prev?.partidas || 0, p.partidas),
+          victorias: Math.max(prev?.victorias || 0, p.victorias),
+          avatarColor: p.avatarColor || '#ff6b6b',
+          avatarHat: p.avatarHat || 'corona',
+          avatarRopa: p.avatarRopa,
+          avatarRopaColor: p.avatarRopaColor,
+          avatarAura: p.avatarAura,
+        });
+      }
+    }
+    const list = Array.from(porIdSemanal.values());
 
     list.sort((a, b) => {
       if (b.puntosTotales !== a.puntosTotales) return b.puntosTotales - a.puntosTotales;
@@ -1057,7 +1071,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-      <div className="relative w-full max-w-lg bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 sm:p-6 shadow-[0_10px_0_#2b2140,0_20px_30px_rgba(0,0,0,0.3)] flex flex-col max-h-[90vh]">
+      <div className="relative w-full max-w-lg bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-4 sm:p-6 shadow-[0_10px_0_#2b2140,0_20px_30px_rgba(0,0,0,0.3)] flex flex-col max-h-[90vh] overflow-hidden">
         <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
           <div className="flex items-center gap-2">
             <span className="text-2xl">🏆</span>
@@ -1098,7 +1112,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
           </div>
         )}
 
-        <div className="grid grid-cols-4 gap-1 p-1 bg-[#ede4d0] rounded-2xl border-2 border-[#2b2140] my-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 p-1 bg-[#ede4d0] rounded-2xl border-2 border-[#2b2140] my-2">
           {[
             { id: 'local', label: '📍 Local' },
             { id: 'global', label: '🌍 Global' },
@@ -1287,6 +1301,11 @@ export const RankingModal: React.FC<RankingModalProps> = ({
                       <span className="font-extrabold text-xs sm:text-sm text-[#2b2140] truncate">
                         {entry.nombre}
                       </span>
+                      {tab !== 'local' && entry.id && (
+                        <span className="text-[10px] font-mono font-bold text-[#86542d] bg-[#fff3bf]/70 px-1.5 py-0.2 rounded border border-[#2b2140]/20">
+                          @{entry.id}
+                        </span>
+                      )}
                       <span className="text-[10px] text-[#8f4b00] font-bold">
                         · {lvl.icono} {lvl.titulo}
                       </span>
@@ -3267,8 +3286,8 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/65 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-      <div className="relative w-full max-w-xl bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/65 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+      <div className="relative w-full max-w-xl bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-3.5 sm:p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col max-h-[92vh] overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
           <div className="flex items-center gap-2">
@@ -3321,11 +3340,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
             )}
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 my-1">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden pr-0.5 sm:pr-1 flex flex-col gap-3 my-1 min-w-0">
             {/* Status Bar */}
             {!diag.dbConectado ? (
-              <div className="p-2.5 rounded-2xl border-2 border-[#c92a2a] bg-[#ffe3e3] text-[#c92a2a] text-xs font-bold flex items-center justify-between gap-2 shadow-sm">
-                <div className="flex-1">
+              <div className="p-2.5 rounded-2xl border-2 border-[#c92a2a] bg-[#ffe3e3] text-[#c92a2a] text-xs font-bold flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 shadow-sm min-w-0">
+                <div className="flex-1 min-w-0">
                   <div className="font-black text-[#a61e1e] flex items-center gap-1">
                     <span>⚠️</span>
                     <span>SIN CONEXIÓN A DATABASE (D1)</span>
@@ -3338,16 +3357,16 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   type="button"
                   onClick={() => sincronizar(true)}
                   disabled={sincronizando}
-                  className="py-1 px-2 rounded-xl bg-white border-2 border-[#c92a2a] text-[11px] font-black text-[#c92a2a] cursor-pointer shrink-0"
+                  className="py-1 px-2.5 rounded-xl bg-white border-2 border-[#c92a2a] text-[11px] font-black text-[#c92a2a] cursor-pointer shrink-0 ml-auto"
                 >
                   {sincronizando ? '⏳...' : '🔄 Reconectar'}
                 </button>
               </div>
             ) : (
-              <div className="p-2 rounded-2xl border-2 border-[#2b2140] bg-[#d3f9d8] text-[#134e20] text-xs font-black flex items-center justify-between gap-2 shadow-sm">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="text-base">{esYoSupremo ? '👑' : esAdmin ? '🛡️' : '🔰'}</span>
-                  <div className="leading-tight truncate">
+              <div className="p-2 rounded-2xl border-2 border-[#2b2140] bg-[#d3f9d8] text-[#134e20] text-xs font-black flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 shadow-sm min-w-0">
+                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                  <span className="text-base shrink-0">{esYoSupremo ? '👑' : esAdmin ? '🛡️' : '🔰'}</span>
+                  <div className="leading-tight min-w-0">
                     <span className="block truncate text-xs">
                       {esYoSupremo
                         ? 'Sesión Suprema: Dev Activo'
@@ -3355,7 +3374,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                         ? `Admin: ${userActual?.nombre}`
                         : `Mod: ${userActual?.nombre}`}
                     </span>
-                    <span className="text-[10px] font-bold text-[#2b8a3e]">
+                    <span className="text-[10px] font-bold text-[#2b8a3e] block truncate">
                       🟢 Database D1 Conectada ({diag.serverPingMs} ms)
                     </span>
                   </div>
@@ -3371,8 +3390,8 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
               </div>
             )}
 
-            {/* Pestañas de Navegación */}
-            <div className="flex gap-1.5 bg-[#ebdcc2] p-1 rounded-2xl border-2 border-[#2b2140]">
+            {/* Pestañas de Navegación (Responsivas: 2x2 en móvil, 4 cols en escritorio) */}
+            <div className={`grid ${esAdmin ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1'} gap-1.5 bg-[#ebdcc2] p-1.5 rounded-2xl border-2 border-[#2b2140]`}>
               {esAdmin && (
                 <>
                   <button
@@ -3381,14 +3400,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       sounds.playClick();
                       setAdminTab('jugadores');
                     }}
-                    className={`flex-1 py-1.5 px-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    className={`py-1.5 px-2 rounded-xl font-black text-[11px] sm:text-xs leading-tight text-center transition-all flex items-center justify-center gap-1 cursor-pointer min-w-0 ${
                       adminTab === 'jugadores'
                         ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
-                        : 'text-[#5c3c00] hover:bg-white/40'
+                        : 'text-[#5c3c00] hover:bg-white/40 border-2 border-transparent'
                     }`}
                   >
                     <span>👥</span>
-                    <span>Jugadores</span>
+                    <span className="truncate">Jugadores</span>
                   </button>
                   <button
                     type="button"
@@ -3396,14 +3415,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       sounds.playClick();
                       setAdminTab('editor');
                     }}
-                    className={`flex-1 py-1.5 px-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    className={`py-1.5 px-2 rounded-xl font-black text-[11px] sm:text-xs leading-tight text-center transition-all flex items-center justify-center gap-1 cursor-pointer min-w-0 ${
                       adminTab === 'editor'
                         ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
-                        : 'text-[#5c3c00] hover:bg-white/40'
+                        : 'text-[#5c3c00] hover:bg-white/40 border-2 border-transparent'
                     }`}
                   >
                     <span>🎨</span>
-                    <span>Editor de Personajes</span>
+                    <span className="truncate">Personajes</span>
                   </button>
                   <button
                     type="button"
@@ -3411,14 +3430,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       sounds.playClick();
                       setAdminTab('torneo');
                     }}
-                    className={`flex-1 py-1.5 px-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    className={`py-1.5 px-2 rounded-xl font-black text-[11px] sm:text-xs leading-tight text-center transition-all flex items-center justify-center gap-1 cursor-pointer min-w-0 ${
                       adminTab === 'torneo'
                         ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
-                        : 'text-[#5c3c00] hover:bg-white/40'
+                        : 'text-[#5c3c00] hover:bg-white/40 border-2 border-transparent'
                     }`}
                   >
                     <span>🏆</span>
-                    <span>Torneo & Premios</span>
+                    <span className="truncate">Torneo & Premios</span>
                   </button>
                 </>
               )}
@@ -3428,24 +3447,24 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   sounds.playClick();
                   setAdminTab('salas');
                 }}
-                className={`flex-1 py-1.5 px-2 rounded-xl font-black text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                className={`py-1.5 px-2 rounded-xl font-black text-[11px] sm:text-xs leading-tight text-center transition-all flex items-center justify-center gap-1 cursor-pointer min-w-0 ${
                   adminTab === 'salas'
                     ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
-                    : 'text-[#5c3c00] hover:bg-white/40'
+                    : 'text-[#5c3c00] hover:bg-white/40 border-2 border-transparent'
                 }`}
               >
                 <span>🎮</span>
-                <span>Salas Online ({esAdmin ? 'Staff' : 'Mod'})</span>
+                <span className="truncate">Salas Online ({esAdmin ? 'Staff' : 'Mod'})</span>
               </button>
             </div>
 
             {/* Banner de Solicitud de Reset Pendiente */}
             {solicitudReset?.solicitada && (
               <div className="p-3 bg-[#fff3bf] border-2 border-[#f59f00] rounded-2xl text-xs flex flex-col gap-2 shadow-sm">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xl">📨</span>
-                    <div>
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-xl shrink-0">📨</span>
+                    <div className="min-w-0">
                       <span className="font-black text-[#d9480f] block">
                         Solicitud de Reinicio de Ranking Semanal
                       </span>
@@ -3455,7 +3474,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     </div>
                   </div>
                   {esYoSupremo ? (
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
                       <button
                         type="button"
                         disabled={guardando}
@@ -3474,7 +3493,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       </button>
                     </div>
                   ) : (
-                    <span className="text-[10px] bg-white px-2 py-0.5 rounded-full border border-[#f59f00] font-black text-[#d9480f]">
+                    <span className="text-[10px] bg-white px-2 py-0.5 rounded-full border border-[#f59f00] font-black text-[#d9480f] self-start">
                       ⏳ Esperando al Dev
                     </span>
                   )}
@@ -3583,18 +3602,20 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       >
                         {!isEditing ? (
                           <>
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2.5 min-w-0">
-                                <CartoonCharacter
-                                  color={acc.avatarColor}
-                                  hat={acc.avatarHat}
-                                  ropa={acc.avatarRopa}
-                                  ropaColor={acc.avatarRopaColor}
-                                  aura={acc.avatarAura}
-                                  size={36}
-                                  showShadow={false}
-                                />
-                                <div className="min-w-0">
+                            <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 min-w-0">
+                              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                <div className="shrink-0">
+                                  <CartoonCharacter
+                                    color={acc.avatarColor}
+                                    hat={acc.avatarHat}
+                                    ropa={acc.avatarRopa}
+                                    ropaColor={acc.avatarRopaColor}
+                                    aura={acc.avatarAura}
+                                    size={36}
+                                    showShadow={false}
+                                  />
+                                </div>
+                                <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className="font-black text-xs sm:text-sm text-[#2b2140] truncate">
                                       {acc.nombre}
@@ -3607,7 +3628,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                 </div>
                               </div>
 
-                              <div className="flex items-center gap-1 shrink-0">
+                              <div className="flex items-center gap-1 shrink-0 ml-auto">
                                 {/* Botón ver Inventario */}
                                 <button
                                   type="button"
@@ -3690,7 +3711,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                         ) : (
                           /* Formulario de Edición */
                           <div className="flex flex-col gap-2 pt-1 border-t border-[#2b2140]/10">
-                            <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                               <div>
                                 <label className="font-bold text-[#86542d] block">Nombre:</label>
                                 <input
@@ -3714,7 +3735,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                   />
                                 </div>
                               ) : (
-                                <div className="flex items-center text-[10px] text-[#86542d] italic pt-4">
+                                <div className="flex items-center text-[10px] text-[#86542d] italic sm:pt-4">
                                   🔒 Claves protegidas (Solo Dev)
                                 </div>
                               )}
@@ -4342,7 +4363,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
                     <div>
                       <label className="font-bold text-[#86542d] block text-[11px]">Jugadores:</label>
                       <select
@@ -4474,7 +4495,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         {/* Submodal Inspector de Inventario */}
         {inspectingUser && (
           <div className="fixed inset-0 z-60 flex items-center justify-center p-3 bg-black/70 backdrop-blur-sm animate-[fadeIn_0.15s_ease-out]">
-            <div className="relative w-full max-w-md bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-4 shadow-[0_10px_0_#2b2140] flex flex-col max-h-[85vh]">
+            <div className="relative w-full max-w-md bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-3.5 sm:p-4 shadow-[0_10px_0_#2b2140] flex flex-col max-h-[85vh] overflow-hidden">
               <div className="flex items-center justify-between pb-2 mb-2 border-b-2 border-[#2b2140]/15">
                 <div className="flex items-center gap-2">
                   <span className="text-xl">🎒</span>
@@ -4552,13 +4573,13 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       </div>
 
                       {esAdmin && (
-                        <div className="flex items-center gap-1.5 pt-1.5 border-t border-[#2b2140]/10">
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 pt-1.5 border-t border-[#2b2140]/10 min-w-0">
                           <select
                             value={moveTargets[char.id] || ''}
                             onChange={(e) =>
                               setMoveTargets((prev) => ({ ...prev, [char.id]: e.target.value }))
                             }
-                            className="flex-1 text-[11px] font-bold bg-[#f8f9fa] border border-[#2b2140] rounded-lg px-2 py-1 outline-none cursor-pointer"
+                            className="flex-1 min-w-0 text-[11px] font-bold bg-[#f8f9fa] border border-[#2b2140] rounded-lg px-2 py-1 outline-none cursor-pointer"
                           >
                             <option value="">Mover a otro jugador...</option>
                             {Object.values(cuentas)
