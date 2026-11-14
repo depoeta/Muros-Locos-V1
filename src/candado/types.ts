@@ -164,14 +164,6 @@ export interface EstadoDueloP2P {
   finMs: number | null;
 }
 
-export interface ResumenPuntosCandado {
-  estado: 'idle' | 'enviando' | 'pendiente_consenso' | 'acreditado' | 'cupo_agotado' | 'invitado' | 'conflicto' | 'error';
-  puntosOtorgados: number;
-  puntosTotales?: number;
-  cupoDiarioRestante?: number;
-  mensaje?: string;
-}
-
 export type MensajeCandadoP2P =
   | {
       type: 'CANDADO_START';

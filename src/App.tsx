@@ -63,7 +63,7 @@ import {
   VictoryModal,
 } from './components/Modals';
 import { OfflineIndicator } from './components/PWAInstallControl';
-import { CandadoGame } from './candado';
+import { CandadoGame, limpiarSesionCandadoPersistida } from './candado';
 
 function leerSalaDeUrl(): string | null {
   if (typeof window === 'undefined') return null;
@@ -92,13 +92,144 @@ function limpiarSalaDeUrl(): void {
   }
 }
 
+const MUROS_APP_SESSION_KEY = 'muros_locos_app_session_v1';
+const MUROS_APP_SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+type AppModalType =
+  | 'ranking'
+  | 'logros'
+  | 'como_jugar'
+  | 'ajustes'
+  | 'victoria'
+  | 'torneo'
+  | 'perfil'
+  | 'admin'
+  | null;
+
+interface PersistedAppSession {
+  savedAt: number;
+  juegoActivo: 'muros' | 'candado';
+  screen: PantallaApp;
+  esTorneoConfig: boolean;
+  estado: EstadoDeJuego | null;
+  tiempoPartida: number;
+  modalActivo: AppModalType;
+  mostrarBarraPostPartida: boolean;
+}
+
+const MODALES_SEGUROS_PERSISTENTES = new Set<Exclude<AppModalType, null>>([
+  'ranking',
+  'logros',
+  'como_jugar',
+  'ajustes',
+  'perfil',
+  'admin',
+]);
+
+function cargarSesionApp(): PersistedAppSession | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(MUROS_APP_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PersistedAppSession>;
+    if (!parsed || typeof parsed.savedAt !== 'number') return null;
+    if (Date.now() - parsed.savedAt > MUROS_APP_SESSION_MAX_AGE_MS) {
+      window.localStorage.removeItem(MUROS_APP_SESSION_KEY);
+      return null;
+    }
+
+    const juegoValidado: 'muros' | 'candado' =
+      parsed.juegoActivo === 'candado' ? 'candado' : 'muros';
+
+    let screenValidada: PantallaApp =
+      parsed.screen === 'config' ||
+      parsed.screen === 'online_lobby' ||
+      parsed.screen === 'juego'
+        ? parsed.screen
+        : 'menu';
+
+    let estadoValidado: EstadoDeJuego | null =
+      parsed.estado &&
+      typeof parsed.estado === 'object' &&
+      Array.isArray(parsed.estado.jugadores) &&
+      typeof parsed.estado.n === 'number'
+        ? parsed.estado
+        : null;
+
+    if (estadoValidado?.modoOnline) {
+      // Una conexión WebRTC P2P no puede mantenerse tras recargar la pestaña
+      estadoValidado = null;
+      if (screenValidada === 'juego') {
+        screenValidada = 'online_lobby';
+      }
+    }
+
+    if (screenValidada === 'juego' && !estadoValidado) {
+      screenValidada = 'menu';
+    }
+
+    let modalValidado: AppModalType = null;
+    if (parsed.modalActivo) {
+      if (MODALES_SEGUROS_PERSISTENTES.has(parsed.modalActivo)) {
+        modalValidado = parsed.modalActivo;
+      } else if (
+        parsed.modalActivo === 'victoria' &&
+        screenValidada === 'juego' &&
+        estadoValidado?.terminada
+      ) {
+        modalValidado = 'victoria';
+      } else if (
+        parsed.modalActivo === 'torneo' &&
+        screenValidada === 'juego' &&
+        estadoValidado?.terminada &&
+        estadoValidado?.torneo?.activo
+      ) {
+        modalValidado = 'torneo';
+      }
+    }
+
+    const mostrarBarraPostPartida = Boolean(
+      parsed.mostrarBarraPostPartida &&
+        screenValidada === 'juego' &&
+        estadoValidado?.terminada &&
+        !modalValidado
+    );
+
+    return {
+      savedAt: parsed.savedAt,
+      juegoActivo: juegoValidado,
+      screen: screenValidada,
+      esTorneoConfig: Boolean(parsed.esTorneoConfig),
+      estado: estadoValidado,
+      tiempoPartida:
+        typeof parsed.tiempoPartida === 'number' && parsed.tiempoPartida >= 0
+          ? Math.floor(parsed.tiempoPartida)
+          : 0,
+      modalActivo: modalValidado,
+      mostrarBarraPostPartida,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export const App: React.FC = () => {
   const [codigoSalaUrl, setCodigoSalaUrl] = useState<string | null>(() => leerSalaDeUrl());
+  const sesionInicialRef = useRef<PersistedAppSession | null | undefined>(undefined);
+  if (sesionInicialRef.current === undefined) {
+    sesionInicialRef.current = leerSalaDeUrl() ? null : cargarSesionApp();
+  }
+  const sesionInicial = sesionInicialRef.current;
+
   const [screen, setScreen] = useState<PantallaApp>(() =>
-    leerSalaDeUrl() ? 'online_lobby' : 'menu'
+    leerSalaDeUrl() ? 'online_lobby' : (sesionInicial?.screen ?? 'menu')
   );
-  const [juegoActivo, setJuegoActivo] = useState<'muros' | 'candado'>('muros');
-  const [esTorneoConfig, setEsTorneoConfig] = useState<boolean>(false);
+  const [juegoActivo, setJuegoActivo] = useState<'muros' | 'candado'>(() =>
+    leerSalaDeUrl() ? 'muros' : (sesionInicial?.juegoActivo ?? 'muros')
+  );
+  const [esTorneoConfig, setEsTorneoConfig] = useState<boolean>(
+    () => sesionInicial?.esTorneoConfig ?? false
+  );
   const [userActual, setuserActual] = useState<UserCuenta | null>(() =>
     obteneruserActual()
   );
@@ -111,28 +242,29 @@ export const App: React.FC = () => {
   const prevDbRef = useRef<boolean>(true);
 
   // Estado de partida
-  const [estado, setEstado] = useState<EstadoDeJuego | null>(null);
-  const [desgloses, setDesgloses] = useState<Map<number, DesglosePuntos>>(new Map());
+  const [estado, setEstado] = useState<EstadoDeJuego | null>(() =>
+    leerSalaDeUrl() ? null : (sesionInicial?.estado ?? null)
+  );
+  const [desgloses, setDesgloses] = useState<Map<number, DesglosePuntos>>(() =>
+    !leerSalaDeUrl() && sesionInicial?.estado?.terminada
+      ? calcularDesglosesPuntuacion(sesionInicial.estado)
+      : new Map()
+  );
   const [nuevosLogros, setNuevosLogros] = useState<Map<string, DefLogro[]>>(new Map());
   const [subidasNivel, setSubidasNivel] = useState<
     Map<string, { anterior: InfoNivel; nuevo: InfoNivel }>
   >(new Map());
 
   // Modales
-  type ModalType =
-    | 'ranking'
-    | 'logros'
-    | 'como_jugar'
-    | 'ajustes'
-    | 'victoria'
-    | 'torneo'
-    | 'perfil'
-    | 'admin'
-    | null;
-  const [modalActivo, setModalActivo] = useState<ModalType>(null);
+  type ModalType = AppModalType;
+  const [modalActivo, setModalActivo] = useState<ModalType>(
+    () => sesionInicial?.modalActivo ?? null
+  );
   const [modalPrevio, setModalPrevio] = useState<ModalType>(null);
   const [mostrarHistorial, setMostrarHistorial] = useState<boolean>(false);
-  const [mostrarBarraPostPartida, setMostrarBarraPostPartida] = useState<boolean>(false);
+  const [mostrarBarraPostPartida, setMostrarBarraPostPartida] = useState<boolean>(
+    () => sesionInicial?.mostrarBarraPostPartida ?? false
+  );
   const [perspectivaInvertida, setPerspectivaInvertida] = useState<boolean>(false);
   const [desconexionSegundos, setDesconexionSegundos] = useState<number | null>(null);
 
@@ -162,9 +294,13 @@ export const App: React.FC = () => {
     setTimeout(() => setToast(null), 3200);
   }, []);
 
-  const [tiempoPartida, setTiempoPartida] = useState<number>(0);
+  const [tiempoPartida, setTiempoPartida] = useState<number>(
+    () => sesionInicial?.tiempoPartida ?? 0
+  );
   const duracionIntervalRef = useRef<any>(null);
-  const partidaContabilizadaRef = useRef<boolean>(false);
+  const partidaContabilizadaRef = useRef<boolean>(
+    Boolean(sesionInicial?.estado?.terminada)
+  );
 
   useEffect(() => {
     sounds.setEnabled(ajustes.sonido);
@@ -383,6 +519,77 @@ export const App: React.FC = () => {
       if (duracionIntervalRef.current) clearInterval(duracionIntervalRef.current);
     };
   }, [screen, estado?.terminada]);
+
+  // Persistencia completa de navegación y partida activa para conservar pantalla al recargar (F5)
+  const snapshotSesionRef = useRef({
+    juegoActivo,
+    screen,
+    esTorneoConfig,
+    estado,
+    modalActivo,
+    mostrarBarraPostPartida,
+  });
+  snapshotSesionRef.current = {
+    juegoActivo,
+    screen,
+    esTorneoConfig,
+    estado,
+    modalActivo,
+    mostrarBarraPostPartida,
+  };
+
+  const guardarSesionApp = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const snap = snapshotSesionRef.current;
+      const esOnlineEnCurso = Boolean(snap.estado?.modoOnline);
+      const estadoPersistible = esOnlineEnCurso ? null : snap.estado;
+      const screenPersistible: PantallaApp =
+        esOnlineEnCurso && snap.screen === 'juego' ? 'online_lobby' : snap.screen;
+
+      const payload: PersistedAppSession = {
+        savedAt: Date.now(),
+        juegoActivo: snap.juegoActivo,
+        screen: screenPersistible,
+        esTorneoConfig: snap.esTorneoConfig,
+        estado: estadoPersistible,
+        tiempoPartida: tiempoPartidaRef.current,
+        modalActivo: esOnlineEnCurso ? null : snap.modalActivo,
+        mostrarBarraPostPartida: esOnlineEnCurso ? false : snap.mostrarBarraPostPartida,
+      };
+      window.localStorage.setItem(MUROS_APP_SESSION_KEY, JSON.stringify(payload));
+    } catch {
+      // ignore storage quota errors
+    }
+  }, []);
+
+  useEffect(() => {
+    guardarSesionApp();
+  }, [
+    juegoActivo,
+    screen,
+    esTorneoConfig,
+    estado,
+    modalActivo,
+    mostrarBarraPostPartida,
+    guardarSesionApp,
+  ]);
+
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        guardarSesionApp();
+      }
+    };
+    window.addEventListener('beforeunload', guardarSesionApp);
+    window.addEventListener('pagehide', guardarSesionApp);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('beforeunload', guardarSesionApp);
+      window.removeEventListener('pagehide', guardarSesionApp);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [guardarSesionApp]);
 
   // Finalizar partida y calcular recompensas una única vez por partida
   const finalizarPartida = useCallback((estadoFinal: EstadoDeJuego) => {
@@ -1160,7 +1367,13 @@ export const App: React.FC = () => {
   }, [dbDesconectado]);
 
   return (
-    <div className="relative w-full h-full min-h-dvh bg-[#74c0fc] text-[#2b2140] flex flex-col items-center justify-between overflow-x-hidden overflow-y-auto selection:bg-[#ffd43b] selection:text-[#2b2140]">
+    <div
+      className={`relative w-full h-full min-h-dvh flex flex-col items-center justify-between overflow-x-hidden overflow-y-auto transition-colors duration-300 ${
+        juegoActivo === 'candado'
+          ? 'bg-[#131624] text-slate-100 selection:bg-indigo-300/30 selection:text-white'
+          : 'bg-[#74c0fc] text-[#2b2140] selection:bg-[#ffd43b] selection:text-[#2b2140]'
+      }`}
+    >
       {/* Aviso que desaparece en 10 segundos al detectar desconexión */}
       {dbDesconectado && mostrarBannerDesconexion && (
         <div className="sticky top-0 left-0 right-0 z-[60] w-full bg-[#c92a2a] text-white border-b-3 border-[#2b2140] px-3 py-1.5 shadow-md flex items-center justify-between gap-2 text-xs animate-[slideDown_0.2s_ease-out]">
@@ -1188,21 +1401,23 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Nubes decorativas de fondo */}
-      <div className="pointer-events-none fixed inset-0 overflow-hidden z-0">
-        <div
-          className="absolute top-10 w-48 h-16 bg-white/40 rounded-full filter blur-xs animate-[cloudDriftA_35s_linear_infinite]"
-          style={{ animationDelay: '0s' }}
-        />
-        <div
-          className="absolute top-36 w-64 h-20 bg-white/30 rounded-full filter blur-xs animate-[cloudDriftB_45s_linear_infinite]"
-          style={{ animationDelay: '-15s' }}
-        />
-        <div
-          className="absolute top-72 w-52 h-16 bg-white/35 rounded-full filter blur-xs animate-[cloudDriftC_40s_linear_infinite]"
-          style={{ animationDelay: '-8s' }}
-        />
-      </div>
+      {/* Nubes decorativas de fondo (solo en Muros Locos) */}
+      {juegoActivo === 'muros' && (
+        <div className="pointer-events-none fixed inset-0 overflow-hidden z-0">
+          <div
+            className="absolute top-10 w-48 h-16 bg-white/40 rounded-full filter blur-xs animate-[cloudDriftA_35s_linear_infinite]"
+            style={{ animationDelay: '0s' }}
+          />
+          <div
+            className="absolute top-36 w-64 h-20 bg-white/30 rounded-full filter blur-xs animate-[cloudDriftB_45s_linear_infinite]"
+            style={{ animationDelay: '-15s' }}
+          />
+          <div
+            className="absolute top-72 w-52 h-16 bg-white/35 rounded-full filter blur-xs animate-[cloudDriftC_40s_linear_infinite]"
+            style={{ animationDelay: '-8s' }}
+          />
+        </div>
+      )}
 
       {/* Alerta de desconexión del rival en modo Online */}
       {desconexionSegundos !== null && (
@@ -1235,7 +1450,7 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* MINIJUEGO AISLADO: CANDADO (LOCAL + P2P + SOLO PUNTOS) */}
+      {/* MINIJUEGO AISLADO: CANDADO (PASATIEMPO LOCAL + P2P SIN PUNTOS) */}
       {juegoActivo === 'candado' && (
         <CandadoGame
           userActual={userActual}
@@ -1248,11 +1463,8 @@ export const App: React.FC = () => {
               return next;
             });
           }}
-          onPuntosActualizados={(nuevosPuntos) => {
-            setuserActual((prev) => (prev ? { ...prev, puntos: nuevosPuntos } : prev));
-            sincronizarConNube(true).catch(() => {});
-          }}
           onVolverAMurosLocos={() => {
+            limpiarSesionCandadoPersistida();
             setJuegoActivo('muros');
             setScreen('menu');
           }}
