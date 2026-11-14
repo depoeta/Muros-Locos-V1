@@ -1727,13 +1727,13 @@ export async function regalarPersonajeAsync(
     });
     const data = await res.json();
     if (!res.ok || !data?.ok) {
-      return { ok: false, error: data?.error || 'Error al regalar personaje.' };
+      return { ok: false, error: data?.error || 'Error al regalar avatar.' };
     }
     // Solo recargar la nube; jamás cambiar el aspecto equipado del administrador que regala
     await sincronizarConNube(true);
     return { ok: true, personaje: data.personaje };
   } catch {
-    return { ok: false, error: 'Error de red enviando personaje.' };
+    return { ok: false, error: 'Error de red enviando avatar.' };
   }
 }
 
@@ -1749,12 +1749,12 @@ export async function quitarPersonajeInventarioAsync(
     });
     const data = await res.json();
     if (!res.ok || !data?.ok) {
-      return { ok: false, error: data?.error || 'Error al retirar personaje.' };
+      return { ok: false, error: data?.error || 'Error al retirar avatar.' };
     }
     await sincronizarConNube(true);
     return { ok: true };
   } catch {
-    return { ok: false, error: 'Error de red retirando personaje.' };
+    return { ok: false, error: 'Error de red retirando avatar.' };
   }
 }
 
@@ -1771,12 +1771,12 @@ export async function moverPersonajeInventarioAsync(
     });
     const data = await res.json();
     if (!res.ok || !data?.ok) {
-      return { ok: false, error: data?.error || 'Error al mover personaje.' };
+      return { ok: false, error: data?.error || 'Error al mover avatar.' };
     }
     await sincronizarConNube(true);
     return { ok: true, mensaje: data.mensaje };
   } catch {
-    return { ok: false, error: 'Error de red moviendo personaje.' };
+    return { ok: false, error: 'Error de red moviendo avatar.' };
   }
 }
 
@@ -1795,7 +1795,7 @@ export async function equiparPersonajeInventario(
   if (personajeId) {
     const found = invActual.personajes.find((p) => p.id === personajeId);
     if (!found) {
-      return { ok: false, error: 'Personaje no encontrado en tu inventario.' };
+      return { ok: false, error: 'Avatar no encontrado en tu inventario.' };
     }
     nuevoColor = found.color;
     nuevoHat = found.hat;

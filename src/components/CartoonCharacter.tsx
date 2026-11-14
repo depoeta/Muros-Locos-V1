@@ -28,9 +28,19 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
   showShadow = true,
   inGame = false,
 }) => {
+  const uid = React.useId().replace(/:/g, '');
   const isRobot = hat === 'robot' || hat === 'bot_cpu';
   const isNinja = hat === 'ninja';
   const isDragon = hat === 'dragon';
+
+  // Si lleva ropa frontal (tuxedo, armadura, túnica, cinturón), desplazamos la cara
+  // ligeramente hacia arriba para abrir un torso proporcionado sin choques con la boca/mejillas.
+  const usaRopaFrontal =
+    ropa === 'armadura' ||
+    ropa === 'tuxedo' ||
+    ropa === 'tunica' ||
+    ropa === 'cinturon';
+  const faceY = usaRopaFrontal ? -6.5 : 0;
 
   // Si está en partida (inGame), el aura solo resplandece cuando le toca jugar al jugador
   const mostrarAura = !inGame || isActive;
@@ -39,10 +49,17 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
   const colCapa = ropaColor || '#c92a2a';
   const colArmadura = ropaColor || '#adb5bd';
   const colTunica = ropaColor || '#5f3dc4';
-  const colSmoking = ropaColor || '#212529';
   const colTuxedo = ropaColor || '#212529';
   const colCinturon = ropaColor || '#fab005';
   const colAlas = ropaColor || '#e7f5ff';
+
+  const bodyClipId = `bodyClip-${uid}`;
+  const headWrapClipId = `headWrapClip-${uid}`;
+  const dragonScalesId = `dragonScales-${uid}`;
+  const auraGoldId = `auraGoldGrad-${uid}`;
+  const auraFireId = `auraFireGrad-${uid}`;
+  const auraCyberId = `auraCyberGrad-${uid}`;
+  const auraRainbowId = `auraRainbowGrad-${uid}`;
 
   return (
     <div
@@ -56,14 +73,40 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
         }`}
       >
         <defs>
-          <radialGradient id={`bodyGrad-${color.replace('#', '')}`} cx="35%" cy="30%" r="65%">
-            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.45" />
-            <stop offset="60%" stopColor={color} />
-            <stop offset="100%" stopColor="#1e1830" stopOpacity="0.35" />
-          </radialGradient>
+          {/* Recorte exacto del cuerpo esférico para que la ropa y escamas abracen la silueta */}
+          <clipPath id={bodyClipId}>
+            <circle cx="50" cy="54" r="30.8" />
+          </clipPath>
+
+          {/* Recorte suave para cintas/máscaras alrededor de la cabeza */}
+          <clipPath id={headWrapClipId}>
+            <circle cx="50" cy="54" r="32.2" />
+          </clipPath>
+
+          {/* Patrón de escamas de dragón repartido por todo el cuerpo */}
+          <pattern id={dragonScalesId} width="12" height="10" patternUnits="userSpaceOnUse">
+            <path
+              d="M 0 1.5 Q 3 6 6 1.5 Q 9 6 12 1.5"
+              fill="#1e1830"
+              fillOpacity="0.06"
+              stroke="#1e1830"
+              strokeWidth="1.3"
+              strokeOpacity="0.34"
+              strokeLinecap="round"
+            />
+            <path
+              d="M -6 6.5 Q -3 11 0 6.5 Q 3 11 6 6.5 Q 9 11 12 6.5 Q 15 11 18 6.5"
+              fill="#ffffff"
+              fillOpacity="0.07"
+              stroke="#1e1830"
+              strokeWidth="1.3"
+              strokeOpacity="0.32"
+              strokeLinecap="round"
+            />
+          </pattern>
 
           {/* Aura Dorada Potente */}
-          <radialGradient id="auraGoldGrad" cx="50%" cy="50%" r="50%">
+          <radialGradient id={auraGoldId} cx="50%" cy="50%" r="50%">
             <stop offset="0%" stopColor="#fff9db" stopOpacity="0.9" />
             <stop offset="45%" stopColor="#ffd43b" stopOpacity="0.7" />
             <stop offset="80%" stopColor="#f59f00" stopOpacity="0.4" />
@@ -71,7 +114,7 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
           </radialGradient>
 
           {/* Aura Fuego */}
-          <radialGradient id="auraFireGrad" cx="50%" cy="50%" r="50%">
+          <radialGradient id={auraFireId} cx="50%" cy="50%" r="50%">
             <stop offset="0%" stopColor="#ffc078" stopOpacity="0.9" />
             <stop offset="50%" stopColor="#ff922b" stopOpacity="0.65" />
             <stop offset="80%" stopColor="#f03e3e" stopOpacity="0.35" />
@@ -79,7 +122,7 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
           </radialGradient>
 
           {/* Aura Cíber */}
-          <radialGradient id="auraCyberGrad" cx="50%" cy="50%" r="50%">
+          <radialGradient id={auraCyberId} cx="50%" cy="50%" r="50%">
             <stop offset="0%" stopColor="#99e9f2" stopOpacity="0.9" />
             <stop offset="50%" stopColor="#22b8cf" stopOpacity="0.65" />
             <stop offset="80%" stopColor="#15aabf" stopOpacity="0.35" />
@@ -87,7 +130,7 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
           </radialGradient>
 
           {/* Aura Arcoíris Estática (Halo cósmico difuso sin giro/mareo) */}
-          <radialGradient id="auraRainbowGrad" cx="50%" cy="50%" r="50%">
+          <radialGradient id={auraRainbowId} cx="50%" cy="50%" r="50%">
             <stop offset="35%" stopColor="#ffe066" stopOpacity="0.8" />
             <stop offset="52%" stopColor="#69db7c" stopOpacity="0.65" />
             <stop offset="68%" stopColor="#4dabf7" stopOpacity="0.65" />
@@ -106,7 +149,7 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
                 cx="50"
                 cy="54"
                 r="47"
-                fill="url(#auraGoldGrad)"
+                fill={`url(#${auraGoldId})`}
                 style={{ filter: 'drop-shadow(0 0 10px rgba(255, 212, 59, 0.75))' }}
                 className={isActive ? 'animate-pulse' : ''}
               />
@@ -116,7 +159,7 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
                 cx="50"
                 cy="54"
                 r="46"
-                fill="url(#auraFireGrad)"
+                fill={`url(#${auraFireId})`}
                 style={{ filter: 'drop-shadow(0 0 8px rgba(240, 62, 62, 0.6))' }}
                 className={isActive ? 'animate-pulse' : ''}
               />
@@ -126,18 +169,17 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
                 cx="50"
                 cy="54"
                 r="46"
-                fill="url(#auraCyberGrad)"
+                fill={`url(#${auraCyberId})`}
                 style={{ filter: 'drop-shadow(0 0 8px rgba(34, 184, 207, 0.6))' }}
                 className={isActive ? 'animate-pulse' : ''}
               />
             )}
             {aura === 'arcoiris' && (
-              /* Sombra cósmica suave y fija sin giro que no marea */
               <circle
                 cx="50"
                 cy="54"
                 r="48"
-                fill="url(#auraRainbowGrad)"
+                fill={`url(#${auraRainbowId})`}
                 style={{ filter: 'drop-shadow(0 0 9px rgba(186, 120, 255, 0.55))' }}
               />
             )}
@@ -156,7 +198,6 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
               strokeWidth="3.5"
               strokeLinejoin="round"
             />
-            {/* Pliegue y dobladillo dorado */}
             <path d="M 23 88 L 77 88" stroke="#ffd43b" strokeWidth="2.5" strokeLinecap="round" />
             <path d="M 38 60 Q 32 75 36 88" stroke="#000000" strokeWidth="1.8" strokeOpacity="0.25" fill="none" />
             <path d="M 62 60 Q 68 75 64 88" stroke="#000000" strokeWidth="1.8" strokeOpacity="0.25" fill="none" />
@@ -165,7 +206,6 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
 
         {ropa === 'alas' && (
           <g>
-            {/* Ala Izquierda (Baja, sale de la espalda media) */}
             <path
               d="M 28 54 C 8 46 0 62 4 78 C 14 82 22 72 30 64 Z"
               fill={colAlas}
@@ -174,7 +214,6 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
               strokeLinejoin="round"
             />
             <path d="M 8 62 C 16 66 22 68 28 62" stroke="#74c0fc" strokeWidth="2" fill="none" />
-            {/* Ala Derecha */}
             <path
               d="M 72 54 C 92 46 100 62 96 78 C 86 82 78 72 70 64 Z"
               fill={colAlas}
@@ -195,167 +234,280 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
         <ellipse cx="36" cy="87" rx="10" ry="6" fill="#ffd43b" stroke="#2b2140" strokeWidth="3.5" />
         <ellipse cx="64" cy="87" rx="10" ry="6" fill="#ffd43b" stroke="#2b2140" strokeWidth="3.5" />
 
-        {/* Cuerpo Principal */}
-        <circle cx="50" cy="54" r="32" fill={color} stroke="#2b2140" strokeWidth="4" />
+        {/* Relleno del Cuerpo Principal */}
+        <circle cx="50" cy="54" r="32" fill={color} />
+
+        {/* ============================================================== */}
+        {/* TEXTURA DE ESCAMAS DE DRAGÓN EN TODO EL CUERPO */}
+        {/* ============================================================== */}
+        {isDragon && (
+          <g clipPath={`url(#${bodyClipId})`}>
+            {/* Manto completo de escamas por todo el cuerpo */}
+            <circle cx="50" cy="54" r="32" fill={`url(#${dragonScalesId})`} />
+
+            {/* Panza crema clara de dragón cuando no lleva ropa frontal que la cubra */}
+            {!usaRopaFrontal && (
+              <g>
+                <path
+                  d="M 33 74 Q 50 67 67 74 Q 61 86 50 86 Q 39 86 33 74 Z"
+                  fill="#fff3bf"
+                  fillOpacity="0.72"
+                  stroke="#2b2140"
+                  strokeOpacity="0.35"
+                  strokeWidth="1.5"
+                />
+                <path
+                  d="M 38 77 Q 50 80 62 77 M 41 81.5 Q 50 84 59 81.5"
+                  stroke="#2b2140"
+                  strokeOpacity="0.28"
+                  strokeWidth="1.3"
+                  fill="none"
+                  strokeLinecap="round"
+                />
+              </g>
+            )}
+          </g>
+        )}
+
+        {/* Reflejo especular del cuerpo */}
         <path
           d="M 28 42 A 25 25 0 0 1 54 26"
           fill="none"
           stroke="#ffffff"
           strokeWidth="3.5"
           strokeLinecap="round"
-          opacity="0.6"
+          opacity="0.58"
         />
 
         {/* ============================================================== */}
-        {/* TEXTURA DE ESCAMAS DE DRAGÓN */}
+        {/* RASGOS FACIALES (Se elevan suavemente cuando lleva ropa frontal) */}
         {/* ============================================================== */}
-        {isDragon && (
-          <g opacity="0.45" stroke="#2b2140" strokeWidth="1.8" fill="none">
-            {/* Fila 1 de escamas */}
-            <path d="M 44 48 Q 47 52 50 48 Q 53 52 56 48" strokeLinecap="round" />
-            {/* Fila 2 de escamas */}
-            <path d="M 40 56 Q 45 61 50 56 Q 55 61 60 56" strokeLinecap="round" />
-            {/* Fila 3 de escamas */}
-            <path d="M 43 65 Q 47 69 50 65 Q 53 69 57 65" strokeLinecap="round" />
-            {/* Panza dorada clara del dragón */}
-            <path d="M 38 72 Q 50 78 62 72 Q 50 82 38 72 Z" fill="#fff3bf" opacity="0.6" strokeWidth="1.5" />
-          </g>
-        )}
+        <g transform={`translate(0, ${faceY})`}>
+          {/* Mejillas sonrosadas (solo si no es robot) */}
+          {!isRobot && (
+            <>
+              <circle cx="29" cy="62" r="5" fill="#ff8787" opacity="0.6" />
+              <circle cx="71" cy="62" r="5" fill="#ff8787" opacity="0.6" />
+            </>
+          )}
 
-        {/* Mejillas sonrosadas (solo si no es robot) */}
-        {!isRobot && (
-          <>
-            <circle cx="29" cy="62" r="5" fill="#ff8787" opacity="0.6" />
-            <circle cx="71" cy="62" r="5" fill="#ff8787" opacity="0.6" />
-          </>
-        )}
+          {/* OJOS (Si es Robot, tiene visor cibernético en su lugar) */}
+          {!isRobot && (
+            <g className="animate-[blink_4s_ease-in-out_infinite]">
+              <ellipse cx="39" cy="50" rx="7" ry="9" fill="#ffffff" stroke="#2b2140" strokeWidth="3" />
+              <circle cx="41" cy="50" r="4.5" fill="#2b2140" />
+              <circle cx="42.5" cy="48" r="1.8" fill="#ffffff" />
 
-        {/* ============================================================== */}
-        {/* OJOS (Si es Robot, tiene visor cibernético en su lugar) */}
-        {/* ============================================================== */}
-        {!isRobot && (
-          <g className="animate-[blink_4s_ease-in-out_infinite]">
-            <ellipse cx="39" cy="50" rx="7" ry="9" fill="#ffffff" stroke="#2b2140" strokeWidth="3" />
-            <circle cx="41" cy="50" r="4.5" fill="#2b2140" />
-            <circle cx="42.5" cy="48" r="1.8" fill="#ffffff" />
+              <ellipse cx="61" cy="50" rx="7" ry="9" fill="#ffffff" stroke="#2b2140" strokeWidth="3" />
+              <circle cx="63" cy="50" r="4.5" fill="#2b2140" />
+              <circle cx="64.5" cy="48" r="1.8" fill="#ffffff" />
+            </g>
+          )}
 
-            <ellipse cx="61" cy="50" rx="7" ry="9" fill="#ffffff" stroke="#2b2140" strokeWidth="3" />
-            <circle cx="63" cy="50" r="4.5" fill="#2b2140" />
-            <circle cx="64.5" cy="48" r="1.8" fill="#ffffff" />
-          </g>
-        )}
+          {/* BOCA / SONRISA (Oculta en Ninja y Robot) */}
+          {!isNinja && !isRobot && (
+            <path
+              d="M 43 64 Q 50 72 57 64"
+              fill="none"
+              stroke="#2b2140"
+              strokeWidth="3.5"
+              strokeLinecap="round"
+            />
+          )}
+        </g>
 
         {/* ============================================================== */}
-        {/* BOCA / SONRISA (Oculta en Ninja y Robot) */}
+        {/* ROPA DELANTERA RECORTADA AL CONTORNO ESFÉRICO DEL CUERPO */}
         {/* ============================================================== */}
-        {!isNinja && !isRobot && (
-          <path
-            d="M 43 64 Q 50 72 57 64"
-            fill="none"
-            stroke="#2b2140"
-            strokeWidth="3.5"
-            strokeLinecap="round"
-          />
-        )}
+        <g clipPath={`url(#${bodyClipId})`}>
+          {ropa === 'armadura' && (
+            <g>
+              {/* Peto anatómico amplio abrazando el pecho y abdomen */}
+              <path
+                d="M 18 63 Q 50 68.5 82 63 L 84 89 L 16 89 Z"
+                fill={colArmadura}
+                stroke="#2b2140"
+                strokeWidth="2.8"
+              />
+              {/* Bisel metálico en el cuello */}
+              <path
+                d="M 22 65.5 Q 50 70.5 78 65.5"
+                stroke="#ffffff"
+                strokeWidth="2"
+                strokeOpacity="0.55"
+                fill="none"
+              />
+              {/* Placas frontales en V */}
+              <path
+                d="M 35 68.5 L 44 79 L 56 79 L 65 68.5"
+                stroke="#ffffff"
+                strokeWidth="1.8"
+                strokeOpacity="0.6"
+                fill="none"
+              />
+              {/* Cinturón de la armadura */}
+              <path
+                d="M 20 80.5 Q 50 84 80 80.5"
+                stroke="#2b2140"
+                strokeWidth="2.2"
+                fill="none"
+              />
+              {/* Emblema dorado del pecho */}
+              <polygon
+                points="50,69.5 55,75.5 45,75.5"
+                fill="#ffd43b"
+                stroke="#2b2140"
+                strokeWidth="1.3"
+              />
+            </g>
+          )}
 
-        {/* ============================================================== */}
-        {/* ROPA DELANTERA: ARMADURA, TUXEDO, CINTURÓN, TÚNICA */}
-        {/* ============================================================== */}
+          {ropa === 'tuxedo' && (
+            <g>
+              {/* Chaqueta de gala que abraza todo el torso inferior */}
+              <path
+                d="M 18 63 Q 50 67.5 82 63 L 84 89 L 16 89 Z"
+                fill={colTuxedo}
+                stroke="#2b2140"
+                strokeWidth="2.8"
+              />
+              {/* Camisa blanca de etiqueta en V */}
+              <polygon
+                points="40,64.5 60,64.5 50,80.5"
+                fill="#ffffff"
+                stroke="#2b2140"
+                strokeWidth="1.8"
+                strokeLinejoin="round"
+              />
+              {/* Solapas elegantes del esmoquin */}
+              <path
+                d="M 31 64 L 44 79 L 36 85 Z"
+                fill={colTuxedo}
+                stroke="#2b2140"
+                strokeWidth="1.9"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M 69 64 L 56 79 L 64 85 Z"
+                fill={colTuxedo}
+                stroke="#2b2140"
+                strokeWidth="1.9"
+                strokeLinejoin="round"
+              />
+              {/* Pajarita roja con nudo dorado bien visible */}
+              <polygon
+                points="43.5,65.5 50,68.2 43.5,71"
+                fill="#e03131"
+                stroke="#2b2140"
+                strokeWidth="1.2"
+                strokeLinejoin="round"
+              />
+              <polygon
+                points="56.5,65.5 50,68.2 56.5,71"
+                fill="#e03131"
+                stroke="#2b2140"
+                strokeWidth="1.2"
+                strokeLinejoin="round"
+              />
+              <circle cx="50" cy="68.2" r="1.7" fill="#ffd43b" stroke="#2b2140" strokeWidth="0.9" />
+              {/* Botones dorados pulidos */}
+              <circle cx="50" cy="75.5" r="1.4" fill="#ffd43b" stroke="#2b2140" strokeWidth="0.8" />
+              <circle cx="50" cy="80.8" r="1.4" fill="#ffd43b" stroke="#2b2140" strokeWidth="0.8" />
+            </g>
+          )}
+
+          {ropa === 'cinturon' && (
+            <g>
+              {/* Cinturón anatómico curvado de borde a borde */}
+              <path
+                d="M 16 71 Q 50 76.5 84 71 L 84 81 Q 50 86.5 16 81 Z"
+                fill={colCinturon}
+                stroke="#2b2140"
+                strokeWidth="2.5"
+              />
+              <path d="M 18 72.5 Q 50 78 82 72.5" stroke="#ffd43b" strokeWidth="1.6" fill="none" />
+              <path d="M 18 79.5 Q 50 85 82 79.5" stroke="#ffd43b" strokeWidth="1.6" fill="none" />
+              {/* Medallón central de Campeón de Oro */}
+              <polygon
+                points="50,70 57.5,76.8 50,83.6 42.5,76.8"
+                fill="#ffd43b"
+                stroke="#2b2140"
+                strokeWidth="2"
+                strokeLinejoin="round"
+              />
+              <circle cx="50" cy="76.8" r="3.2" fill="#e03131" stroke="#2b2140" strokeWidth="1.2" />
+              <circle cx="51" cy="75.8" r="1" fill="#ffffff" opacity="0.85" />
+            </g>
+          )}
+
+          {ropa === 'tunica' && (
+            <g>
+              {/* Túnica mística fluida abrazando la parte inferior del cuerpo */}
+              <path
+                d="M 18 63 Q 50 67.5 82 63 L 84 89 L 16 89 Z"
+                fill={colTunica}
+                stroke="#2b2140"
+                strokeWidth="2.6"
+              />
+              {/* Ribete dorado en cuello en V */}
+              <path
+                d="M 35 64.2 L 50 71.5 L 65 64.2"
+                fill="none"
+                stroke="#ffd43b"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              {/* Fajín ceremonial con cordón dorado */}
+              <path d="M 21 75 Q 50 79.5 79 75" stroke="#ffd43b" strokeWidth="2.6" fill="none" />
+              <circle cx="50" cy="76.8" r="2.4" fill="#ffd43b" stroke="#2b2140" strokeWidth="1" />
+              {/* Borlas del fajín */}
+              <path
+                d="M 50 79 L 47.8 84.8 M 50 79 L 52.2 84.8"
+                stroke="#ffd43b"
+                strokeWidth="1.9"
+                strokeLinecap="round"
+              />
+            </g>
+          )}
+        </g>
+
+        {/* Contorno exterior del cuerpo siempre nítido encima de la ropa recortada */}
+        <circle cx="50" cy="54" r="32" fill="none" stroke="#2b2140" strokeWidth="4" />
+
+        {/* Piezas 3D de Armadura sobre el contorno (hombreras y escudo bajo las mejillas) */}
         {ropa === 'armadura' && (
           <g>
-            {/* Hombrera izquierda redondeada */}
-            <path d="M 20 62 Q 22 55 30 58 Q 32 68 22 70 Z" fill={colArmadura} stroke="#2b2140" strokeWidth="2.5" />
-            <circle cx="26" cy="62" r="1.5" fill="#ffffff" />
-            {/* Hombrera derecha redondeada */}
-            <path d="M 80 62 Q 78 55 70 58 Q 68 68 78 70 Z" fill={colArmadura} stroke="#2b2140" strokeWidth="2.5" />
-            <circle cx="74" cy="62" r="1.5" fill="#ffffff" />
-
-            {/* Peto curvo anatómico que abraza el cuerpo esférico */}
+            {/* Hombrera izquierda */}
             <path
-              d="M 30 68 Q 50 73 70 68 L 66 86 Q 50 90 34 86 Z"
+              d="M 17 65 Q 19 58.5 27.5 61.5 Q 29.5 70.5 19.5 72.5 Z"
               fill={colArmadura}
               stroke="#2b2140"
-              strokeWidth="3"
+              strokeWidth="2.5"
             />
-            {/* Bisel / placa de brillo superior */}
-            <path d="M 34 71 Q 50 75 66 71" stroke="#ffffff" strokeWidth="2" strokeOpacity="0.5" fill="none" />
-            {/* Placas frontales */}
-            <path d="M 40 73 L 46 82 L 54 82 L 60 73" stroke="#ffffff" strokeWidth="1.8" strokeOpacity="0.6" fill="none" />
-            <polygon points="50,73 54,78 46,78" fill="#ffd43b" stroke="#2b2140" strokeWidth="1.2" />
+            <circle cx="23.5" cy="65" r="1.4" fill="#ffffff" />
+            {/* Hombrera derecha */}
+            <path
+              d="M 83 65 Q 81 58.5 72.5 61.5 Q 70.5 70.5 80.5 72.5 Z"
+              fill={colArmadura}
+              stroke="#2b2140"
+              strokeWidth="2.5"
+            />
+            <circle cx="76.5" cy="65" r="1.4" fill="#ffffff" />
 
-            {/* Gran Escudo de Torneo Medieval en el flanco */}
-            <g transform="translate(64, 58)">
+            {/* Escudo de Torneo Medieval en el flanco derecho sin tapar la mejilla */}
+            <g transform="translate(65, 62) scale(0.92)">
               <path
                 d="M 0 0 L 16 0 C 17 12 14 20 8 25 C 2 20 -1 12 0 0 Z"
                 fill="#e03131"
                 stroke="#2b2140"
-                strokeWidth="2.5"
+                strokeWidth="2.6"
                 strokeLinejoin="round"
               />
               <line x1="8" y1="2" x2="8" y2="23" stroke="#ffd43b" strokeWidth="2.5" />
               <line x1="2" y1="8" x2="14" y2="8" stroke="#ffd43b" strokeWidth="2.5" />
               <circle cx="8" cy="8" r="2" fill="#fff9db" />
             </g>
-          </g>
-        )}
-
-        {(ropa === 'tuxedo' || ropa === 'smoking') && (
-          <g>
-            {/* Chaqueta curva de gala que abraza el cuerpo */}
-            <path
-              d="M 31 68 Q 50 73 69 68 L 66 86 Q 50 90 34 86 Z"
-              fill={colTuxedo}
-              stroke="#2b2140"
-              strokeWidth="2.8"
-            />
-            {/* Camisa blanca interna de etiqueta */}
-            <polygon points="42,68 58,68 50,81" fill="#ffffff" stroke="#2b2140" strokeWidth="1.8" />
-            {/* Solapas elegantes del esmoquin */}
-            <path d="M 33 68 L 44 80 L 37 86 Z" fill={colTuxedo} stroke="#2b2140" strokeWidth="2" />
-            <path d="M 67 68 L 56 80 L 63 86 Z" fill={colTuxedo} stroke="#2b2140" strokeWidth="2" />
-            {/* Pajarita roja con nudo dorado */}
-            <polygon points="44,69 50,71.5 44,74" fill="#e03131" stroke="#2b2140" strokeWidth="1.2" />
-            <polygon points="56,69 50,71.5 56,74" fill="#e03131" stroke="#2b2140" strokeWidth="1.2" />
-            <circle cx="50" cy="71.5" r="1.6" fill="#ffd43b" stroke="#2b2140" strokeWidth="0.8" />
-            {/* Botones dorados pulidos */}
-            <circle cx="50" cy="78" r="1.4" fill="#ffd43b" stroke="#2b2140" strokeWidth="0.8" />
-            <circle cx="50" cy="82.5" r="1.4" fill="#ffd43b" stroke="#2b2140" strokeWidth="0.8" />
-          </g>
-        )}
-
-        {ropa === 'cinturon' && (
-          <g>
-            {/* Cinturón anatómico curvado a la cintura baja */}
-            <path
-              d="M 28 75 Q 50 80 72 75 L 70 84 Q 50 89 30 84 Z"
-              fill={colCinturon}
-              stroke="#2b2140"
-              strokeWidth="2.5"
-            />
-            {/* Borde superior e inferior dorado */}
-            <path d="M 29 76 Q 50 81 71 76" stroke="#ffd43b" strokeWidth="1.5" fill="none" />
-            <path d="M 30 83 Q 50 88 70 83" stroke="#ffd43b" strokeWidth="1.5" fill="none" />
-            {/* Medallón central de Campeón de Oro */}
-            <polygon points="50,73 57,79.5 50,86 43,79.5" fill="#ffd43b" stroke="#2b2140" strokeWidth="2" />
-            <circle cx="50" cy="79.5" r="3.2" fill="#e03131" stroke="#2b2140" strokeWidth="1.2" />
-            <circle cx="51" cy="78.5" r="1" fill="#ffffff" opacity="0.8" />
-          </g>
-        )}
-
-        {ropa === 'tunica' && (
-          <g>
-            {/* Túnica mística fluida adaptada al cuerpo */}
-            <path
-              d="M 30 67 Q 50 72 70 67 L 66 87 Q 50 91 34 87 Z"
-              fill={colTunica}
-              stroke="#2b2140"
-              strokeWidth="2.5"
-            />
-            {/* Fajín cruzado ceremonial con cordón de oro */}
-            <path d="M 33 76 Q 50 80 67 76" stroke="#ffd43b" strokeWidth="2.5" fill="none" />
-            <circle cx="50" cy="77" r="2.4" fill="#ffd43b" stroke="#2b2140" strokeWidth="1" />
-            {/* Borlas del fajín que caen con naturalidad */}
-            <path d="M 50 79 L 48 85 M 50 79 L 52 85" stroke="#ffd43b" strokeWidth="1.8" strokeLinecap="round" />
           </g>
         )}
 
@@ -464,9 +616,11 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
               strokeLinejoin="round"
             />
             <path d="M 75 31 L 78 17 L 65 25 Z" fill="#ffdeeb" />
-            {/* Bigotes */}
-            <path d="M 16 57 L 27 58 M 15 62 L 27 61" stroke="#2b2140" strokeWidth="2.5" strokeLinecap="round" />
-            <path d="M 84 57 L 73 58 M 85 62 L 73 61" stroke="#2b2140" strokeWidth="2.5" strokeLinecap="round" />
+            {/* Bigotes alineados a las mejillas */}
+            <g transform={`translate(0, ${faceY})`}>
+              <path d="M 16 57 L 27 58 M 15 62 L 27 61" stroke="#2b2140" strokeWidth="2.5" strokeLinecap="round" />
+              <path d="M 84 57 L 73 58 M 85 62 L 73 61" stroke="#2b2140" strokeWidth="2.5" strokeLinecap="round" />
+            </g>
           </g>
         )}
 
@@ -488,44 +642,49 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
               strokeLinejoin="round"
             />
             <path d="M 78 28 L 82 13 L 66 23 Z" fill="#fff4e6" />
-            <ellipse cx="50" cy="62" rx="7" ry="5" fill="#fff4e6" stroke="#2b2140" strokeWidth="2" />
-            <polygon points="47,59 53,59 50,63" fill="#2b2140" />
-            <path d="M 18 56 L 28 58 M 17 62 L 28 61" stroke="#2b2140" strokeWidth="2" strokeLinecap="round" />
-            <path d="M 82 56 L 72 58 M 83 62 L 72 61" stroke="#2b2140" strokeWidth="2" strokeLinecap="round" />
+            {/* Hocico y bigotes sincronizados con la cara */}
+            <g transform={`translate(0, ${faceY})`}>
+              <ellipse cx="50" cy="62" rx="7" ry="5" fill="#fff4e6" stroke="#2b2140" strokeWidth="2" />
+              <polygon points="47,59 53,59 50,63" fill="#2b2140" />
+              <path d="M 18 56 L 28 58 M 17 62 L 28 61" stroke="#2b2140" strokeWidth="2" strokeLinecap="round" />
+              <path d="M 82 56 L 72 58 M 83 62 L 72 61" stroke="#2b2140" strokeWidth="2" strokeLinecap="round" />
+            </g>
           </g>
         )}
 
-        {/* CYBER BOT: Sin ojos de caricatura, con visor robótico panorámico continuo */}
+        {/* CYBER BOT: Visor robótico panorámico continuo */}
         {(hat === 'robot' || hat === 'bot_cpu') && (
-          <g transform="translate(50, 50)">
-            {/* Soporte de la antena superior */}
-            <rect x="-14" y="-34" width="28" height="9" rx="3" fill="#343a40" stroke="#2b2140" strokeWidth="2.5" />
-            <line x1="0" y1="-34" x2="0" y2="-45" stroke="#2b2140" strokeWidth="3.5" strokeLinecap="round" />
-            <circle cx="0" cy="-47" r="5" fill="#22b8cf" stroke="#2b2140" strokeWidth="2.5" className="animate-pulse" />
+          <g>
+            {/* Antena superior fija en la cima de la cabeza */}
+            <g transform="translate(50, 50)">
+              <rect x="-14" y="-34" width="28" height="9" rx="3" fill="#343a40" stroke="#2b2140" strokeWidth="2.5" />
+              <line x1="0" y1="-34" x2="0" y2="-45" stroke="#2b2140" strokeWidth="3.5" strokeLinecap="round" />
+              <circle cx="0" cy="-47" r="5" fill="#22b8cf" stroke="#2b2140" strokeWidth="2.5" className="animate-pulse" />
+            </g>
 
-            {/* Sensores/tornillos laterales */}
-            <rect x="-35" y="-6" width="6" height="14" rx="2" fill="#868e96" stroke="#2b2140" strokeWidth="2" />
-            <circle cx="-32" cy="1" r="1.5" fill="#22b8cf" />
-            <rect x="29" y="-6" width="6" height="14" rx="2" fill="#868e96" stroke="#2b2140" strokeWidth="2" />
-            <circle cx="32" cy="1" r="1.5" fill="#22b8cf" />
+            {/* Visor y sensores laterales alineados si lleva ropa frontal */}
+            <g transform={`translate(50, ${50 + faceY * 0.85})`}>
+              <rect x="-35" y="-6" width="6" height="14" rx="2" fill="#868e96" stroke="#2b2140" strokeWidth="2" />
+              <circle cx="-32" cy="1" r="1.5" fill="#22b8cf" />
+              <rect x="29" y="-6" width="6" height="14" rx="2" fill="#868e96" stroke="#2b2140" strokeWidth="2" />
+              <circle cx="32" cy="1" r="1.5" fill="#22b8cf" />
 
-            {/* Gran Visor Digital Panorámico de lado a lado */}
-            <rect
-              x="-30"
-              y="-7"
-              width="60"
-              height="15"
-              rx="5"
-              fill="#101a28"
-              stroke="#2b2140"
-              strokeWidth="3"
-            />
-            <rect x="-27" y="-4" width="54" height="9" rx="3" fill="#090a0f" />
+              <rect
+                x="-30"
+                y="-7"
+                width="60"
+                height="15"
+                rx="5"
+                fill="#101a28"
+                stroke="#2b2140"
+                strokeWidth="3"
+              />
+              <rect x="-27" y="-4" width="54" height="9" rx="3" fill="#090a0f" />
 
-            {/* Escáner láser cian que recorre el visor */}
-            <line x1="-24" y1="0.5" x2="24" y2="0.5" stroke="#22b8cf" strokeWidth="2.5" strokeLinecap="round" />
-            <rect x="-10" y="-3" width="20" height="7" rx="2" fill="#00f2fe" opacity="0.9" className="animate-pulse" />
-            <circle cx="0" cy="0.5" r="2.5" fill="#ffffff" />
+              <line x1="-24" y1="0.5" x2="24" y2="0.5" stroke="#22b8cf" strokeWidth="2.5" strokeLinecap="round" />
+              <rect x="-10" y="-3" width="20" height="7" rx="2" fill="#00f2fe" opacity="0.9" className="animate-pulse" />
+              <circle cx="0" cy="0.5" r="2.5" fill="#ffffff" />
+            </g>
           </g>
         )}
 
@@ -551,47 +710,54 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
             {/* Crestas superiores */}
             <polygon points="46,24 50,14 54,24" fill="#0ca678" stroke="#2b2140" strokeWidth="2" />
             <polygon points="47,15 50,7 53,15" fill="#0ca678" stroke="#2b2140" strokeWidth="2" />
-            {/* Colmillos */}
-            <polygon points="42,65 45,71 47,65" fill="#ffffff" stroke="#2b2140" strokeWidth="1.5" />
-            <polygon points="53,65 55,71 58,65" fill="#ffffff" stroke="#2b2140" strokeWidth="1.5" />
+            {/* Colmillos sincronizados con la boca */}
+            <g transform={`translate(0, ${faceY})`}>
+              <polygon points="42,65 45,71 47,65" fill="#ffffff" stroke="#2b2140" strokeWidth="1.5" />
+              <polygon points="53,65 55,71 58,65" fill="#ffffff" stroke="#2b2140" strokeWidth="1.5" />
+            </g>
           </g>
         )}
 
-        {/* NINJA: Sin boca sobre la máscara, cubre de la nariz hacia abajo */}
+        {/* NINJA: Cinta y máscara ajustadas al rostro y silueta */}
         {hat === 'ninja' && (
           <g>
-            {/* Cinta con nudos en la cabeza */}
-            <path d="M 20 40 Q 6 36 2 48 Q 12 44 22 46 Z" fill="#212529" stroke="#2b2140" strokeWidth="3" />
-            <path d="M 18 44 Q 4 48 0 60 Q 10 52 20 48 Z" fill="#343a40" stroke="#2b2140" strokeWidth="2.5" />
-            <rect x="20" y="32" width="60" height="13" rx="4" fill="#212529" stroke="#2b2140" strokeWidth="3" />
-            {/* Placa metálica ninja */}
-            <rect x="38" y="34.5" width="24" height="8" rx="2" fill="#ced4da" stroke="#2b2140" strokeWidth="2" />
-            <circle cx="42" cy="38.5" r="1.2" fill="#2b2140" />
-            <circle cx="58" cy="38.5" r="1.2" fill="#2b2140" />
-            <path
-              d="M 50 35.5 L 51.5 38 L 54 38 L 52 39.5 L 53 42 L 50 40.5 L 47 42 L 48 39.5 L 46 38 L 48.5 38 Z"
-              fill="#ffd43b"
-            />
-            {/* Máscara inferior que envuelve de la nariz abajo */}
-            <path
-              d="M 24 58 Q 50 63 76 58 L 72 79 Q 50 87 28 79 Z"
-              fill="#212529"
-              stroke="#2b2140"
-              strokeWidth="3.2"
-              strokeLinejoin="round"
-            />
-            {/* Pliegue de tela del tapabocas */}
-            <path d="M 34 68 Q 50 72 66 68" stroke="#343a40" strokeWidth="2" fill="none" />
+            {/* Colas de la cinta */}
+            <g transform={`translate(0, ${faceY * 0.65})`}>
+              <path d="M 20 40 Q 6 36 2 48 Q 12 44 22 46 Z" fill="#212529" stroke="#2b2140" strokeWidth="3" />
+              <path d="M 18 44 Q 4 48 0 60 Q 10 52 20 48 Z" fill="#343a40" stroke="#2b2140" strokeWidth="2.5" />
+            </g>
+
+            {/* Cinta frontal recortada a la curvatura de la frente */}
+            <g clipPath={`url(#${headWrapClipId})`} transform={`translate(0, ${faceY * 0.65})`}>
+              <rect x="18" y="32" width="64" height="12.5" rx="4" fill="#212529" stroke="#2b2140" strokeWidth="3" />
+              <rect x="38" y="34" width="24" height="8" rx="2" fill="#ced4da" stroke="#2b2140" strokeWidth="2" />
+              <circle cx="42" cy="38" r="1.2" fill="#2b2140" />
+              <circle cx="58" cy="38" r="1.2" fill="#2b2140" />
+              <path
+                d="M 50 35 L 51.5 37.5 L 54 37.5 L 52 39 L 53 41.5 L 50 40 L 47 41.5 L 48 39 L 46 37.5 L 48.5 37.5 Z"
+                fill="#ffd43b"
+              />
+            </g>
+
+            {/* Máscara inferior recortada dentro de la cara para dejar espacio a la ropa */}
+            <g clipPath={`url(#${bodyClipId})`}>
+              <g transform={`translate(0, ${faceY})`}>
+                <path
+                  d="M 20 57 Q 50 62 80 57 L 78 72 Q 50 78 22 72 Z"
+                  fill="#212529"
+                  stroke="#2b2140"
+                  strokeWidth="2.8"
+                  strokeLinejoin="round"
+                />
+                <path d="M 34 65 Q 50 69 66 65" stroke="#343a40" strokeWidth="2" fill="none" />
+              </g>
+            </g>
           </g>
         )}
 
-        {/* ============================================================== */}
-        {/* NUEVOS SOMBREROS Y ACCESORIOS */}
-        {/* ============================================================== */}
         {/* GORRO NAVIDEÑO */}
         {hat === 'navidad' && (
           <g transform="translate(50, 24)">
-            {/* Cono rojo curvado */}
             <path
               d="M -22 0 Q -10 -28 16 -24 Q 28 -20 28 -4 L 20 0 Z"
               fill="#e03131"
@@ -599,20 +765,16 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
               strokeWidth="3.5"
               strokeLinejoin="round"
             />
-            {/* Borde de lana blanca */}
             <rect x="-24" y="-3" width="48" height="9" rx="4.5" fill="#ffffff" stroke="#2b2140" strokeWidth="3" />
-            {/* Pompón caído */}
             <circle cx="28" cy="-2" r="7" fill="#ffffff" stroke="#2b2140" strokeWidth="3" />
           </g>
         )}
 
-        {/* SOMBRERO DE GRANJERO (Paja campestre) */}
+        {/* SOMBRERO DE GRANJERO */}
         {hat === 'granjero' && (
           <g transform="translate(50, 25)">
-            {/* Copa del sombrero */}
             <path d="M -16 0 L -12 -18 Q 0 -22 12 -18 L 16 0 Z" fill="#ffd43b" stroke="#2b2140" strokeWidth="3" />
             <path d="M -13 -6 Q 0 -9 13 -6" stroke="#c92a2a" strokeWidth="3" fill="none" />
-            {/* Ala ancha de paja */}
             <ellipse cx="0" cy="1" rx="29" ry="8" fill="#fcc419" stroke="#2b2140" strokeWidth="3.5" />
             <path d="M -22 1 Q 0 -3 22 1" stroke="#f08c00" strokeWidth="1.8" fill="none" />
           </g>
@@ -621,13 +783,9 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
         {/* CASCO VIKINGO */}
         {hat === 'vikingo' && (
           <g transform="translate(50, 24)">
-            {/* Cuerno izquierdo */}
             <path d="M -18 -4 C -28 -12 -34 -26 -24 -32 C -20 -24 -14 -16 -10 -8 Z" fill="#fff9db" stroke="#2b2140" strokeWidth="3" />
-            {/* Cuerno derecho */}
             <path d="M 18 -4 C 28 -12 34 -26 24 -32 C 20 -24 14 -16 10 -8 Z" fill="#fff9db" stroke="#2b2140" strokeWidth="3" />
-            {/* Domo del casco */}
             <path d="M -20 2 Q 0 -24 20 2 Z" fill="#868e96" stroke="#2b2140" strokeWidth="3.5" />
-            {/* Banda y remaches */}
             <rect x="-22" y="0" width="44" height="6" rx="2" fill="#adb5bd" stroke="#2b2140" strokeWidth="3" />
             <circle cx="-12" cy="3" r="1.5" fill="#343a40" />
             <circle cx="0" cy="3" r="1.5" fill="#343a40" />
@@ -638,11 +796,8 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
         {/* CHISTERA / SOMBRERO DE COPA */}
         {hat === 'copa' && (
           <g transform="translate(50, 23)">
-            {/* Copa alta */}
             <path d="M -15 2 L -13 -26 L 13 -26 L 15 2 Z" fill="#212529" stroke="#2b2140" strokeWidth="3.5" />
-            {/* Cinta carmesí de satén */}
             <rect x="-14" y="-7" width="28" height="7" fill="#c92a2a" stroke="#2b2140" strokeWidth="1.5" />
-            {/* Ala del sombrero */}
             <ellipse cx="0" cy="3" rx="26" ry="6" fill="#343a40" stroke="#2b2140" strokeWidth="3.5" />
           </g>
         )}
@@ -650,10 +805,8 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
         {/* GORRA DEPORTIVA */}
         {hat === 'gorra' && (
           <g transform="translate(50, 24)">
-            {/* Corona de la gorra */}
             <path d="M -19 2 Q 0 -18 19 2 Z" fill="#1971c2" stroke="#2b2140" strokeWidth="3.5" />
             <circle cx="0" cy="-16" r="2.5" fill="#ffd43b" stroke="#2b2140" strokeWidth="1.5" />
-            {/* Visera frontal */}
             <path d="M -6 2 Q 18 2 28 8 Q 16 10 -6 3 Z" fill="#1864ab" stroke="#2b2140" strokeWidth="3" strokeLinejoin="round" />
           </g>
         )}
@@ -661,23 +814,35 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
         {/* BOINA DE ARTISTA */}
         {hat === 'boina' && (
           <g transform="translate(50, 24)">
-            {/* Plato de la boina inclinado */}
             <ellipse cx="2" cy="-4" rx="25" ry="9" transform="rotate(-8)" fill="#ae3ec9" stroke="#2b2140" strokeWidth="3.5" />
-            {/* Rabillo central */}
             <line x1="2" y1="-13" x2="2" y2="-17" stroke="#2b2140" strokeWidth="3" strokeLinecap="round" />
             <path d="M -16 2 Q 0 4 16 0" stroke="#862e9c" strokeWidth="2.5" fill="none" />
           </g>
         )}
 
-        {/* CASCO ESPACIAL (Burbuja completa de astronauta alrededor de la cabeza) */}
+        {/* CASCO ESPACIAL */}
         {hat === 'espacial' && (
           <g>
-            {/* Cuello y anillo de sellado metálico en la base */}
-            <ellipse cx="50" cy="74" rx="27" ry="7" fill="#ced4da" stroke="#2b2140" strokeWidth="3" />
-            <ellipse cx="50" cy="74" rx="22" ry="4" fill="#868e96" />
-            <circle cx="34" cy="74" r="1.5" fill="#343a40" />
-            <circle cx="66" cy="74" r="1.5" fill="#343a40" />
-            {/* Burbuja esférica transparente que envuelve toda la cabeza */}
+            {/* Anillo de sellado metálico en la base de la burbuja */}
+            <ellipse
+              cx="50"
+              cy={usaRopaFrontal ? 76 : 74}
+              rx={usaRopaFrontal ? 24.5 : 27}
+              ry="6.5"
+              fill="#ced4da"
+              stroke="#2b2140"
+              strokeWidth="3"
+            />
+            <ellipse
+              cx="50"
+              cy={usaRopaFrontal ? 76 : 74}
+              rx={usaRopaFrontal ? 19.5 : 22}
+              ry="3.8"
+              fill="#868e96"
+            />
+            <circle cx={usaRopaFrontal ? 36 : 34} cy={usaRopaFrontal ? 76 : 74} r="1.5" fill="#343a40" />
+            <circle cx={usaRopaFrontal ? 64 : 66} cy={usaRopaFrontal ? 76 : 74} r="1.5" fill="#343a40" />
+            {/* Burbuja esférica transparente */}
             <circle
               cx="50"
               cy="50"
@@ -687,7 +852,6 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
               stroke="#2b2140"
               strokeWidth="3.5"
             />
-            {/* Reflejos curvos de vidrio espacial de alta fidelidad */}
             <path
               d="M 28 32 A 30 30 0 0 1 68 24"
               fill="none"
@@ -705,7 +869,6 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
               opacity="0.75"
             />
             <circle cx="30" cy="40" r="2" fill="#ffffff" opacity="0.8" />
-            {/* Antena de comunicación lateral con luz */}
             <path d="M 78 40 L 88 34" stroke="#2b2140" strokeWidth="2.5" strokeLinecap="round" />
             <circle cx="89" cy="33" r="3" fill="#ff6b6b" stroke="#2b2140" strokeWidth="1.5" className="animate-pulse" />
           </g>

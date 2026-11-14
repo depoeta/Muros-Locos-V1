@@ -238,7 +238,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
         });
         if (res.ok && res.user) {
           onuserActualizado?.(res.user);
-          onShowToast?.('⭐ Personaje y terreno guardados como predeterminados en tu perfil');
+          onShowToast?.('⭐ Avatar y terreno guardados como predeterminados en tu perfil');
         } else {
           onShowToast?.(res.error || '⚠️ No se pudo guardar en tu perfil');
         }
@@ -330,7 +330,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
           </div>
         </div>
 
-        {/* Sub-tabs: Personajes Base vs Mis Exclusivos */}
+        {/* Sub-tabs: Avatares Base vs Mis Exclusivos */}
         <div className="flex items-center gap-1.5 p-1 bg-[#f1f3f5] rounded-xl border border-[#2b2140]/20 mb-3">
           <button
             type="button"
@@ -341,7 +341,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
                 : 'text-[#86542d] hover:text-[#2b2140]'
             }`}
           >
-            🎮 Personajes Base
+            🎮 Avatares Base
           </button>
           <button
             type="button"
@@ -364,7 +364,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
           <div className="flex flex-col gap-1.5 mb-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
-                1. Tus Personajes Disponibles
+                1. Tus Avatares Disponibles
               </span>
               <span className="text-[10px] font-bold text-[#2b8a3e]">
                 {personajesVisibles.length} desbloqueados
@@ -430,7 +430,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
           <div className="flex flex-col gap-2 mb-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
-                🎒 Colección de Personajes Exclusivos
+                🎒 Colección de Avatares Exclusivos
               </span>
               {selectedItemId && (
                 <button
@@ -447,7 +447,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
               <div className="p-4 bg-white rounded-2xl border-2 border-[#2b2140]/20 text-center flex flex-col items-center gap-1.5 my-1">
                 <span className="text-3xl">🎁</span>
                 <span className="font-black text-xs text-[#2b2140]">
-                  Aún no tienes personajes exclusivos en tu inventario
+                  Aún no tienes avatares exclusivos en tu inventario
                 </span>
                 <p className="text-[11px] text-[#86542d] leading-relaxed">
                   Gana el <strong>Torneo Semanal</strong> o recíbelo como premio/regalo de un Administrador o Dev.
@@ -553,12 +553,12 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
               className="w-4 h-4 rounded text-[#1971c2] cursor-pointer"
             />
             <span className="text-[11px] font-bold text-[#1864ab] leading-tight">
-              ⭐ Guardar como mi personaje y terreno predeterminados en mi Perfil
+              ⭐ Guardar como mi avatar y terreno predeterminados en mi Perfil
             </span>
           </label>
         ) : (
           <div className="p-2 bg-[#fff9db] rounded-xl border border-[#2b2140]/20 mb-3 text-[11px] text-[#8f4b00] font-semibold leading-tight">
-            💡 <strong>Modo Invitado:</strong> Inicia sesión en Mi Perfil para dejar tu personaje y terreno guardados de forma predeterminada.
+            💡 <strong>Modo Invitado:</strong> Inicia sesión en Mi Perfil para dejar tu avatar y terreno guardados de forma predeterminada.
           </div>
         )}
 
@@ -712,7 +712,7 @@ export const ComoJugarModal: React.FC<{ onCerrar: () => void }> = ({ onCerrar })
               <span>🎯</span> Objetivo del Juego
             </h4>
             <p className="leading-relaxed">
-              Sé el primero en llevar tu personaje hasta cualquier casilla del extremo opuesto del tablero.
+              Sé el primero en llevar tu avatar hasta cualquier casilla del extremo opuesto del tablero.
             </p>
           </div>
 
@@ -1166,7 +1166,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
                     {semanalData.actual.premioSemanal.nombre}
                   </span>
                   <span className="text-[10px] text-[#86542d] font-semibold block">
-                    Personaje exclusivo para el ganador semanal
+                    Avatar exclusivo para el ganador semanal
                   </span>
                 </div>
               </div>
@@ -3039,14 +3039,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   // Regalar personaje creado
   const handleRegalarPersonaje = async () => {
     if (!editorTargetId) {
-      onShowToast('⚠️ Selecciona un jugador para regalar el personaje');
+      onShowToast('⚠️ Selecciona un jugador para regalar el avatar');
       return;
     }
     sounds.playClick();
     setGuardandoEditor(true);
     try {
       const nuevoChar = {
-        nombre: editorNombre.trim() || 'Personaje Exclusivo',
+        nombre: editorNombre.trim() || 'Avatar Exclusivo',
         color: editorColor,
         hat: editorHat,
         ropa: editorRopa,
@@ -3061,7 +3061,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         const targetAcc = accs[editorTargetId];
         onShowToast(`🎁 ¡"${nuevoChar.nombre}" entregado con éxito a ${targetAcc?.nombre || 'jugador'}!`);
       } else {
-        onShowToast(res.error || 'Error al entregar personaje');
+        onShowToast(res.error || 'Error al entregar avatar');
       }
     } finally {
       setGuardandoEditor(false);
@@ -3171,16 +3171,16 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       if (inspectingUser && inspectingUser.id === userId) {
         setInspectingUser(accs[userId] || null);
       }
-      onShowToast('🗑️ Personaje retirado del inventario');
+      onShowToast('🗑️ Avatar retirado del inventario');
     } else {
-      onShowToast(res.error || 'No se pudo retirar el personaje');
+      onShowToast(res.error || 'No se pudo retirar el avatar');
     }
   };
 
-  // Mover personaje de un inventario a otro (Dev o Admin)
+  // Mover avatar de un inventario a otro (Dev o Admin)
   const handleMoverPersonaje = async (fromId: string, toId: string, personajeId: string) => {
     if (!toId) {
-      onShowToast('⚠️ Selecciona un jugador destino para mover el personaje');
+      onShowToast('⚠️ Selecciona un jugador destino para mover el avatar');
       return;
     }
     sounds.playClick();
@@ -3194,10 +3194,10 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         if (inspectingUser && inspectingUser.id === fromId) {
           setInspectingUser(accs[fromId] || null);
         }
-        onShowToast(res.mensaje || '📦 Personaje transferido al otro inventario');
+        onShowToast(res.mensaje || '📦 Avatar transferido al otro inventario');
       } else {
         sounds.playError();
-        onShowToast(res.error || 'No se pudo mover el personaje');
+        onShowToast(res.error || 'No se pudo mover el avatar');
       }
     } finally {
       setMoviendoCharId(null);
@@ -3272,7 +3272,6 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     { id: 'armadura', label: 'Armadura', icon: '🛡️' },
     { id: 'tunica', label: 'Túnica', icon: '🥋' },
     { id: 'tuxedo', label: 'Tuxedo', icon: '🤵' },
-    { id: 'smoking', label: 'Smoking', icon: '🎩' },
     { id: 'cinturon', label: 'Cinturón Oro', icon: '🥋' },
     { id: 'alas', label: 'Alas Cósmicas', icon: '🪽' },
   ];
@@ -3422,7 +3421,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     }`}
                   >
                     <span>🎨</span>
-                    <span className="truncate">Personajes</span>
+                    <span className="truncate">Avatares</span>
                   </button>
                   <button
                     type="button"
@@ -3637,7 +3636,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                     setInspectingUser(acc);
                                   }}
                                   className="py-1 px-2 rounded-lg border border-[#2b2140] bg-[#fff3bf] text-[11px] font-black text-[#5c3c00] hover:bg-[#ffe066] cursor-pointer flex items-center gap-1"
-                                  title="Ver inventario de personajes exclusivos"
+                                  title="Ver inventario de avatares exclusivos"
                                 >
                                   <span>🎒</span>
                                   <span>{cantInventario}</span>
@@ -3974,7 +3973,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-2.5 text-xs">
                   <div>
                     <label className="font-black text-[#86542d] block mb-1">
-                      Nombre del Personaje Exclusivo:
+                      Nombre del Avatar Exclusivo:
                     </label>
                     <input
                       type="text"
@@ -4195,7 +4194,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     </div>
                   ) : (
                     <div className="p-3 bg-white/70 rounded-xl text-center text-xs text-[#86542d] font-bold">
-                      No hay premio exclusivo activo esta semana. Diseña uno en la pestaña <strong>[🎨 Editor de Personajes]</strong> y fíjalo como premio.
+                      No hay premio exclusivo activo esta semana. Diseña uno en la pestaña <strong>[🎨 Editor de Avatares]</strong> y fíjalo como premio.
                     </div>
                   )}
                 </div>
@@ -4273,10 +4272,10 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-3">
                     <div>
                       <h4 className="text-xs font-black text-[#2b2140] flex items-center gap-1.5">
-                        <span>🔓</span> Requisitos de Desbloqueo de Personajes Base (Solo Dev)
+                        <span>🔓</span> Requisitos de Desbloqueo de Avatares Base (Solo Dev)
                       </h4>
                       <p className="text-[11px] text-[#86542d] font-medium mt-0.5">
-                        Puntos requeridos en el Ranking Global para que cada personaje base aparezca y se desbloquee a los users. Los 5 iniciales siempre están disponibles desde 0 pts.
+                        Puntos requeridos en el Ranking Global para que cada avatar base aparezca y se desbloquee a los users. Los 5 iniciales siempre están disponibles desde 0 pts.
                       </p>
                     </div>
 
@@ -4504,7 +4503,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       Inventario de {inspectingUser.nombre}
                     </h4>
                     <span className="text-[10px] text-[#86542d] font-bold">
-                      Personajes exclusivos coleccionados
+                      Avatares exclusivos coleccionados
                     </span>
                   </div>
                 </div>
@@ -4520,9 +4519,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
               <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-2 my-1">
                 {(!inspectingUser.inventario?.personajes || inspectingUser.inventario.personajes.length === 0) ? (
                   <div className="p-6 text-center text-xs text-[#86542d] font-bold">
-                    Este jugador no tiene personajes exclusivos aún en su inventario.
+                    Este jugador no tiene avatares exclusivos aún en su inventario.
                     <br />
-                    Puedes regalarle uno desde la pestaña <strong>[🎨 Editor de Personajes]</strong>.
+                    Puedes regalarle uno desde la pestaña <strong>[🎨 Editor de Avatares]</strong>.
                   </div>
                 ) : (
                   inspectingUser.inventario.personajes.map((char) => (
@@ -4565,7 +4564,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             type="button"
                             onClick={() => handleQuitarPersonaje(inspectingUser.id, char.id)}
                             className="py-1 px-2 rounded-lg bg-[#ffe3e3] border border-[#c92a2a] text-[10px] font-black text-[#c92a2a] hover:bg-[#ffc9c9] cursor-pointer shrink-0"
-                            title="Retirar personaje del inventario del user"
+                            title="Retirar avatar del inventario del user"
                           >
                             🗑️ Retirar
                           </button>

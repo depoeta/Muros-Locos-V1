@@ -29,7 +29,6 @@ export type AvatarTipoDeRopa =
   | 'capa'
   | 'armadura'
   | 'tuxedo'
-  | 'smoking'
   | 'cinturon'
   | 'alas'
   | 'tunica';

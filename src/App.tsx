@@ -1564,7 +1564,7 @@ export const App: React.FC = () => {
                   setModalAspectoAbierto(true);
                 }}
                 className="py-1 px-2 sm:px-2.5 rounded-xl bg-white border border-[#2b2140] flex items-center gap-1 text-xs font-black text-[#2b2140] hover:bg-[#fff9db] cursor-pointer shadow-xs active:translate-y-0.5"
-                title="Cambiar tu personaje o el terreno del tablero"
+                title="Cambiar tu avatar o el terreno del tablero"
               >
                 <span>🎨</span>
                 <span>Aspecto</span>

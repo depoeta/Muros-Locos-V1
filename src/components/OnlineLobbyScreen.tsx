@@ -619,7 +619,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
 
           <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] flex flex-col gap-2">
             <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
-              Tu Personaje
+              Tu Avatar
             </span>
             <div className="flex items-center gap-3">
               <CartoonCharacter

@@ -761,7 +761,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
             setModalAspectoAbierto(true);
           }}
           className="py-1.5 px-2.5 rounded-xl bg-[#fff9db] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] text-xs font-black text-[#5c3c00] hover:bg-[#ffd43b] active:translate-y-0.5 cursor-pointer flex items-center gap-1 shrink-0"
-          title="Personalizar tu personaje y terreno de la arena"
+          title="Personalizar tu avatar y terreno de la arena"
         >
           <span>🎨</span>
           <span>Aspecto</span>
@@ -775,7 +775,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
             <div className="flex items-center gap-2 min-w-0">
               <span className="text-xl shrink-0">ℹ️</span>
               <div className="text-[11px] font-bold text-[#8f4b00] leading-tight">
-                <strong>Modo Invitado:</strong> Tus partidas se guardarán en tu <u>Ranking Local</u>. Inicia sesión para competir en el Ranking Global y guardar tu personaje y terreno predeterminados.
+                <strong>Modo Invitado:</strong> Tus partidas se guardarán en tu <u>Ranking Local</u>. Inicia sesión para competir en el Ranking Global y guardar tu avatar y terreno predeterminados.
               </div>
             </div>
             <button
@@ -948,7 +948,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
                 className="p-2.5 bg-white rounded-2xl border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] flex items-center gap-3 animate-[slideDown_0.2s_ease-out]"
               >
                 {isUserPlayer && userActual ? (
-                  <div className="shrink-0" title="Tu personaje de cuenta">
+                  <div className="shrink-0" title="Tu avatar de cuenta">
                     <CartoonCharacter
                       color={j.color}
                       hat={j.hat}
@@ -979,7 +979,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
                       updateJugador(idx, { hat: nextH.id, color: nextH.colorDefault });
                     }}
                     className="hover:scale-110 active:scale-95 transition-transform cursor-pointer shrink-0"
-                    title="Clic para cambiar personaje de este jugador humano"
+                    title="Clic para cambiar avatar de este jugador humano"
                   >
                     <CartoonCharacter
                       color={j.color}

@@ -232,7 +232,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
   const handleIntersectionClick = (r: number, c: number) => {
     if (estado.modoAccion !== 'muro' || !esTurnoHumano || bloqueadoPorAnimacion) return;
     if (jugadorActivo.muros <= 0) {
-      onInvalidWallAttempt('¡Ya no te quedan muros! Mueve tu personaje.');
+      onInvalidWallAttempt('¡Ya no te quedan muros! Mueve tu avatar.');
       return;
     }
 

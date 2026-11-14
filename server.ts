@@ -1324,7 +1324,7 @@ app.post('/api/admin/personajes/regalar', async (req, res) => {
     ropa: rawPj?.ropa || 'ninguna',
     ropaColor: rawPj?.ropa && rawPj.ropa !== 'ninguna' ? (rawPj?.ropaColor || undefined) : undefined,
     aura: rawPj?.aura || 'ninguna',
-    descripcion: rawPj?.descripcion || 'Personaje exclusivo otorgado',
+    descripcion: rawPj?.descripcion || 'Avatar exclusivo otorgado',
     fechaAdquisicion: new Date().toISOString(),
     origen: {
       tipo: perm.esDev ? 'regalo_dev' : 'regalo_admin',
@@ -1338,7 +1338,7 @@ app.post('/api/admin/personajes/regalar', async (req, res) => {
 
   return res.json({
     ok: true,
-    mensaje: `Personaje "${nuevoPj.nombre}" entregado al inventario de ${targetAcc.nombre}.`,
+    mensaje: `Avatar "${nuevoPj.nombre}" entregado al inventario de ${targetAcc.nombre}.`,
     personaje: nuevoPj,
     targetId,
     inventario: targetAcc.inventario,
@@ -1350,7 +1350,7 @@ app.post('/api/admin/personajes/quitar', async (req, res) => {
   const cuentas = dbObtenerTodasCuentas();
   const perm = verificarPermisosLlamante(req, cuentas, sesion);
   if (!perm.esDev && !perm.esAdmin) {
-    return res.status(403).json({ ok: false, error: 'Solo Dev o Admin pueden retirar personajes.' });
+    return res.status(403).json({ ok: false, error: 'Solo Dev o Admin pueden retirar avatares.' });
   }
 
   const targetId = String(req.body?.targetId || '').trim().toLowerCase();
@@ -1368,7 +1368,7 @@ app.post('/api/admin/personajes/quitar', async (req, res) => {
     }
     dbGuardarCuentaCompleta(targetAcc, true);
   }
-  return res.json({ ok: true, mensaje: 'Personaje retirado del inventario.', inventario: targetAcc.inventario });
+  return res.json({ ok: true, mensaje: 'Avatar retirado del inventario.', inventario: targetAcc.inventario });
 });
 
 app.post('/api/admin/personajes/mover', async (req, res) => {
@@ -1376,7 +1376,7 @@ app.post('/api/admin/personajes/mover', async (req, res) => {
   const cuentas = dbObtenerTodasCuentas();
   const perm = verificarPermisosLlamante(req, cuentas, sesion);
   if (!perm.esDev && !perm.esAdmin) {
-    return res.status(403).json({ ok: false, error: 'Solo Dev o Admin pueden mover personajes entre users.' });
+    return res.status(403).json({ ok: false, error: 'Solo Dev o Admin pueden mover avatares entre users.' });
   }
 
   const fromId = String(req.body?.fromId || '').trim().toLowerCase();
@@ -1391,7 +1391,7 @@ app.post('/api/admin/personajes/mover', async (req, res) => {
 
   const listaOrigen = Array.isArray(origenAcc.inventario?.personajes) ? origenAcc.inventario.personajes : [];
   const charMovido = listaOrigen.find((p: any) => p.id === personajeId);
-  if (!charMovido) return res.status(404).json({ ok: false, error: 'Personaje no encontrado en origen.' });
+  if (!charMovido) return res.status(404).json({ ok: false, error: 'Avatar no encontrado en origen.' });
 
   origenAcc.inventario.personajes = listaOrigen.filter((p: any) => p.id !== personajeId);
   if (origenAcc.inventario.activoId === personajeId) {
