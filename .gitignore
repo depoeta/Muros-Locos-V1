@@ -1,10 +1,25 @@
+# Dependencias y builds (Cloudflare los genera automáticamente)
 node_modules/
 build/
 dist/
 dev-dist/
 coverage/
+
+# Datos locales, cachés y variables privadas
 .data/
-.DS_Store
-*.log
+.wrangler/
 .env*
 !.env.example
+*.local
+*.log
+
+# Archivos internos del entorno (no necesarios en GitHub / Cloudflare)
+.aistudio/
+metadata.json
+bun.lock
+
+# Sistema y editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

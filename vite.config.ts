@@ -20,10 +20,10 @@ export default defineConfig(() => {
         ],
         manifest: {
           id: '/',
-          name: 'Muros Locos — Juego de Estrategia 2D',
+          name: 'Muros Locos',
           short_name: 'Muros Locos',
           description:
-            'Juego de estrategia por turnos para 2 o 4 jugadores. Juega local, contra bots o en salas online P2P.',
+            'Juego de estrategia por turnos para 2 o 4 jugadores.',
           theme_color: '#74c0fc',
           background_color: '#74c0fc',
           display: 'standalone',
