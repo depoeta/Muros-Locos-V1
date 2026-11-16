@@ -25,7 +25,7 @@ Juego web de estrategia por turnos para **2 o 4 jugadores** (e incluye el pasati
 
 1. Clona el repositorio e instala las dependencias:
    ```bash
-   git clone <URL_DE_TU_REPOSITORIO>
+   git clone <https://github.com/depoeta/Muros-Locos-V1.git>
    cd muros-locos
    npm install
    ```
