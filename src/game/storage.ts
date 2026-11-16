@@ -32,6 +32,12 @@ const DESBLOQUEOS_LOCAL_KEY = 'muros_locos_desbloqueos_cache_v1';
 // DIAGNÓSTICO DE RED Y SINCRONIZACIÓN AUTOMÁTICA D1
 // ============================================================================
 
+export interface AdvertenciaInventarioD1 {
+  id: string;
+  nombre: string;
+  error: string;
+}
+
 export interface DiagnosticoDeRed {
   isOnline: boolean;
   dbConectado: boolean;
@@ -42,6 +48,8 @@ export interface DiagnosticoDeRed {
   serverPingMs: number | null;
   checkedOnce: boolean;
   lastUpdate: number;
+  miInventarioCorrupto?: boolean;
+  advertenciasInventario?: AdvertenciaInventarioD1[];
 }
 
 let redDiag: DiagnosticoDeRed = {
@@ -54,6 +62,8 @@ let redDiag: DiagnosticoDeRed = {
   serverPingMs: null,
   checkedOnce: false,
   lastUpdate: 0,
+  miInventarioCorrupto: false,
+  advertenciasInventario: [],
 };
 
 const diagListeners = new Set<(diag: DiagnosticoDeRed) => void>();
@@ -159,6 +169,14 @@ function crearHeadersAutenticados(extra?: Record<string, string>): Record<string
     headers['Authorization'] = `Bearer ${token}`;
   }
   return headers;
+}
+
+async function leerJsonSeguro(res: Response): Promise<any> {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
 }
 
 // ============================================================================
@@ -277,14 +295,26 @@ export async function pingServidor(): Promise<{ ok: boolean; dbConectado: boolea
       emitDiag();
       return { ok: false, dbConectado: false, lastUpdate: redDiag.lastUpdate };
     }
-    const data = await res.json();
+    const data = await leerJsonSeguro(res);
     const isDb = Boolean(data?.dbBound ?? data?.d1Bound);
     const serverLastUpdate = Number(data?.lastUpdate) || 0;
     const prevLastUpdate = redDiag.lastUpdate;
+    const miInvCorrupto = Boolean(data?.miInventarioCorrupto);
+    const advInv: AdvertenciaInventarioD1[] = Array.isArray(data?.advertenciasInventario)
+      ? data.advertenciasInventario
+      : [];
 
-    if (data?.sesionRevocada === true) {
+    const cur = obteneruserActual();
+    if (
+      data?.sesionRevocada === true ||
+      (cur && (!token || data?.sesionValida === false))
+    ) {
       cerrarSesion();
-      emitSesionRevocada('Se inició sesión en otro dispositivo (máximo 2 sesiones por cuenta).');
+      emitSesionRevocada(
+        data?.sesionRevocada === true
+          ? 'Tu sesión expiró al superarse el límite de 3 sesiones activas.'
+          : 'Tu sesión local no es válida o caducó. Vuelve a iniciar sesión para ver tu inventario.'
+      );
     }
 
     redDiag = {
@@ -297,6 +327,8 @@ export async function pingServidor(): Promise<{ ok: boolean; dbConectado: boolea
       serverPingMs: ms,
       checkedOnce: true,
       lastUpdate: serverLastUpdate,
+      miInventarioCorrupto: miInvCorrupto,
+      advertenciasInventario: advInv,
     };
     emitDiag();
 
@@ -526,13 +558,28 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
 
       let isDb = false;
       let serverLastUpdate = redDiag.lastUpdate;
+      let miInvCorrupto = Boolean(redDiag.miInventarioCorrupto);
+      let advInv: AdvertenciaInventarioD1[] = redDiag.advertenciasInventario || [];
+      let sesionInvalidadaEnSync = false;
+      const curPre = obteneruserActual();
+
       if (pingRes.ok) {
-        const pingData = await pingRes.json();
+        const pingData = await leerJsonSeguro(pingRes);
         isDb = Boolean(pingData?.dbBound ?? pingData?.d1Bound);
         serverLastUpdate = Number(pingData?.lastUpdate) || serverLastUpdate;
-        if (pingData?.sesionRevocada === true) {
+        miInvCorrupto = Boolean(pingData?.miInventarioCorrupto);
+        advInv = Array.isArray(pingData?.advertenciasInventario) ? pingData.advertenciasInventario : [];
+        if (
+          pingData?.sesionRevocada === true ||
+          (curPre && (!token || pingData?.sesionValida === false))
+        ) {
+          sesionInvalidadaEnSync = true;
           cerrarSesion();
-          emitSesionRevocada('Tu sesión expiró al superarse el límite de 2 sesiones activas.');
+          emitSesionRevocada(
+            pingData?.sesionRevocada === true
+              ? 'Tu sesión expiró al superarse el límite de 3 sesiones activas.'
+              : 'Tu sesión local no es válida o expiró. Vuelve a iniciar sesión para ver tu inventario.'
+          );
         }
       }
 
@@ -655,7 +702,7 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
       guardarCuentasCache(cuentasLimpias);
       guardarRankingGlobalCache(rankingLimpio);
 
-      const cur = obteneruserActual();
+      const cur = sesionInvalidadaEnSync ? null : obteneruserActual();
       if (cur && cur.id !== 'admin') {
         const fresh = cuentasLimpias[cur.id];
         if (fresh) {
@@ -674,6 +721,8 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
         serverPingMs: ms,
         checkedOnce: true,
         lastUpdate: serverLastUpdate,
+        miInventarioCorrupto: miInvCorrupto,
+        advertenciasInventario: advInv,
       };
       emitDiag();
       emitNube(cuentasLimpias, rankingLimpio);
@@ -1465,7 +1514,7 @@ export async function actualizarCuentaAsync(
         inventario: patch.inventario,
       }),
     });
-    const data = await res.json();
+    const data = await leerJsonSeguro(res);
 
     if (res.ok && data?.ok && data?.user) {
       const updated: UserCuenta = {
@@ -1479,9 +1528,12 @@ export async function actualizarCuentaAsync(
       await sincronizarConNube(true);
       return { ok: true, user: obteneruserActual() || updated };
     }
-    return { ok: false, error: data?.error || 'No se pudo guardar en la Database.' };
-  } catch {
-    return { ok: false, error: 'Error de red guardando perfil.' };
+    return {
+      ok: false,
+      error: data?.error || `No se pudo guardar en la Database (HTTP ${res.status}).`,
+    };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red guardando perfil.' };
   }
 }
 
@@ -1569,14 +1621,14 @@ export async function adminActualizarUserAsync(
       headers: crearHeadersAutenticados(),
       body: JSON.stringify({ targetId, patch }),
     });
-    const data = await res.json();
+    const data = await leerJsonSeguro(res);
     if (!res.ok || !data?.ok) {
-      return { ok: false, error: data?.error || 'No se pudo actualizar el user.' };
+      return { ok: false, error: data?.error || `No se pudo actualizar el user (HTTP ${res.status}).` };
     }
     await sincronizarConNube(true);
     return { ok: true };
-  } catch {
-    return { ok: false, error: 'Error de red actualizando user en D1.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red actualizando user en D1.' };
   }
 }
 
@@ -1590,14 +1642,14 @@ export async function adminCambiarIdUserAsync(
       headers: crearHeadersAutenticados(),
       body: JSON.stringify({ oldId, newId }),
     });
-    const data = await res.json();
+    const data = await leerJsonSeguro(res);
     if (!res.ok || !data?.ok) {
-      return { ok: false, error: data?.error || 'No se pudo cambiar el ID.' };
+      return { ok: false, error: data?.error || `No se pudo cambiar el ID (HTTP ${res.status}).` };
     }
     await sincronizarConNube(true);
     return { ok: true, mensaje: data.mensaje };
-  } catch {
-    return { ok: false, error: 'Error de red cambiando ID en cascada.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red cambiando ID en cascada.' };
   }
 }
 
@@ -1610,14 +1662,14 @@ export async function adminEliminarUserAsync(
       headers: crearHeadersAutenticados(),
       body: JSON.stringify({ targetId }),
     });
-    const data = await res.json();
+    const data = await leerJsonSeguro(res);
     if (!res.ok || !data?.ok) {
-      return { ok: false, error: data?.error || 'No se pudo eliminar el user.' };
+      return { ok: false, error: data?.error || `No se pudo eliminar el user (HTTP ${res.status}).` };
     }
     await sincronizarConNube(true);
     return { ok: true };
-  } catch {
-    return { ok: false, error: 'Error de red al eliminar user.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red al eliminar user.' };
   }
 }
 
@@ -1630,13 +1682,13 @@ export async function restablecerClaveUserAsync(
       headers: crearHeadersAutenticados(),
       body: JSON.stringify({ targetId }),
     });
-    const data = await res.json();
+    const data = await leerJsonSeguro(res);
     if (res.ok && data?.ok && data?.claveTemporal) {
       return { ok: true, claveTemporal: data.claveTemporal };
     }
-    return { ok: false, error: data?.error || 'No se pudo restablecer la clave.' };
-  } catch {
-    return { ok: false, error: 'Error de conexión con la Database.' };
+    return { ok: false, error: data?.error || `No se pudo restablecer la clave (HTTP ${res.status}).` };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de conexión con la Database.' };
   }
 }
 
@@ -1647,14 +1699,14 @@ export async function adminResetearRankingAsync(): Promise<{ ok: boolean; error?
       headers: crearHeadersAutenticados(),
       body: JSON.stringify({}),
     });
-    const data = await res.json();
+    const data = await leerJsonSeguro(res);
     if (!res.ok || !data?.ok) {
-      return { ok: false, error: data?.error || 'No se pudo reiniciar el Ranking.' };
+      return { ok: false, error: data?.error || `No se pudo reiniciar el Ranking (HTTP ${res.status}).` };
     }
     await sincronizarConNube(true);
     return { ok: true };
-  } catch {
-    return { ok: false, error: 'Error de red reiniciando el Ranking.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red reiniciando el Ranking.' };
   }
 }
 
@@ -1669,22 +1721,30 @@ export async function solicitarResetRankingAsync(
       headers: crearHeadersAutenticados(),
       body: JSON.stringify({ motivo }),
     });
-    const data = await res.json();
-    return res.ok && data?.ok ? { ok: true } : { ok: false, error: data?.error };
-  } catch {
-    return { ok: false, error: 'Error enviando solicitud.' };
+    const data = await leerJsonSeguro(res);
+    return res.ok && data?.ok
+      ? { ok: true }
+      : { ok: false, error: data?.error || `Error HTTP ${res.status}` };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error enviando solicitud.' };
   }
 }
 
-export async function obtenerSolicitudResetRankingAsync(): Promise<SolicitudResetRanking | null> {
+export async function obtenerSolicitudResetRankingAsync(
+  lanzarSiFalla: boolean = false
+): Promise<SolicitudResetRanking | null> {
   try {
     const res = await fetch(`/api/admin/ranking/solicitud-reset?_t=${Date.now()}`, {
       cache: 'no-store',
     });
-    if (!res.ok) return null;
-    const data = await res.json();
+    if (!res.ok) {
+      if (lanzarSiFalla) throw new Error(`HTTP ${res.status} al leer solicitud de reset`);
+      return null;
+    }
+    const data = await leerJsonSeguro(res);
     return data?.solicitud || null;
-  } catch {
+  } catch (err) {
+    if (lanzarSiFalla) throw err;
     return null;
   }
 }
@@ -1696,10 +1756,12 @@ export async function rechazarResetRankingAsync(): Promise<{ ok: boolean; error?
       headers: crearHeadersAutenticados(),
       body: JSON.stringify({}),
     });
-    const data = await res.json();
-    return res.ok && data?.ok ? { ok: true } : { ok: false, error: data?.error };
-  } catch {
-    return { ok: false, error: 'Error rechazando solicitud.' };
+    const data = await leerJsonSeguro(res);
+    return res.ok && data?.ok
+      ? { ok: true }
+      : { ok: false, error: data?.error || `Error HTTP ${res.status}` };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error rechazando solicitud.' };
   }
 }
 
@@ -1725,15 +1787,15 @@ export async function regalarPersonajeAsync(
       headers: crearHeadersAutenticados(),
       body: JSON.stringify({ targetId, personaje }),
     });
-    const data = await res.json();
+    const data = await leerJsonSeguro(res);
     if (!res.ok || !data?.ok) {
-      return { ok: false, error: data?.error || 'Error al regalar avatar.' };
+      return { ok: false, error: data?.error || `Error al regalar avatar (HTTP ${res.status}).` };
     }
     // Solo recargar la nube; jamás cambiar el aspecto equipado del administrador que regala
     await sincronizarConNube(true);
     return { ok: true, personaje: data.personaje };
-  } catch {
-    return { ok: false, error: 'Error de red enviando avatar.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red enviando avatar.' };
   }
 }
 
@@ -1747,14 +1809,14 @@ export async function quitarPersonajeInventarioAsync(
       headers: crearHeadersAutenticados(),
       body: JSON.stringify({ targetId, personajeId }),
     });
-    const data = await res.json();
+    const data = await leerJsonSeguro(res);
     if (!res.ok || !data?.ok) {
-      return { ok: false, error: data?.error || 'Error al retirar avatar.' };
+      return { ok: false, error: data?.error || `Error al retirar avatar (HTTP ${res.status}).` };
     }
     await sincronizarConNube(true);
     return { ok: true };
-  } catch {
-    return { ok: false, error: 'Error de red retirando avatar.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red retirando avatar.' };
   }
 }
 
@@ -1769,14 +1831,14 @@ export async function moverPersonajeInventarioAsync(
       headers: crearHeadersAutenticados(),
       body: JSON.stringify({ fromId, toId, personajeId }),
     });
-    const data = await res.json();
+    const data = await leerJsonSeguro(res);
     if (!res.ok || !data?.ok) {
-      return { ok: false, error: data?.error || 'Error al mover avatar.' };
+      return { ok: false, error: data?.error || `Error al mover avatar (HTTP ${res.status}).` };
     }
     await sincronizarConNube(true);
     return { ok: true, mensaje: data.mensaje };
-  } catch {
-    return { ok: false, error: 'Error de red moviendo avatar.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red moviendo avatar.' };
   }
 }
 
@@ -1837,13 +1899,13 @@ export async function fijarPremioSemanalAsync(personaje: {
       headers: crearHeadersAutenticados(),
       body: JSON.stringify({ personaje }),
     });
-    const data = await res.json();
+    const data = await leerJsonSeguro(res);
     if (!res.ok || !data?.ok) {
-      return { ok: false, error: data?.error || 'No se pudo fijar el premio semanal.' };
+      return { ok: false, error: data?.error || `No se pudo fijar el premio semanal (HTTP ${res.status}).` };
     }
     return { ok: true };
-  } catch {
-    return { ok: false, error: 'Error de red guardando premio semanal.' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red guardando premio semanal.' };
   }
 }
 
@@ -1857,15 +1919,21 @@ export async function obtenerConfigSemanalAsync(): Promise<{
     participacion: number;
   };
   premioSemanal: AvatarColeccionable | null;
+  _error?: string;
 }> {
   try {
     const [cfgRes, semRes] = await Promise.all([
       fetch(`/api/admin/config-semanal?_t=${Date.now()}`, { cache: 'no-store' }),
       fetch(`/api/admin/premio-semanal?_t=${Date.now()}`, { cache: 'no-store' }),
     ]);
-    const cfgData = cfgRes.ok ? await cfgRes.json() : {};
-    const semData = semRes.ok ? await semRes.json() : {};
+    const cfgData = cfgRes.ok ? await leerJsonSeguro(cfgRes) : {};
+    const semData = semRes.ok ? await leerJsonSeguro(semRes) : {};
     const c = cfgData?.config || {};
+    const errMsg = !cfgRes.ok
+      ? `HTTP ${cfgRes.status} leyendo config semanal`
+      : !semRes.ok
+      ? `HTTP ${semRes.status} leyendo premio semanal`
+      : undefined;
     return {
       puntosConfig: {
         puntosVictoria: Number(c.puntosVictoria ?? 3),
@@ -1876,8 +1944,9 @@ export async function obtenerConfigSemanalAsync(): Promise<{
         participacion: Number(c.participacion ?? 5),
       },
       premioSemanal: semData?.premio || cfgData?.premioSemanal || null,
+      ...(errMsg ? { _error: errMsg } : {}),
     };
-  } catch {
+  } catch (err: any) {
     return {
       puntosConfig: {
         puntosVictoria: 3,
@@ -1888,6 +1957,7 @@ export async function obtenerConfigSemanalAsync(): Promise<{
         participacion: 5,
       },
       premioSemanal: null,
+      _error: err?.message || 'Error de red leyendo configuración semanal',
     };
   }
 }
@@ -1906,12 +1976,12 @@ export async function guardarConfigSemanalAsync(config: {
       headers: crearHeadersAutenticados(),
       body: JSON.stringify(config),
     });
-    const data = await res.json();
+    const data = await leerJsonSeguro(res);
     return res.ok && data?.ok
       ? { ok: true }
-      : { ok: false, error: data?.error || 'Error guardando puntos semanales.' };
-  } catch {
-    return { ok: false, error: 'Error de conexión.' };
+      : { ok: false, error: data?.error || `Error guardando puntos semanales (HTTP ${res.status}).` };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de conexión.' };
   }
 }
 
@@ -1929,14 +1999,19 @@ export function obtenerDesbloqueosLocales(): Record<string, number> {
   }
 }
 
-export async function obtenerDesbloqueosPersonajesAsync(): Promise<Record<string, number>> {
+export async function obtenerDesbloqueosPersonajesAsync(
+  lanzarSiFalla: boolean = false
+): Promise<Record<string, number>> {
   const defaults = obtenerDesbloqueosLocales();
   try {
     const res = await fetch(`/api/admin/desbloqueos-personajes?_t=${Date.now()}`, {
       cache: 'no-store',
     });
-    if (!res.ok) return defaults;
-    const data = await res.json();
+    if (!res.ok) {
+      if (lanzarSiFalla) throw new Error(`HTTP ${res.status} leyendo desbloqueos`);
+      return defaults;
+    }
+    const data = await leerJsonSeguro(res);
     const merged = { ...defaults, ...(data?.desbloqueos || {}) };
     try {
       localStorage.setItem(DESBLOQUEOS_LOCAL_KEY, JSON.stringify(merged));
@@ -1944,7 +2019,8 @@ export async function obtenerDesbloqueosPersonajesAsync(): Promise<Record<string
       // ignorar
     }
     return merged;
-  } catch {
+  } catch (err) {
+    if (lanzarSiFalla) throw err;
     return defaults;
   }
 }
@@ -1958,7 +2034,7 @@ export async function guardarDesbloqueosPersonajesAsync(
       headers: crearHeadersAutenticados(),
       body: JSON.stringify({ desbloqueos }),
     });
-    const data = await res.json();
+    const data = await leerJsonSeguro(res);
     if (res.ok && data?.ok) {
       try {
         localStorage.setItem(DESBLOQUEOS_LOCAL_KEY, JSON.stringify(desbloqueos));
@@ -1967,21 +2043,27 @@ export async function guardarDesbloqueosPersonajesAsync(
       }
       return { ok: true };
     }
-    return { ok: false, error: data?.error || 'Error guardando requisitos.' };
-  } catch {
-    return { ok: false, error: 'Error de red.' };
+    return { ok: false, error: data?.error || `Error guardando requisitos (HTTP ${res.status}).` };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red.' };
   }
 }
 
-export async function obtenerSalasPersonalizadasAsync(): Promise<SalaPersonalizada[]> {
+export async function obtenerSalasPersonalizadasAsync(
+  lanzarSiFalla: boolean = false
+): Promise<SalaPersonalizada[]> {
   try {
     const res = await fetch(`/api/admin/salas-personalizadas?_t=${Date.now()}`, {
       cache: 'no-store',
     });
-    if (!res.ok) return [];
-    const data = await res.json();
+    if (!res.ok) {
+      if (lanzarSiFalla) throw new Error(`HTTP ${res.status} leyendo salas oficiales`);
+      return [];
+    }
+    const data = await leerJsonSeguro(res);
     return Array.isArray(data?.salas) ? data.salas : [];
-  } catch {
+  } catch (err) {
+    if (lanzarSiFalla) throw err;
     return [];
   }
 }
@@ -1995,12 +2077,12 @@ export async function crearSalaPersonalizadaAsync(
       headers: crearHeadersAutenticados(),
       body: JSON.stringify(sala),
     });
-    const data = await res.json();
+    const data = await leerJsonSeguro(res);
     return res.ok && data?.ok
       ? { ok: true, sala: data.sala }
-      : { ok: false, error: data?.error || 'No se pudo publicar la sala oficial.' };
-  } catch {
-    return { ok: false, error: 'Error de red creando sala.' };
+      : { ok: false, error: data?.error || `No se pudo publicar la sala oficial (HTTP ${res.status}).` };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red creando sala.' };
   }
 }
 
@@ -2012,10 +2094,12 @@ export async function eliminarSalaPersonalizadaAsync(
       method: 'DELETE',
       headers: crearHeadersAutenticados(),
     });
-    const data = await res.json();
-    return res.ok && data?.ok ? { ok: true } : { ok: false, error: data?.error };
-  } catch {
-    return { ok: false, error: 'Error de red eliminando sala.' };
+    const data = await leerJsonSeguro(res);
+    return res.ok && data?.ok
+      ? { ok: true }
+      : { ok: false, error: data?.error || `Error eliminando sala (HTTP ${res.status}).` };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Error de red eliminando sala.' };
   }
 }
 

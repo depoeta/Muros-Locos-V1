@@ -182,13 +182,14 @@ async function crearSesionLocal(userId: string, rol: string, duracionHoras = 720
     }
   }
 
-  // 2. Máximo 2 sesiones activas por id; en la 3ª se cierran todas las anteriores
-  const hashesUser = Object.entries(sesiones)
+  // 2. Máximo 3 sesiones activas por id; si se alcanza, se elimina solo la más antigua (FIFO)
+  const sesionesUser = Object.entries(sesiones)
     .filter(([, s]) => s && s.id === userId)
-    .map(([hash]) => hash);
-  if (hashesUser.length >= 2) {
-    for (const h of hashesUser) {
-      delete sesiones[h];
+    .sort(([, a], [, b]) => Number((a as any)?.creadoEn || 0) - Number((b as any)?.creadoEn || 0));
+  if (sesionesUser.length >= 3) {
+    const exceso = sesionesUser.length - 2;
+    for (let i = 0; i < exceso; i++) {
+      delete sesiones[sesionesUser[i][0]];
     }
   }
 
@@ -322,11 +323,13 @@ function dbObtenerTodasCuentas(): Record<string, any> {
   const inventarioRaw = leerJson(ARCHIVO_INVENTARIO, {});
 
   const salida: Record<string, any> = {};
-  for (const [id, c] of Object.entries(cuentasRaw || {})) {
+  for (const [rawId, c] of Object.entries(cuentasRaw || {})) {
     if (!c || typeof c !== 'object') continue;
     const cObj = c as any;
-    const h = historialRaw[id] || {};
-    const inv = inventarioRaw[id] || {};
+    const id = String(rawId || cObj.id || '').trim().toLowerCase();
+    if (!id) continue;
+    const h = historialRaw[id] || historialRaw[rawId] || {};
+    const inv = inventarioRaw[id] || inventarioRaw[rawId] || {};
     const esSup = id === 'admin';
 
     salida[id] = {
@@ -375,6 +378,9 @@ function dbObtenerTodasCuentas(): Record<string, any> {
 
 function dbGuardarCuentaCompleta(acc: any, tocarUpdate = true) {
   if (!acc || !acc.id) return;
+  const idNorm = String(acc.id).trim().toLowerCase();
+  if (!idNorm) return;
+  acc.id = idNorm;
   const ahora = Date.now();
   const esSup = acc.id === 'admin';
   const rolFinal = esSup ? 'dev' : (acc.rol || 'jugador');
@@ -808,6 +814,9 @@ app.get('/api/ping', async (req, res) => {
     cuentasCount: Object.keys(cuentas).length,
     sesionValida: tieneAuthHeader ? Boolean(sesion && sesion.userId && !(sesion as any).revocada) : true,
     sesionRevocada: tieneAuthHeader && Boolean((sesion as any)?.revocada),
+    sesionUserId: sesion && !(sesion as any).revocada ? sesion.userId || null : null,
+    miInventarioCorrupto: false,
+    advertenciasInventario: [],
   });
 });
 

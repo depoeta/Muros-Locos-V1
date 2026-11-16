@@ -20,6 +20,7 @@ import {
   EntradaRanking,
   EstadoDeJuego,
   EstadoTorneo,
+  EstiloMuros,
   InfoNivel,
   RegDeAvatar,
   AvatarColeccionable,
@@ -32,6 +33,7 @@ import {
 } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
 import { PWAInstallButton } from './PWAInstallControl';
+import { ESTILO_MUROS_META, useMurosTheme } from '../game/murosTheme';
 import {
   actualizarCuentaAsync,
   adminActualizarUserAsync,
@@ -116,6 +118,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
   onuserActualizado,
   onShowToast,
 }) => {
+  const { t } = useMurosTheme();
   const [tabPersonaje, setTabPersonaje] = useState<'base' | 'inventario'>('base');
   const [selectedHat, setSelectedHat] = useState<AvatarTipoDeGorro>(personajeActual.hat || 'corona');
   const [selectedColor, setSelectedColor] = useState<string>(personajeActual.color || '#ff6b6b');
@@ -173,6 +176,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
 
   const cuentaFresca = userActual ? cargarCuentas()[userActual.id] || userActual : null;
   const misExclusivos = cuentaFresca?.inventario?.personajes || userActual?.inventario?.personajes || [];
+  const activeCharDef = RegDeAvatar.find((p) => p.id === selectedHat) || RegDeAvatar[0];
 
   const handleSeleccionarPersonajeBase = (p: (typeof RegDeAvatar)[0]) => {
     if (!isPersonajeDesbloqueado(p.puntosRequeridos)) {
@@ -240,6 +244,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
           onuserActualizado?.(res.user);
           onShowToast?.('⭐ Avatar y terreno guardados como predeterminados en tu perfil');
         } else {
+          sounds.playError();
           onShowToast?.(res.error || '⚠️ No se pudo guardar en tu perfil');
         }
       }
@@ -250,6 +255,8 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
       );
       onCerrar();
     } catch {
+      sounds.playError();
+      onShowToast?.('⚠️ Error de red al guardar en tu perfil. Verifica tu conexión.');
       onAplicar(
         { hat: selectedHat, color: selectedColor, ropa: selectedRopa, ropaColor: selectedRopaColor, aura: selectedAura },
         selectedTema
@@ -260,20 +267,24 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
     }
   };
 
-  const activeCharDef =
-    RegDeAvatar.find((p) => p.id === selectedHat) || RegDeAvatar[0];
+  const temaOscuroCard: Record<TemaTablero, string> = {
+    madera: 'bg-amber-300/15 border-amber-300/45 text-amber-100',
+    neon: 'bg-cyan-300/15 border-cyan-300/45 text-cyan-100',
+    hielo: 'bg-sky-300/15 border-sky-300/45 text-sky-100',
+    lava: 'bg-rose-400/15 border-rose-400/45 text-rose-100',
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-      <div className="relative w-full max-w-md bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-4 sm:p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col max-h-[92vh] overflow-y-auto">
-        <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
+      <div className={`relative w-full max-w-md rounded-3xl p-4 sm:p-5 flex flex-col max-h-[92vh] overflow-y-auto ${t.shellModal}`}>
+        <div className={`flex items-center justify-between pb-3 mb-2 border-b-2 ${t.divider}`}>
           <div className="flex items-center gap-2">
             <span className="text-2xl">🎨</span>
             <div>
-              <h3 className="text-lg sm:text-xl font-black text-[#2b2140] leading-none">
+              <h3 className={`text-lg sm:text-xl font-black leading-none ${t.title}`}>
                 Aspecto y Terreno
               </h3>
-              <span className="text-[11px] font-bold text-[#86542d]">
+              <span className={`text-[11px] font-bold ${t.muted}`}>
                 {userActual
                   ? `⭐ Tus puntos: ${userPoints}`
                   : '💡 Modo Invitado (Crea perfil para guardar tus aspectos)'}
@@ -285,14 +296,14 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
               sounds.playClick();
               onCerrar();
             }}
-            className="w-8 h-8 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-sm font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] flex items-center justify-center cursor-pointer"
+            className={`w-8 h-8 rounded-full text-sm font-black flex items-center justify-center cursor-pointer transition-colors ${t.closeBtn}`}
           >
             ✕
           </button>
         </div>
 
         {/* Vista previa en vivo */}
-        <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex items-center gap-3 mb-3">
+        <div className={`p-3 rounded-2xl shadow-sm flex items-center gap-3 mb-3 ${t.card}`}>
           <CartoonCharacter
             color={selectedColor}
             hat={selectedHat}
@@ -303,10 +314,10 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
             showShadow={false}
           />
           <div className="flex-1 min-w-0">
-            <span className="text-[10px] font-black text-[#593922] uppercase tracking-wider block">
+            <span className={`text-[10px] font-black uppercase tracking-wider block ${t.sub}`}>
               Vista Previa Activa
             </span>
-            <span className="font-extrabold text-sm text-[#2b2140] flex items-center gap-1.5 truncate">
+            <span className={`font-extrabold text-sm flex items-center gap-1.5 truncate ${t.title}`}>
               <span>{activeCharDef.emoji}</span>
               <span className="truncate">
                 {selectedItemId
@@ -314,16 +325,22 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
                   : activeCharDef.nombre}
               </span>
               {selectedItemId && (
-                <span className="text-[9px] font-black bg-[#ffd43b] text-[#5c3c00] px-1.5 py-0.5 rounded-full border border-[#2b2140]/30 shrink-0">
+                <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full shrink-0 ${
+                  t.esOscuro
+                    ? 'bg-amber-300/20 text-amber-200 border border-amber-300/40'
+                    : t.esClaro
+                    ? 'bg-[#FCE8B8] text-[#4A3309] border border-[#EAD08E]'
+                    : 'bg-[#ffd43b] text-[#5c3c00] border border-[#2b2140]/30'
+                }`}>
                   EXCLUSIVO
                 </span>
               )}
             </span>
-            <span className="text-[11px] font-bold text-[#86542d] block truncate">
-              Terreno: {TEMAS_LISTA.find((t) => t.id === selectedTema)?.label}
+            <span className={`text-[11px] font-bold block truncate ${t.muted}`}>
+              Terreno: {TEMAS_LISTA.find((tm) => tm.id === selectedTema)?.label}
             </span>
             {(selectedRopa !== 'ninguna' || selectedAura !== 'ninguna') && (
-              <span className="text-[10px] font-bold text-[#1971c2] block truncate">
+              <span className={`text-[10px] font-bold block truncate ${t.esOscuro ? 'text-sky-300' : 'text-[#1971c2]'}`}>
                 Atuendo: {selectedRopa !== 'ninguna' ? selectedRopa : 'Normal'} · Aura: {selectedAura !== 'ninguna' ? selectedAura : 'Ninguna'}
               </span>
             )}
@@ -331,14 +348,12 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
         </div>
 
         {/* Sub-tabs: Avatares Base vs Mis Exclusivos */}
-        <div className="flex items-center gap-1.5 p-1 bg-[#f1f3f5] rounded-xl border border-[#2b2140]/20 mb-3">
+        <div className={`flex items-center gap-1.5 p-1 rounded-xl mb-3 ${t.track}`}>
           <button
             type="button"
             onClick={() => setTabPersonaje('base')}
             className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-black transition-all cursor-pointer ${
-              tabPersonaje === 'base'
-                ? 'bg-white text-[#2b2140] border border-[#2b2140] shadow-xs'
-                : 'text-[#86542d] hover:text-[#2b2140]'
+              tabPersonaje === 'base' ? t.tabActive : t.tabInactive
             }`}
           >
             🎮 Avatares Base
@@ -348,12 +363,18 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
             onClick={() => setTabPersonaje('inventario')}
             className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1 ${
               tabPersonaje === 'inventario'
-                ? 'bg-[#ffd43b] text-[#5c3c00] border border-[#2b2140] shadow-xs'
-                : 'text-[#86542d] hover:text-[#2b2140]'
+                ? t.esClasico
+                  ? 'bg-[#ffd43b] text-[#5c3c00] border border-[#2b2140] shadow-xs'
+                  : t.esClaro
+                  ? 'bg-[#FCE8B8] text-[#4A3309] border border-[#EAD08E] shadow-xs'
+                  : 'bg-amber-300/20 text-amber-100 border border-amber-300/40 shadow-xs'
+                : t.tabInactive
             }`}
           >
             <span>🎒 Mis Exclusivos</span>
-            <span className="bg-[#2b2140] text-white text-[10px] px-1.5 py-0.2 rounded-full">
+            <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+              t.esOscuro ? 'bg-slate-900 text-slate-100' : 'bg-[#2b2140] text-white'
+            }`}>
               {misExclusivos.length}
             </span>
           </button>
@@ -363,10 +384,10 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
         {tabPersonaje === 'base' ? (
           <div className="flex flex-col gap-1.5 mb-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
+              <span className={`text-xs font-black uppercase tracking-wider ${t.sub}`}>
                 1. Tus Avatares Disponibles
               </span>
-              <span className="text-[10px] font-bold text-[#2b8a3e]">
+              <span className={`text-[10px] font-bold ${t.accentText}`}>
                 {personajesVisibles.length} desbloqueados
               </span>
             </div>
@@ -380,19 +401,27 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
                     key={p.id}
                     type="button"
                     onClick={() => handleSeleccionarPersonajeBase(p)}
-                    className={`relative p-2 rounded-2xl border-2 border-[#2b2140] cursor-pointer flex flex-col items-center gap-1 transition-all ${
+                    className={`relative p-2 rounded-2xl cursor-pointer flex flex-col items-center gap-1 transition-all ${
                       isSelected
-                        ? 'bg-[#ffd43b] shadow-[0_3px_0_#2b2140] -translate-y-0.5'
-                        : 'bg-white hover:bg-[#f8f9fa]'
+                        ? t.esClasico
+                          ? 'bg-[#ffd43b] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] -translate-y-0.5'
+                          : t.esClaro
+                          ? 'bg-[#FCE8B8] border border-[#EAD08E] shadow-xs -translate-y-0.5'
+                          : 'bg-amber-300/20 border border-amber-300/50 shadow-xs -translate-y-0.5'
+                        : `${t.card} ${t.cardHover}`
                     }`}
                     title={p.nombre}
                   >
                     <CartoonCharacter color={p.colorDefault} hat={p.id} size={38} showShadow={false} />
-                    <span className="text-[10px] font-extrabold text-[#2b2140] text-center leading-tight">
+                    <span className={`text-[10px] font-extrabold text-center leading-tight ${t.title}`}>
                       {p.nombre}
                     </span>
                     {isSelected && (
-                      <span className="text-[8px] font-black text-[#134e20] bg-[#d3f9d8] px-1 rounded border border-[#2b8a3e]">
+                      <span className={`text-[8px] font-black px-1 rounded border ${
+                        t.esOscuro
+                          ? 'text-emerald-200 bg-emerald-400/20 border-emerald-400/40'
+                          : 'text-[#134e20] bg-[#d3f9d8] border-[#2b8a3e]'
+                      }`}>
                         ✓ ACTIVO
                       </span>
                     )}
@@ -403,23 +432,23 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
 
             {/* Siguiente personaje a desbloquear si aún quedan */}
             {siguientePorDesbloquear && (
-              <div className="p-2.5 bg-gradient-to-r from-[#fff9db] to-[#f8f9fa] rounded-2xl border-2 border-[#2b2140]/25 flex items-center justify-between text-xs mt-1">
+              <div className={`p-2.5 rounded-2xl flex items-center justify-between text-xs mt-1 ${t.bannerWarn}`}>
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-base">🔒</span>
                   <div className="min-w-0">
-                    <span className="text-[10px] font-bold text-[#86542d] block uppercase tracking-wider">
+                    <span className="text-[10px] font-bold opacity-80 block uppercase tracking-wider">
                       Próximo Desbloqueo
                     </span>
-                    <span className="font-black text-xs text-[#2b2140] block truncate">
+                    <span className="font-black text-xs block truncate">
                       {siguientePorDesbloquear.nombre} ({siguientePorDesbloquear.emoji})
                     </span>
                   </div>
                 </div>
                 <div className="text-right shrink-0">
-                  <span className="text-xs font-black text-[#d9480f] block">
+                  <span className="text-xs font-black block">
                     {userPoints} / {siguientePorDesbloquear.puntosRequeridos} pts
                   </span>
-                  <span className="text-[9px] font-bold text-[#868e96] block">
+                  <span className="text-[9px] font-bold opacity-80 block">
                     Faltan {Math.max(0, siguientePorDesbloquear.puntosRequeridos - userPoints)} pts
                   </span>
                 </div>
@@ -429,14 +458,14 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
         ) : (
           <div className="flex flex-col gap-2 mb-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
+              <span className={`text-xs font-black uppercase tracking-wider ${t.sub}`}>
                 🎒 Colección de Avatares Exclusivos
               </span>
               {selectedItemId && (
                 <button
                   type="button"
                   onClick={handleDesequiparExclusivo}
-                  className="text-[10px] font-bold text-[#c92a2a] hover:underline cursor-pointer"
+                  className={`text-[10px] font-bold hover:underline cursor-pointer ${t.esOscuro ? 'text-rose-300' : 'text-[#c92a2a]'}`}
                 >
                   ✕ Desequipar
                 </button>
@@ -444,12 +473,12 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
             </div>
 
             {misExclusivos.length === 0 ? (
-              <div className="p-4 bg-white rounded-2xl border-2 border-[#2b2140]/20 text-center flex flex-col items-center gap-1.5 my-1">
+              <div className={`p-4 rounded-2xl text-center flex flex-col items-center gap-1.5 my-1 ${t.card}`}>
                 <span className="text-3xl">🎁</span>
-                <span className="font-black text-xs text-[#2b2140]">
+                <span className={`font-black text-xs ${t.title}`}>
                   Aún no tienes avatares exclusivos en tu inventario
                 </span>
-                <p className="text-[11px] text-[#86542d] leading-relaxed">
+                <p className={`text-[11px] leading-relaxed ${t.muted}`}>
                   Gana el <strong>Torneo Semanal</strong> o recíbelo como premio/regalo de un Administrador o Dev.
                 </p>
               </div>
@@ -461,10 +490,14 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
                     <div
                       key={item.id}
                       onClick={() => handleSeleccionarExclusivo(item)}
-                      className={`p-2.5 rounded-2xl border-2 cursor-pointer transition-all flex items-center gap-2.5 ${
+                      className={`p-2.5 rounded-2xl cursor-pointer transition-all flex items-center gap-2.5 ${
                         isEquipped
-                          ? 'border-[#2b2140] bg-[#fff9db] shadow-[0_3px_0_#2b2140] -translate-y-0.5'
-                          : 'border-[#2b2140]/40 bg-white hover:bg-[#f8f9fa]'
+                          ? t.esClasico
+                            ? 'border-2 border-[#2b2140] bg-[#fff9db] shadow-[0_3px_0_#2b2140] -translate-y-0.5'
+                            : t.esClaro
+                            ? 'border border-[#EAD08E] bg-[#FCE8B8]/70 shadow-xs -translate-y-0.5'
+                            : 'border border-amber-300/45 bg-amber-300/15 shadow-xs -translate-y-0.5'
+                          : `${t.card} ${t.cardHover}`
                       }`}
                     >
                       <CartoonCharacter
@@ -478,16 +511,20 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-1">
-                          <span className="font-black text-xs text-[#2b2140] truncate">
+                          <span className={`font-black text-xs truncate ${t.title}`}>
                             {item.nombre}
                           </span>
                           {isEquipped && (
-                            <span className="text-[9px] font-black text-[#134e20] bg-[#d3f9d8] px-1.5 py-0.5 rounded border border-[#2b8a3e]">
+                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${
+                              t.esOscuro
+                                ? 'text-emerald-200 bg-emerald-400/20 border-emerald-400/40'
+                                : 'text-[#134e20] bg-[#d3f9d8] border-[#2b8a3e]'
+                            }`}>
                               EN USO
                             </span>
                           )}
                         </div>
-                        <span className="text-[10px] font-bold text-[#86542d] block truncate">
+                        <span className={`text-[10px] font-bold block truncate ${t.muted}`}>
                           {typeof item.origen === 'object' && item.origen?.tipo === 'torneo_semanal'
                             ? '🏆 Torneo Semanal'
                             : typeof item.origen === 'object' && item.origen?.tipo === 'regalo_dev'
@@ -498,7 +535,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
                             ? '👑 Regalo de Dev'
                             : '🛡️ Regalo Exclusivo'}
                         </span>
-                        <span className="text-[9px] text-[#495057] block truncate">
+                        <span className={`text-[9px] block truncate ${t.sub}`}>
                           {typeof item.origen === 'object' && item.origen
                             ? item.origen.otorgadoPor
                             : typeof item.origen === 'string'
@@ -516,7 +553,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
 
         {/* SELECCIÓN DE TERRENO */}
         <div className="flex flex-col gap-1.5 mb-3">
-          <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
+          <span className={`text-xs font-black uppercase tracking-wider ${t.sub}`}>
             2. Terreno de la Arena / Tablero
           </span>
           <div className="grid grid-cols-2 gap-2">
@@ -530,14 +567,20 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
                     sounds.playClick();
                     setSelectedTema(theme.id);
                   }}
-                  className={`p-2 rounded-xl border-2 text-xs font-black cursor-pointer transition-all flex flex-col items-center gap-0.5 ${theme.border} ${
+                  className={`p-2 rounded-xl text-xs font-black cursor-pointer transition-all flex flex-col items-center gap-0.5 ${
                     isSelected
-                      ? `${theme.bg} shadow-[0_3px_0_#2b2140] scale-[1.02]`
-                      : 'bg-white opacity-80 hover:opacity-100 hover:bg-slate-50'
+                      ? t.esOscuro
+                        ? `border ${temaOscuroCard[theme.id]} scale-[1.02]`
+                        : t.esClaro
+                        ? `border ${theme.border} ${theme.bg} text-[#171923] shadow-xs scale-[1.02]`
+                        : `border-2 ${theme.border} ${theme.bg} text-[#2b2140] shadow-[0_3px_0_#2b2140] scale-[1.02]`
+                      : `${t.card} opacity-80 hover:opacity-100`
                   }`}
                 >
                   <span className="text-sm font-bold">{theme.label}</span>
-                  <span className="text-[9px] font-medium text-[#495057]">{theme.desc}</span>
+                  <span className={`text-[9px] font-medium ${isSelected && !t.esOscuro ? 'text-[#3E4359]' : t.muted}`}>
+                    {theme.desc}
+                  </span>
                 </button>
               );
             })}
@@ -545,19 +588,19 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
         </div>
 
         {userActual ? (
-          <label className="flex items-center gap-2 p-2 bg-[#e7f5ff] rounded-xl border border-[#2b2140]/30 cursor-pointer mb-3 select-none">
+          <label className={`flex items-center gap-2 p-2 rounded-xl cursor-pointer mb-3 select-none ${t.bannerInfo}`}>
             <input
               type="checkbox"
               checked={guardarEnPerfil}
               onChange={(e) => setGuardarEnPerfil(e.target.checked)}
-              className="w-4 h-4 rounded text-[#1971c2] cursor-pointer"
+              className="w-4 h-4 rounded cursor-pointer"
             />
-            <span className="text-[11px] font-bold text-[#1864ab] leading-tight">
+            <span className="text-[11px] font-bold leading-tight">
               ⭐ Guardar como mi avatar y terreno predeterminados en mi Perfil
             </span>
           </label>
         ) : (
-          <div className="p-2 bg-[#fff9db] rounded-xl border border-[#2b2140]/20 mb-3 text-[11px] text-[#8f4b00] font-semibold leading-tight">
+          <div className={`p-2 rounded-xl mb-3 text-[11px] font-semibold leading-tight ${t.bannerWarn}`}>
             💡 <strong>Modo Invitado:</strong> Inicia sesión en Mi Perfil para dejar tu avatar y terreno guardados de forma predeterminada.
           </div>
         )}
@@ -566,7 +609,7 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
           type="button"
           disabled={guardando}
           onClick={handleGuardarYAplicar}
-          className="w-full py-2.5 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer flex items-center justify-center gap-1.5"
+          className={`w-full py-2.5 rounded-xl font-black text-sm cursor-pointer flex items-center justify-center gap-1.5 ${t.btnPrimary}`}
         >
           <span>✓</span>
           <span>{guardando ? 'Guardando...' : 'Aplicar Aspecto'}</span>
@@ -586,6 +629,7 @@ interface AjustesModalProps {
 }
 
 export const AjustesModal: React.FC<AjustesModalProps> = ({ ajustes, onGuardar, onCerrar }) => {
+  const { estilo, setEstilo, t } = useMurosTheme();
   const [localAjustes, setLocalAjustes] = useState<AjustesDeApp>({ ...ajustes });
 
   const toggle = (key: keyof AjustesDeApp) => {
@@ -614,11 +658,13 @@ export const AjustesModal: React.FC<AjustesModalProps> = ({ ajustes, onGuardar, 
     { key: 'modoDaltonico', label: 'Modo Alto Contraste / Daltónico', desc: 'Iconos distintivos en las metas', icon: '👁️' },
   ];
 
+  const estilosLista: EstiloMuros[] = ['pastel_oscuro', 'pastel_claro', 'clasico'];
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-      <div className="relative w-full max-w-md bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_10px_0_#2b2140,0_20px_30px_rgba(0,0,0,0.3)] flex flex-col max-h-[90vh]">
-        <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
-          <h3 className="text-xl font-black text-[#2b2140] flex items-center gap-2">
+      <div className={`relative w-full max-w-md rounded-3xl p-5 flex flex-col max-h-[90vh] ${t.shellModal}`}>
+        <div className={`flex items-center justify-between pb-3 mb-2 border-b-2 ${t.divider}`}>
+          <h3 className={`text-xl font-black flex items-center gap-2 ${t.title}`}>
             <span>⚙️</span> Ajustes del Juego
           </h3>
           <button
@@ -626,13 +672,52 @@ export const AjustesModal: React.FC<AjustesModalProps> = ({ ajustes, onGuardar, 
               sounds.playClick();
               onCerrar();
             }}
-            className="w-8 h-8 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-sm font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] flex items-center justify-center transition-colors cursor-pointer"
+            className={`w-8 h-8 rounded-full text-sm font-black flex items-center justify-center transition-colors cursor-pointer ${t.closeBtn}`}
           >
             ✕
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-2.5 my-2">
+          {/* Selector de Estética Visual (Pastel Oscuro / Pastel Claro / Clásico) */}
+          <div className={`p-3 rounded-2xl flex flex-col gap-2 ${t.card}`}>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-lg shrink-0">🎨</span>
+                <div className="min-w-0">
+                  <span className={`font-black text-xs sm:text-sm block leading-tight ${t.title}`}>
+                    Estética Visual
+                  </span>
+                  <span className={`text-[10px] font-medium block truncate ${t.muted}`}>
+                    {ESTILO_MUROS_META[estilo].desc}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className={`grid grid-cols-3 gap-1.5 p-1 rounded-xl ${t.track}`}>
+              {estilosLista.map((itemKey) => {
+                const meta = ESTILO_MUROS_META[itemKey];
+                const activo = estilo === itemKey;
+                return (
+                  <button
+                    key={itemKey}
+                    type="button"
+                    onClick={() => {
+                      sounds.playClick();
+                      setEstilo(itemKey);
+                    }}
+                    className={`py-1.5 px-1.5 rounded-lg text-[11px] font-black transition-all cursor-pointer flex flex-col items-center gap-0.5 ${
+                      activo ? t.tabActive : t.tabInactive
+                    }`}
+                  >
+                    <span className="text-sm">{meta.icon}</span>
+                    <span className="truncate leading-none">{meta.shortLabel}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <PWAInstallButton variant="card" />
 
           {opciones.map((op) => {
@@ -641,40 +726,54 @@ export const AjustesModal: React.FC<AjustesModalProps> = ({ ajustes, onGuardar, 
               <div
                 key={op.key}
                 onClick={() => toggle(op.key)}
-                className={`p-3 rounded-2xl border-2 border-[#2b2140] flex items-center justify-between gap-3 cursor-pointer transition-all select-none ${
+                className={`p-3 rounded-2xl flex items-center justify-between gap-3 cursor-pointer transition-all select-none ${
                   activo
-                    ? 'bg-[#d3f9d8] shadow-[0_2px_0_#2b2140]'
-                    : 'bg-white hover:bg-[#f8f9fa] shadow-sm'
+                    ? t.esClasico
+                      ? 'bg-[#d3f9d8] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                      : t.bannerSuccess
+                    : `${t.card} ${t.cardHover}`
                 }`}
               >
                 <div className="flex items-center gap-2.5 min-w-0">
                   <span className="text-2xl flex-shrink-0">{op.icon}</span>
                   <div className="min-w-0">
-                    <span className="font-extrabold text-xs sm:text-sm text-[#2b2140] block truncate">
+                    <span className={`font-extrabold text-xs sm:text-sm block truncate ${t.title}`}>
                       {op.label}
                     </span>
-                    <span className="text-[11px] font-medium text-[#86542d] block leading-tight">
+                    <span className={`text-[11px] font-medium block leading-tight ${t.muted}`}>
                       {op.desc}
                     </span>
                   </div>
                 </div>
 
                 <div
-                  className={`w-12 h-7 rounded-full border-2 border-[#2b2140] p-0.5 transition-colors flex items-center flex-shrink-0 ${
-                    activo ? 'bg-[#51cf66] justify-end' : 'bg-[#dee2e6] justify-start'
+                  className={`w-12 h-7 rounded-full p-0.5 transition-colors flex items-center flex-shrink-0 ${
+                    t.esClasico
+                      ? `border-2 border-[#2b2140] ${activo ? 'bg-[#51cf66] justify-end' : 'bg-[#dee2e6] justify-start'}`
+                      : t.esOscuro
+                      ? `border border-white/15 ${activo ? 'bg-emerald-400/70 justify-end' : 'bg-slate-900 justify-start'}`
+                      : `border border-[#CBBFA3] ${activo ? 'bg-[#8AD2AE] justify-end' : 'bg-[#E5DEC9] justify-start'}`
                   }`}
                 >
-                  <div className="w-5 h-5 rounded-full bg-white border-2 border-[#2b2140] shadow-sm" />
+                  <div
+                    className={`w-5 h-5 rounded-full shadow-sm ${
+                      t.esClasico
+                        ? 'bg-white border-2 border-[#2b2140]'
+                        : t.esOscuro
+                        ? 'bg-slate-100 border border-white/20'
+                        : 'bg-[#FFFDF6] border border-[#CBBFA3]'
+                    }`}
+                  />
                 </div>
               </div>
             );
           })}
         </div>
 
-        <div className="pt-3 border-t-2 border-[#2b2140]/15 flex items-center justify-end gap-2">
+        <div className={`pt-3 border-t-2 flex items-center justify-end gap-2 ${t.divider}`}>
           <button
             onClick={handleGuardar}
-            className="w-full py-2.5 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer"
+            className={`w-full py-2.5 rounded-xl font-black text-sm cursor-pointer ${t.btnPrimary}`}
           >
             💾 Guardar y Aplicar
           </button>
@@ -688,11 +787,12 @@ export const AjustesModal: React.FC<AjustesModalProps> = ({ ajustes, onGuardar, 
 // 2. CÓMO SE JUEGA MODAL
 // =========================================================================
 export const ComoJugarModal: React.FC<{ onCerrar: () => void }> = ({ onCerrar }) => {
+  const { t } = useMurosTheme();
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-      <div className="relative w-full max-w-lg bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 sm:p-6 shadow-[0_10px_0_#2b2140,0_20px_30px_rgba(0,0,0,0.3)] flex flex-col max-h-[90vh]">
-        <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
-          <h3 className="text-xl sm:text-2xl font-black text-[#2b2140] flex items-center gap-2">
+      <div className={`relative w-full max-w-lg rounded-3xl p-5 sm:p-6 flex flex-col max-h-[90vh] ${t.shellModal}`}>
+        <div className={`flex items-center justify-between pb-3 mb-2 border-b-2 ${t.divider}`}>
+          <h3 className={`text-xl sm:text-2xl font-black flex items-center gap-2 ${t.title}`}>
             <span>📖</span> ¿Cómo se juega?
           </h3>
           <button
@@ -700,15 +800,15 @@ export const ComoJugarModal: React.FC<{ onCerrar: () => void }> = ({ onCerrar })
               sounds.playClick();
               onCerrar();
             }}
-            className="w-8 h-8 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-sm font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] flex items-center justify-center transition-colors cursor-pointer"
+            className={`w-8 h-8 rounded-full text-sm font-black flex items-center justify-center transition-colors cursor-pointer ${t.closeBtn}`}
           >
             ✕
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-3 my-2 text-[#593922] text-xs sm:text-sm">
-          <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm">
-            <h4 className="font-black text-sm text-[#2b2140] flex items-center gap-1.5 mb-1">
+        <div className={`flex-1 overflow-y-auto pr-1 flex flex-col gap-3 my-2 text-xs sm:text-sm ${t.sub}`}>
+          <div className={`p-3 rounded-2xl shadow-sm ${t.card}`}>
+            <h4 className={`font-black text-sm flex items-center gap-1.5 mb-1 ${t.title}`}>
               <span>🎯</span> Objetivo del Juego
             </h4>
             <p className="leading-relaxed">
@@ -716,8 +816,8 @@ export const ComoJugarModal: React.FC<{ onCerrar: () => void }> = ({ onCerrar })
             </p>
           </div>
 
-          <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm">
-            <h4 className="font-black text-sm text-[#2b2140] flex items-center gap-1.5 mb-1">
+          <div className={`p-3 rounded-2xl shadow-sm ${t.card}`}>
+            <h4 className={`font-black text-sm flex items-center gap-1.5 mb-1 ${t.title}`}>
               <span>🎲</span> En tu turno elige UNA acción:
             </h4>
             <ul className="list-disc list-inside space-y-1 pl-1 leading-relaxed">
@@ -730,8 +830,8 @@ export const ComoJugarModal: React.FC<{ onCerrar: () => void }> = ({ onCerrar })
             </ul>
           </div>
 
-          <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm">
-            <h4 className="font-black text-sm text-[#2b2140] flex items-center gap-1.5 mb-1">
+          <div className={`p-3 rounded-2xl shadow-sm ${t.card}`}>
+            <h4 className={`font-black text-sm flex items-center gap-1.5 mb-1 ${t.title}`}>
               <span>🦘</span> Saltos sobre rivales
             </h4>
             <p className="leading-relaxed">
@@ -739,20 +839,20 @@ export const ComoJugarModal: React.FC<{ onCerrar: () => void }> = ({ onCerrar })
             </p>
           </div>
 
-          <div className="p-3 bg-[#fff3bf] rounded-2xl border-2 border-[#2b2140] shadow-sm">
-            <h4 className="font-black text-sm text-[#8f4b00] flex items-center gap-1.5 mb-1">
+          <div className={`p-3 rounded-2xl shadow-sm ${t.bannerWarn}`}>
+            <h4 className="font-black text-sm flex items-center gap-1.5 mb-1">
               <span>⚠️</span> Regla de Oro de los Muros
             </h4>
-            <p className="leading-relaxed text-[#744210]">
+            <p className="leading-relaxed">
               <strong>NUNCA</strong> puedes encerrar por completo a un jugador. Siempre debe quedar al menos un camino libre hasta su meta.
             </p>
           </div>
 
-          <div className="p-3 bg-[#d3f9d8] rounded-2xl border-2 border-[#2b2140] shadow-sm">
-            <h4 className="font-black text-sm text-[#134e20] flex items-center gap-1.5 mb-1">
+          <div className={`p-3 rounded-2xl shadow-sm ${t.bannerSuccess}`}>
+            <h4 className="font-black text-sm flex items-center gap-1.5 mb-1">
               <span>⭐</span> Sistema de Puntos
             </h4>
-            <ul className="list-disc list-inside space-y-1 pl-1 leading-relaxed text-[#1b4332]">
+            <ul className="list-disc list-inside space-y-1 pl-1 leading-relaxed">
               <li>
                 <strong>Victoria en partida:</strong> <strong>+5 pts</strong> por ganar.
               </li>
@@ -772,13 +872,13 @@ export const ComoJugarModal: React.FC<{ onCerrar: () => void }> = ({ onCerrar })
           </div>
         </div>
 
-        <div className="pt-3 border-t-2 border-[#2b2140]/15">
+        <div className={`pt-3 border-t-2 ${t.divider}`}>
           <button
             onClick={() => {
               sounds.playClick();
               onCerrar();
             }}
-            className="w-full py-2.5 rounded-xl font-black text-sm bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] active:translate-y-0.5 cursor-pointer"
+            className={`w-full py-2.5 rounded-xl font-black text-sm cursor-pointer ${t.btnAmber}`}
           >
             ¡Entendido, a jugar! 🚀
           </button>
@@ -792,6 +892,7 @@ export const ComoJugarModal: React.FC<{ onCerrar: () => void }> = ({ onCerrar })
 // 3. LOGROS MODAL
 // =========================================================================
 export const LogrosModal: React.FC<{ onCerrar: () => void }> = ({ onCerrar }) => {
+  const { t } = useMurosTheme();
   const ranking = useMemo(() => cargarRanking(), []);
   const rankingLocal = useMemo(() => cargarRankingLocal(), []);
 
@@ -811,15 +912,15 @@ export const LogrosModal: React.FC<{ onCerrar: () => void }> = ({ onCerrar }) =>
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-      <div className="relative w-full max-w-lg bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 sm:p-6 shadow-[0_10px_0_#2b2140,0_20px_30px_rgba(0,0,0,0.3)] flex flex-col max-h-[90vh]">
-        <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
+      <div className={`relative w-full max-w-lg rounded-3xl p-5 sm:p-6 flex flex-col max-h-[90vh] ${t.shellModal}`}>
+        <div className={`flex items-center justify-between pb-3 mb-2 border-b-2 ${t.divider}`}>
           <div className="flex items-center gap-2">
             <span className="text-2xl">🎖️</span>
             <div>
-              <h3 className="text-lg sm:text-xl font-black text-[#2b2140] leading-none">
+              <h3 className={`text-lg sm:text-xl font-black leading-none ${t.title}`}>
                 Logros y Medallas
               </h3>
-              <span className="text-[11px] font-bold text-[#86542d]">
+              <span className={`text-[11px] font-bold ${t.muted}`}>
                 {desbloqueados} de {totalLogros} completados ({progresoPct}%)
               </span>
             </div>
@@ -830,15 +931,21 @@ export const LogrosModal: React.FC<{ onCerrar: () => void }> = ({ onCerrar }) =>
               sounds.playClick();
               onCerrar();
             }}
-            className="w-8 h-8 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-sm font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] flex items-center justify-center transition-colors cursor-pointer"
+            className={`w-8 h-8 rounded-full text-sm font-black flex items-center justify-center transition-colors cursor-pointer ${t.closeBtn}`}
           >
             ✕
           </button>
         </div>
 
-        <div className="w-full bg-[#f1f3f5] h-3.5 rounded-full border-2 border-[#2b2140] my-2 overflow-hidden shadow-inner">
+        <div className={`w-full h-3.5 rounded-full my-2 overflow-hidden shadow-inner ${t.track}`}>
           <div
-            className="h-full bg-gradient-to-r from-[#ffd43b] to-[#51cf66] transition-all duration-500"
+            className={`h-full transition-all duration-500 ${
+              t.esClasico
+                ? 'bg-gradient-to-r from-[#ffd43b] to-[#51cf66]'
+                : t.esOscuro
+                ? 'bg-gradient-to-r from-amber-300/80 to-emerald-300/80'
+                : 'bg-gradient-to-r from-[#F9DE9E] to-[#8AD2AE]'
+            }`}
             style={{ width: `${progresoPct}%` }}
           />
         </div>
@@ -849,25 +956,31 @@ export const LogrosModal: React.FC<{ onCerrar: () => void }> = ({ onCerrar }) =>
             return (
               <div
                 key={logro.id}
-                className={`p-3 rounded-2xl border-2 border-[#2b2140] flex items-center gap-3 transition-all ${
+                className={`p-3 rounded-2xl flex items-center gap-3 transition-all ${
                   conseguido
-                    ? 'bg-white shadow-[0_3px_0_#2b2140]'
-                    : 'bg-[#f1f3f5]/70 opacity-60 grayscale shadow-none'
+                    ? t.card
+                    : `${t.cardInner} opacity-55 grayscale shadow-none`
                 }`}
               >
                 <div
-                  className={`w-11 h-11 rounded-2xl border-2 border-[#2b2140] flex items-center justify-center text-xl flex-shrink-0 ${
-                    conseguido ? 'bg-[#ffd43b] shadow-sm' : 'bg-[#dee2e6]'
+                  className={`w-11 h-11 rounded-2xl flex items-center justify-center text-xl flex-shrink-0 ${
+                    conseguido
+                      ? t.esClasico
+                        ? 'bg-[#ffd43b] border-2 border-[#2b2140] shadow-sm'
+                        : t.esClaro
+                        ? 'bg-[#FCE8B8] border border-[#EAD08E]'
+                        : 'bg-amber-300/20 border border-amber-300/40'
+                      : t.track
                   }`}
                 >
                   {conseguido ? logro.icono : '🔒'}
                 </div>
 
                 <div className="min-w-0 flex-1">
-                  <span className="font-extrabold text-xs sm:text-sm text-[#2b2140] block truncate">
+                  <span className={`font-extrabold text-xs sm:text-sm block truncate ${t.title}`}>
                     {logro.titulo}
                   </span>
-                  <span className="text-[11px] text-[#86542d] font-medium block leading-tight">
+                  <span className={`text-[11px] font-medium block leading-tight ${t.muted}`}>
                     {logro.descripcion}
                   </span>
                 </div>
@@ -876,13 +989,13 @@ export const LogrosModal: React.FC<{ onCerrar: () => void }> = ({ onCerrar }) =>
           })}
         </div>
 
-        <div className="pt-3 border-t-2 border-[#2b2140]/15">
+        <div className={`pt-3 border-t-2 ${t.divider}`}>
           <button
             onClick={() => {
               sounds.playClick();
               onCerrar();
             }}
-            className="w-full py-2.5 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer"
+            className={`w-full py-2.5 rounded-xl font-black text-sm cursor-pointer ${t.btnPrimary}`}
           >
             Cerrar
           </button>
@@ -921,6 +1034,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
   userActual,
   onAbrirPerfil,
 }) => {
+  const { t } = useMurosTheme();
   // Orden solicitado: Local siempre primero, luego Global, Esta Semana y Sem. Pasada
   const [tab, setTab] = useState<TabType>('local');
   const [rankingData, setRankingData] = useState<Record<string, EntradaRanking>>(() => cargarRanking());
@@ -1071,15 +1185,15 @@ export const RankingModal: React.FC<RankingModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-      <div className="relative w-full max-w-lg bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-4 sm:p-6 shadow-[0_10px_0_#2b2140,0_20px_30px_rgba(0,0,0,0.3)] flex flex-col max-h-[90vh] overflow-hidden">
-        <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
+      <div className={`relative w-full max-w-lg rounded-3xl p-4 sm:p-6 flex flex-col max-h-[90vh] overflow-hidden ${t.shellModal}`}>
+        <div className={`flex items-center justify-between pb-3 mb-2 border-b-2 ${t.divider}`}>
           <div className="flex items-center gap-2">
             <span className="text-2xl">🏆</span>
             <div>
-              <h3 className="text-lg sm:text-xl font-black text-[#2b2140] leading-none">
+              <h3 className={`text-lg sm:text-xl font-black leading-none ${t.title}`}>
                 Salón de la Fama
               </h3>
-              <span className="text-[11px] font-bold text-[#2b8a3e]">
+              <span className={`text-[11px] font-bold ${t.accentText}`}>
                 {tab === 'local'
                   ? '📍 Ranking Local en este Dispositivo'
                   : '🌍 Clasificación en Database'}
@@ -1092,7 +1206,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
               sounds.playClick();
               onCerrar();
             }}
-            className="w-8 h-8 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-sm font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] flex items-center justify-center transition-colors cursor-pointer"
+            className={`w-8 h-8 rounded-full text-sm font-black flex items-center justify-center transition-colors cursor-pointer ${t.closeBtn}`}
           >
             ✕
           </button>
@@ -1100,55 +1214,53 @@ export const RankingModal: React.FC<RankingModalProps> = ({
 
         {/* Database Disconnected Warning inside Ranking */}
         {diag.checkedOnce && !diag.dbConectado && tab !== 'local' && (
-          <div className="p-2.5 bg-[#ffe3e3] rounded-2xl border-2 border-[#c92a2a] mb-2 text-[11px] font-bold text-[#c92a2a] flex items-center justify-between gap-2">
+          <div className={`p-2.5 rounded-2xl mb-2 text-[11px] font-bold flex items-center justify-between gap-2 ${t.bannerDanger}`}>
             <span>⚠️ Sin conexión a la Database: mostrando últimos datos guardados localmente.</span>
             <button
               type="button"
               onClick={() => refrescarRanking(true)}
-              className="py-1 px-2 rounded-lg bg-white border border-[#c92a2a] text-[10px] font-black cursor-pointer shrink-0"
+              className={`py-1 px-2 rounded-lg text-[10px] font-black cursor-pointer shrink-0 ${t.btnNeutral}`}
             >
               🔄 Reintentar
             </button>
           </div>
         )}
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 p-1 bg-[#ede4d0] rounded-2xl border-2 border-[#2b2140] my-2">
+        <div className={`grid grid-cols-2 sm:grid-cols-4 gap-1 p-1 rounded-2xl my-2 ${t.track}`}>
           {[
             { id: 'local', label: '📍 Local' },
             { id: 'global', label: '🌍 Global' },
             { id: 'esta_semana', label: '📅 Esta Semana' },
             { id: 'semana_pasada', label: '⏮️ Sem. Pasada' },
-          ].map((t) => (
+          ].map((tb) => (
             <button
-              key={t.id}
+              key={tb.id}
               onClick={() => {
                 sounds.playClick();
-                setTab(t.id as TabType);
+                setTab(tb.id as TabType);
               }}
               className={`py-1.5 px-1 rounded-xl font-black text-[10px] sm:text-xs transition-all cursor-pointer truncate ${
-                tab === t.id
-                  ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-sm'
-                  : 'text-[#86542d] hover:text-[#2b2140]'
+                tab === tb.id ? t.tabActive : t.tabInactive
               }`}
             >
-              {t.label}
+              {tb.label}
             </button>
           ))}
         </div>
 
         {tab === 'esta_semana' && (
-          <div className="p-2.5 bg-[#fff3bf] rounded-2xl border-2 border-[#2b2140] mb-2 flex flex-col gap-1.5 shadow-sm text-xs">
+          <div className={`p-2.5 rounded-2xl mb-2 flex flex-col gap-1.5 shadow-sm text-xs ${t.bannerWarn}`}>
             <div className="flex items-center justify-between gap-2">
-              <span className="font-black text-[#8f4b00] flex items-center gap-1">
+              <span className="font-black flex items-center gap-1">
                 <span>🏆</span> Torneo Semanal Oficial
               </span>
-              <span className="text-[10px] font-black bg-white px-2 py-0.5 rounded-full border border-[#2b2140] text-[#2b2140] shrink-0">
+              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full shrink-0 ${t.badgeNeutral}`}>
                 ⏳ {textoCuentaAtrasSemana}
               </span>
             </div>
 
             {semanalData?.actual?.premioSemanal ? (
-              <div className="p-2 bg-white rounded-xl border border-[#ffd43b] flex items-center gap-2.5">
+              <div className={`p-2 rounded-xl flex items-center gap-2.5 ${t.card}`}>
                 <CartoonCharacter
                   color={semanalData.actual.premioSemanal.color}
                   hat={semanalData.actual.premioSemanal.hat}
@@ -1159,27 +1271,27 @@ export const RankingModal: React.FC<RankingModalProps> = ({
                   showShadow={false}
                 />
                 <div className="flex-1 min-w-0">
-                  <span className="text-[10px] font-black uppercase text-[#d9480f] tracking-wider block">
+                  <span className={`text-[10px] font-black uppercase tracking-wider block ${t.esOscuro ? 'text-amber-300' : 'text-[#d9480f]'}`}>
                     🎁 Premio al 1º del Ranking:
                   </span>
-                  <span className="text-xs font-black text-[#2b2140] truncate block">
+                  <span className={`text-xs font-black truncate block ${t.title}`}>
                     {semanalData.actual.premioSemanal.nombre}
                   </span>
-                  <span className="text-[10px] text-[#86542d] font-semibold block">
+                  <span className={`text-[10px] font-semibold block ${t.muted}`}>
                     Avatar exclusivo para el ganador semanal
                   </span>
                 </div>
               </div>
             ) : null}
 
-            <span className="text-[11px] font-bold text-[#5c3c00]">
-              Bonos al cierre: 🥇 +{semanalData?.actual?.puntosConfig?.primerLugar || 50} pts · 🥈 +{semanalData?.actual?.puntosConfig?.segundoLugar || 30} pts · 🥉 +{semanalData?.actual?.puntosConfig?.tercerLugar || 15} pts
+            <span className="text-[11px] font-bold">
+              Bonos al cierre: 🥇 +{semanalData?.actual?.puntosConfig?.primerLugar ?? 50} pts · 🥈 +{semanalData?.actual?.puntosConfig?.segundoLugar ?? 25} pts · 🥉 +{semanalData?.actual?.puntosConfig?.tercerLugar ?? 15} pts
             </span>
           </div>
         )}
 
         {tab === 'semana_pasada' && semanalData?.pasada?.premiados && semanalData.pasada.premiados.length > 0 && (
-          <div className="p-2.5 bg-[#d3f9d8] rounded-2xl border-2 border-[#2b2140] mb-2 text-[11px] font-black text-[#134e20]">
+          <div className={`p-2.5 rounded-2xl mb-2 text-[11px] font-black ${t.bannerSuccess}`}>
             🏆 Premios entregados:{' '}
             {semanalData.pasada.premiados
               .map((p) => `${p.puesto}º ${p.nombre} (+${p.bono} pts)`)
@@ -1188,8 +1300,8 @@ export const RankingModal: React.FC<RankingModalProps> = ({
         )}
 
         {!userActual && tab !== 'local' && (
-          <div className="p-2.5 bg-[#fff3bf] rounded-2xl border-2 border-[#2b2140] mb-2 flex items-center justify-between gap-2 shadow-sm text-xs">
-            <div className="text-[11px] font-bold text-[#8f4b00] leading-tight">
+          <div className={`p-2.5 rounded-2xl mb-2 flex items-center justify-between gap-2 shadow-sm text-xs ${t.bannerWarn}`}>
+            <div className="text-[11px] font-bold leading-tight">
               Juegas como <strong>Invitado</strong>. Inicia sesión para competir en Global y Esta Semana.
             </div>
             {onAbrirPerfil && (
@@ -1199,7 +1311,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
                   sounds.playClick();
                   onAbrirPerfil();
                 }}
-                className="py-1 px-2.5 rounded-xl bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] font-black text-xs shrink-0 shadow-sm hover:bg-[#fcc419] cursor-pointer"
+                className={`py-1 px-2.5 rounded-xl font-black text-xs shrink-0 cursor-pointer ${t.btnAmber}`}
               >
                 👤 Entrar
               </button>
@@ -1208,9 +1320,9 @@ export const RankingModal: React.FC<RankingModalProps> = ({
         )}
 
         {tab === 'local' && (
-          <div className="p-2.5 bg-[#e7f5ff] rounded-2xl border-2 border-[#2b2140] mb-2 flex flex-col gap-2 shadow-sm text-xs">
+          <div className={`p-2.5 rounded-2xl mb-2 flex flex-col gap-2 shadow-sm text-xs ${t.bannerInfo}`}>
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[11px] font-bold text-[#1864ab]">
+              <span className="text-[11px] font-bold">
                 Récords guardados únicamente en este dispositivo.
               </span>
               {!confirmandoBorrarLocal && (
@@ -1220,22 +1332,22 @@ export const RankingModal: React.FC<RankingModalProps> = ({
                     sounds.playClick();
                     setConfirmandoBorrarLocal(true);
                   }}
-                  className="py-1 px-2.5 rounded-xl bg-[#ffe3e3] text-[#c92a2a] border border-[#ff8787] font-black text-[11px] hover:bg-[#ffc9c9] cursor-pointer shrink-0"
+                  className={`py-1 px-2.5 rounded-xl font-black text-[11px] cursor-pointer shrink-0 ${t.btnDanger}`}
                 >
                   🗑️ Borrar Local
                 </button>
               )}
             </div>
             {confirmandoBorrarLocal && (
-              <div className="p-2 bg-white rounded-xl border border-[#c92a2a] flex items-center justify-between gap-2">
-                <span className="text-[11px] font-black text-[#c92a2a]">
+              <div className={`p-2 rounded-xl flex items-center justify-between gap-2 ${t.card}`}>
+                <span className={`text-[11px] font-black ${t.esOscuro ? 'text-rose-300' : 'text-[#c92a2a]'}`}>
                   ¿Confirmas borrar tu ranking local?
                 </span>
                 <div className="flex gap-1.5">
                   <button
                     type="button"
                     onClick={() => setConfirmandoBorrarLocal(false)}
-                    className="py-1 px-2 rounded-lg bg-[#f1f3f5] text-[#495057] font-bold text-[11px] cursor-pointer"
+                    className={`py-1 px-2 rounded-lg font-bold text-[11px] cursor-pointer ${t.btnNeutral}`}
                   >
                     Cancelar
                   </button>
@@ -1248,7 +1360,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
                       setConfirmandoBorrarLocal(false);
                       showToast('🧹 Ranking local borrado');
                     }}
-                    className="py-1 px-2.5 rounded-lg bg-[#c92a2a] text-white font-black text-[11px] cursor-pointer"
+                    className={`py-1 px-2.5 rounded-lg font-black text-[11px] cursor-pointer ${t.btnDanger}`}
                   >
                     Sí, borrar
                   </button>
@@ -1260,7 +1372,7 @@ export const RankingModal: React.FC<RankingModalProps> = ({
 
         <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-2 my-1">
           {entries.length === 0 ? (
-            <div className="p-8 text-center text-[#86542d] font-bold text-sm bg-white rounded-2xl border-2 border-dashed border-[#2b2140]/30 my-4">
+            <div className={`p-8 text-center font-bold text-sm rounded-2xl border-2 border-dashed my-4 ${t.card} ${t.muted}`}>
               <span className="text-3xl block mb-2">🏁</span>
               Aún no hay partidas registradas en esta categoría.
             </div>
@@ -1276,13 +1388,17 @@ export const RankingModal: React.FC<RankingModalProps> = ({
               return (
                 <div
                   key={`${tab}-${entry.id || entry.nombre}-${index}`}
-                  className={`p-2.5 sm:p-3 rounded-2xl border-2 border-[#2b2140] flex items-center gap-3 transition-all ${
+                  className={`p-2.5 sm:p-3 rounded-2xl flex items-center gap-3 transition-all ${
                     index === 0
-                      ? 'bg-gradient-to-r from-[#fff9db] to-white shadow-[0_3px_0_#2b2140]'
-                      : 'bg-white shadow-sm'
+                      ? t.esClasico
+                        ? 'bg-gradient-to-r from-[#fff9db] to-white border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140]'
+                        : t.esClaro
+                        ? 'bg-[#FCE8B8]/55 border border-[#EAD08E] shadow-xs'
+                        : 'bg-amber-300/12 border border-amber-300/35 shadow-xs'
+                      : `${t.card} shadow-sm`
                   }`}
                 >
-                  <div className="w-8 text-center font-black text-base sm:text-lg text-[#2b2140] flex-shrink-0">
+                  <div className={`w-8 text-center font-black text-base sm:text-lg flex-shrink-0 ${t.title}`}>
                     {medal}
                   </div>
 
@@ -1298,25 +1414,25 @@ export const RankingModal: React.FC<RankingModalProps> = ({
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-extrabold text-xs sm:text-sm text-[#2b2140] truncate">
+                      <span className={`font-extrabold text-xs sm:text-sm truncate ${t.title}`}>
                         {entry.nombre}
                       </span>
                       {tab !== 'local' && entry.id && (
-                        <span className="text-[10px] font-mono font-bold text-[#86542d] bg-[#fff3bf]/70 px-1.5 py-0.2 rounded border border-[#2b2140]/20">
+                        <span className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded ${t.badgeNeutral}`}>
                           @{entry.id}
                         </span>
                       )}
-                      <span className="text-[10px] text-[#8f4b00] font-bold">
+                      <span className={`text-[10px] font-bold ${t.muted}`}>
                         · {lvl.icono} {lvl.titulo}
                       </span>
                       {bonoProyectado > 0 && (
-                        <span className="text-[9px] bg-[#51cf66] text-[#134e20] font-black px-1.5 py-0.5 rounded border border-[#2b2140]">
+                        <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${t.bannerSuccess}`}>
                           +{bonoProyectado} pts premio
                         </span>
                       )}
                     </div>
 
-                    <div className="flex items-center gap-2 text-[11px] text-[#86542d] font-semibold mt-0.5">
+                    <div className={`flex items-center gap-2 text-[11px] font-semibold mt-0.5 ${t.muted}`}>
                       <span>
                         {entry.victorias}V / {entry.partidas}P ({winRate}% victorias)
                       </span>
@@ -1324,9 +1440,9 @@ export const RankingModal: React.FC<RankingModalProps> = ({
                   </div>
 
                   <div className="text-right flex-shrink-0">
-                    <div className="text-sm sm:text-base font-black text-[#2b2140]">
+                    <div className={`text-sm sm:text-base font-black ${t.title}`}>
                       {entry.puntosTotales}{' '}
-                      <span className="text-[10px] font-normal text-[#86542d]">pts</span>
+                      <span className={`text-[10px] font-normal ${t.muted}`}>pts</span>
                     </div>
                   </div>
                 </div>
@@ -1335,14 +1451,14 @@ export const RankingModal: React.FC<RankingModalProps> = ({
           )}
         </div>
 
-        <div className="pt-3 mt-2 border-t-2 border-[#2b2140]/15 flex items-center justify-between gap-2 text-xs">
+        <div className={`pt-3 mt-2 border-t-2 flex items-center justify-between gap-2 text-xs ${t.divider}`}>
           <button
             onClick={() => {
               sounds.playClick();
               refrescarRanking(true);
             }}
             disabled={sincronizando}
-            className="py-1.5 px-3.5 rounded-xl font-black bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#fff9db] active:translate-y-0.5 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+            className={`py-1.5 px-3.5 rounded-xl font-black cursor-pointer flex items-center gap-1.5 disabled:opacity-50 ${t.btnNeutral}`}
           >
             <span className={sincronizando ? 'animate-spin' : ''}>🔄</span>
             <span>{sincronizando ? 'Sincronizando...' : 'Actualizar Database'}</span>
@@ -1353,14 +1469,20 @@ export const RankingModal: React.FC<RankingModalProps> = ({
               sounds.playClick();
               onCerrar();
             }}
-            className="py-1.5 px-4 rounded-xl font-black bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer"
+            className={`py-1.5 px-4 rounded-xl font-black cursor-pointer ${t.btnPrimary}`}
           >
             Cerrar
           </button>
         </div>
 
         {mensajeToast && (
-          <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-[#2b2140] text-white text-xs font-bold py-1.5 px-4 rounded-full shadow-lg border border-white/20 animate-[slideUp_0.2s_ease-out]">
+          <div
+            className={`absolute bottom-16 left-1/2 -translate-x-1/2 text-xs font-bold py-1.5 px-4 rounded-full shadow-lg border animate-[slideUp_0.2s_ease-out] ${
+              t.esOscuro
+                ? 'bg-slate-800 text-slate-100 border-white/20'
+                : 'bg-[#2b2140] text-white border-white/20'
+            }`}
+          >
             {mensajeToast}
           </div>
         )}
@@ -1387,6 +1509,7 @@ export const TorneoModal: React.FC<TorneoModalProps> = ({
   onFinalizarTorneo,
   onVerTablero,
 }) => {
+  const { t } = useMurosTheme();
   const esFinal = torneo.terminado;
   const ultimaRonda =
     torneo.historialRondas.length > 0
@@ -1408,16 +1531,16 @@ export const TorneoModal: React.FC<TorneoModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-      <div className="relative w-full max-w-md bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 sm:p-6 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col text-center max-h-[92vh]">
+      <div className={`relative w-full max-w-md rounded-3xl p-5 sm:p-6 flex flex-col text-center max-h-[92vh] ${t.shellModal}`}>
         <div className="text-4xl mb-1">{esFinal ? '👑' : '🏁'}</div>
 
-        <h3 className="text-xl sm:text-2xl font-black text-[#2b2140] mb-0.5">
+        <h3 className={`text-xl sm:text-2xl font-black mb-0.5 ${t.title}`}>
           {esFinal
             ? '¡Gran Final del Torneo!'
             : `Torneo: Ronda ${torneo.rondaActual} de ${torneo.totalRondas}`}
         </h3>
 
-        <p className="text-xs text-[#593922] font-semibold mb-2">
+        <p className={`text-xs font-semibold mb-2 ${t.sub}`}>
           {esFinal
             ? `¡${granCampeon.nombre} gana el torneo y recibe +10 pts extra de campeón!`
             : ganadorRonda
@@ -1426,13 +1549,13 @@ export const TorneoModal: React.FC<TorneoModalProps> = ({
         </p>
 
         {esFinal && (
-          <div className="p-2 mb-2 rounded-xl bg-[#d3f9d8] border-2 border-[#2b2140] text-xs font-black text-[#134e20]">
+          <div className={`p-2 mb-2 rounded-xl text-xs font-black ${t.bannerSuccess}`}>
             🏆 Bono Campeón del Torneo: +10 pts sumados al total de {granCampeon.nombre}
           </div>
         )}
 
-        <div className="bg-white rounded-2xl border-2 border-[#2b2140] p-3 shadow-inner my-2 flex flex-col gap-2 max-h-56 overflow-y-auto">
-          <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-[#593922]">
+        <div className={`rounded-2xl p-3 shadow-inner my-2 flex flex-col gap-2 max-h-56 overflow-y-auto ${t.cardInner}`}>
+          <div className={`flex items-center justify-between text-[10px] font-black uppercase tracking-wider ${t.sub}`}>
             <span>Tabla Acumulada</span>
             <span>Victoria +5 · Muro +1 · Campeón +10</span>
           </div>
@@ -1443,12 +1566,18 @@ export const TorneoModal: React.FC<TorneoModalProps> = ({
             return (
               <div
                 key={p.id}
-                className={`p-2 rounded-xl border-2 border-[#2b2140] flex items-center justify-between gap-2 ${
-                  idx === 0 ? 'bg-[#fff9db] font-extrabold' : 'bg-[#f8f9fa]'
+                className={`p-2 rounded-xl flex items-center justify-between gap-2 ${
+                  idx === 0
+                    ? t.esClasico
+                      ? 'bg-[#fff9db] border-2 border-[#2b2140] font-extrabold'
+                      : t.esClaro
+                      ? 'bg-[#FCE8B8]/65 border border-[#EAD08E] font-extrabold'
+                      : 'bg-amber-300/15 border border-amber-300/40 font-extrabold'
+                    : t.card
                 }`}
               >
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-sm font-black w-5">{idx === 0 ? '🥇' : `${idx + 1}º`}</span>
+                  <span className={`text-sm font-black w-5 ${t.title}`}>{idx === 0 ? '🥇' : `${idx + 1}º`}</span>
                   <CartoonCharacter
                     color={p.color}
                     hat={p.hat}
@@ -1459,29 +1588,29 @@ export const TorneoModal: React.FC<TorneoModalProps> = ({
                     showShadow={false}
                   />
                   <div className="text-left min-w-0">
-                    <span className="text-xs font-bold text-[#2b2140] block truncate">{p.nombre}</span>
-                    <span className="text-[10px] text-[#2b8a3e] font-bold block">
+                    <span className={`text-xs font-bold block truncate ${t.title}`}>{p.nombre}</span>
+                    <span className={`text-[10px] font-bold block ${t.accentText}`}>
                       Ronda {torneo.rondaActual}: +{ptsEstaRonda} pts
                     </span>
                   </div>
                 </div>
                 <div className="text-right flex-shrink-0">
-                  <span className="text-xs font-black text-[#2b2140] block">{pts} pts</span>
-                  <span className="text-[10px] text-[#86542d] font-semibold block">{vic} vic</span>
+                  <span className={`text-xs font-black block ${t.title}`}>{pts} pts</span>
+                  <span className={`text-[10px] font-semibold block ${t.muted}`}>{vic} vic</span>
                 </div>
               </div>
             );
           })}
         </div>
 
-        <div className="pt-3 mt-2 border-t-2 border-[#2b2140]/15 flex flex-col gap-2">
+        <div className={`pt-3 mt-2 border-t-2 flex flex-col gap-2 ${t.divider}`}>
           {!esFinal ? (
             <button
               onClick={() => {
                 sounds.playClick();
                 onSiguienteRonda();
               }}
-              className="w-full py-3 rounded-2xl font-black text-sm sm:text-base bg-[#51cf66] text-[#134e20] border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140] hover:bg-[#40c057] active:translate-y-1 cursor-pointer"
+              className={`w-full py-3 rounded-2xl font-black text-sm sm:text-base cursor-pointer ${t.btnPrimary}`}
             >
               ▶ Siguiente Ronda ({torneo.rondaActual + 1} de {torneo.totalRondas})
             </button>
@@ -1491,7 +1620,7 @@ export const TorneoModal: React.FC<TorneoModalProps> = ({
                 sounds.playClick();
                 onFinalizarTorneo();
               }}
-              className="w-full py-3 rounded-2xl font-black text-sm sm:text-base bg-[#ffd43b] text-[#5c3c00] border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140] hover:bg-[#fcc419] active:translate-y-1 cursor-pointer"
+              className={`w-full py-3 rounded-2xl font-black text-sm sm:text-base cursor-pointer ${t.btnAmber}`}
             >
               🏆 Concluir Torneo y Volver al Menú
             </button>
@@ -1502,7 +1631,7 @@ export const TorneoModal: React.FC<TorneoModalProps> = ({
               sounds.playClick();
               onVerTablero();
             }}
-            className="w-full py-2 rounded-xl font-bold text-xs bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#f8f9fa] active:translate-y-0.5 cursor-pointer"
+            className={`w-full py-2 rounded-xl font-bold text-xs cursor-pointer ${t.btnNeutral}`}
           >
             👀 Ver Tablero
           </button>
@@ -1548,6 +1677,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
   onRechazarRevancha,
   onCancelarEsperaRevancha,
 }) => {
+  const { t } = useMurosTheme();
   const ganador =
     estado.ganador !== null && estado.ganador >= 0
       ? estado.jugadores[estado.ganador]
@@ -1618,16 +1748,16 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-      <div className="relative w-full max-w-sm bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col text-center max-h-[92vh] overflow-y-auto">
+      <div className={`relative w-full max-w-sm rounded-3xl p-5 flex flex-col text-center max-h-[92vh] overflow-y-auto ${t.shellModal}`}>
         <div className="text-4xl mb-1 animate-bounce">🏆</div>
 
-        <h3 className="text-2xl font-black text-[#2b2140] mb-0.5">¡Partida Finalizada!</h3>
-        <p className="text-xs text-[#593922] font-semibold mb-2">
-          ¡<strong className="text-[#2b2140]">{ganador.nombre}</strong> ha ganado la carrera!
+        <h3 className={`text-2xl font-black mb-0.5 ${t.title}`}>¡Partida Finalizada!</h3>
+        <p className={`text-xs font-semibold mb-2 ${t.sub}`}>
+          ¡<strong className={t.title}>{ganador.nombre}</strong> ha ganado la carrera!
         </p>
 
-        <div className="w-full bg-[#f1f3f5] rounded-xl border border-[#2b2140] p-1.5 mb-2">
-          <div className="flex items-center justify-between text-[11px] font-black text-[#593922] mb-1">
+        <div className={`w-full rounded-xl p-1.5 mb-2 ${t.cardInner}`}>
+          <div className={`flex items-center justify-between text-[11px] font-black mb-1 ${t.sub}`}>
             <span>
               {enConfirmacionRevancha
                 ? '⏸️ Salida pausada durante confirmación:'
@@ -1636,14 +1766,14 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
             <span
               className={`font-mono-num font-black ${
                 !enConfirmacionRevancha && segundosRestantes <= 5
-                  ? 'text-[#c92a2a] animate-pulse'
-                  : 'text-[#2b2140]'
+                  ? `${t.esOscuro ? 'text-rose-300' : 'text-[#c92a2a]'} animate-pulse`
+                  : t.title
               }`}
             >
               {segundosRestantes}s
             </span>
           </div>
-          <div className="w-full bg-[#dee2e6] h-2 rounded-full overflow-hidden">
+          <div className={`w-full h-2 rounded-full overflow-hidden ${t.track}`}>
             <div
               className={`h-full transition-all duration-1000 ease-linear ${
                 segundosRestantes <= 5
@@ -1657,7 +1787,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center justify-center gap-1.5 mb-2 overflow-x-auto p-1 bg-[#ede4d0] rounded-xl border-2 border-[#2b2140]">
+        <div className={`flex items-center justify-center gap-1.5 mb-2 overflow-x-auto p-1 rounded-xl ${t.track}`}>
           {estado.jugadores.map((p) => (
             <button
               key={p.id}
@@ -1666,9 +1796,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
                 setSelectedPlayerId(p.id);
               }}
               className={`py-1 px-2.5 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1 ${
-                selectedPlayerId === p.id
-                  ? 'bg-white text-[#2b2140] border border-[#2b2140] shadow-sm'
-                  : 'text-[#86542d] hover:text-[#2b2140]'
+                selectedPlayerId === p.id ? t.tabActive : t.tabInactive
               }`}
             >
               <span>{p.id === ganador.id ? '👑' : '👤'}</span>
@@ -1688,56 +1816,56 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
           />
         </div>
 
-        <div className="bg-white rounded-2xl border-2 border-[#2b2140] p-3 shadow-inner my-2 text-xs flex flex-col gap-1 text-left">
-          <span className="text-[10px] font-black uppercase text-[#86542d] mb-0.5 block">
+        <div className={`rounded-2xl p-3 shadow-inner my-2 text-xs flex flex-col gap-1 text-left ${t.card}`}>
+          <span className={`text-[10px] font-black uppercase mb-0.5 block ${t.muted}`}>
             Desglose de Puntos · {jugadorSeleccionado.nombre}
           </span>
-          <div className="flex justify-between text-[#86542d] font-semibold">
+          <div className={`flex justify-between font-semibold ${t.muted}`}>
             <span>{jugadorDesglose.resultado > 0 ? '🏆 Partida ganada:' : 'Partida jugada:'}</span>
             <span className="font-mono-num font-bold">+{jugadorDesglose.resultado}</span>
           </div>
-          <div className="flex justify-between text-[#86542d] font-semibold">
+          <div className={`flex justify-between font-semibold ${t.muted}`}>
             <span>🧱 Muros usados ({jugadorSeleccionado.estadisticas.murosColocados} × 1 pt):</span>
             <span className="font-mono-num font-bold">+{jugadorDesglose.murosUsados}</span>
           </div>
           {jugadorDesglose.finalCerrado > 0 && (
-            <div className="flex justify-between text-[#d9480f] font-bold">
+            <div className={`flex justify-between font-bold ${t.esOscuro ? 'text-amber-300' : 'text-[#d9480f]'}`}>
               <span>⚡ ¡Por los pelos! (rival a 1 cuadro):</span>
               <span className="font-mono-num">+{jugadorDesglose.finalCerrado}</span>
             </div>
           )}
           {Boolean(jugadorDesglose.bonoDominacion && jugadorDesglose.bonoDominacion > 0) && (
-            <div className="flex justify-between text-[#2b8a3e] font-bold">
+            <div className={`flex justify-between font-bold ${t.accentText}`}>
               <span>🎯 Dominación (rival retenido en inicio ≤2 casillas):</span>
               <span className="font-mono-num">+{jugadorDesglose.bonoDominacion}</span>
             </div>
           )}
           {jugadorDesglose.bonoTorneo > 0 && (
-            <div className="flex justify-between text-[#2b8a3e] font-bold">
+            <div className={`flex justify-between font-bold ${t.accentText}`}>
               <span>👑 Campeón del Torneo:</span>
               <span className="font-mono-num">+{jugadorDesglose.bonoTorneo}</span>
             </div>
           )}
           {jugadorDesglose.penalizaciones.total > 0 && (
-            <div className="flex justify-between text-[#c92a2a] font-semibold">
+            <div className={`flex justify-between font-semibold ${t.esOscuro ? 'text-rose-300' : 'text-[#c92a2a]'}`}>
               <span>Penalizaciones (pistas/deshacer/tiempo):</span>
               <span className="font-mono-num">-{jugadorDesglose.penalizaciones.total}</span>
             </div>
           )}
-          <div className="pt-1.5 mt-1 border-t-2 border-[#2b2140]/10 flex justify-between font-black text-sm text-[#2b2140]">
+          <div className={`pt-1.5 mt-1 border-t-2 flex justify-between font-black text-sm ${t.divider} ${t.title}`}>
             <span>Total obtenido:</span>
-            <span className="font-mono-num text-[#2b8a3e]">+{jugadorDesglose.total} pts</span>
+            <span className={`font-mono-num ${t.accentText}`}>+{jugadorDesglose.total} pts</span>
           </div>
         </div>
 
         {miSubidaNivel && (
-          <div className="p-2 bg-[#d3f9d8] rounded-xl border-2 border-[#2b2140] text-xs font-black text-[#134e20] mb-2 flex items-center justify-center gap-1.5 animate-pulse">
+          <div className={`p-2 rounded-xl text-xs font-black mb-2 flex items-center justify-center gap-1.5 animate-pulse ${t.bannerSuccess}`}>
             <span>🌟</span> ¡Subiste a Nivel {miSubidaNivel.nuevo.nivel}: {miSubidaNivel.nuevo.titulo}!
           </div>
         )}
 
         {misNuevosLogros.length > 0 && (
-          <div className="p-2 bg-[#fff3bf] rounded-xl border-2 border-[#2b2140] text-xs font-black text-[#8f4b00] mb-2 flex items-center justify-center gap-1.5">
+          <div className={`p-2 rounded-xl text-xs font-black mb-2 flex items-center justify-center gap-1.5 ${t.bannerWarn}`}>
             <span>🎖️</span> ¡Nuevo logro desbloqueado: {misNuevosLogros[0].titulo}!
           </div>
         )}
@@ -1745,21 +1873,21 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
         <div className="pt-2 flex flex-col gap-2">
           {estado.modoOnline && estadoRevanchaOnline === 'no_disponible' ? (
             <div className="flex flex-col gap-1.5">
-              <div className="p-2.5 rounded-xl bg-[#ffe3e3] border-2 border-[#c92a2a] text-xs font-black text-[#c92a2a] leading-snug">
+              <div className={`p-2.5 rounded-xl text-xs font-black leading-snug ${t.bannerDanger}`}>
                 {mensajeRevanchaNoDisponible ||
                   '⚠️ Esa opción ya no es válida ya que el jugador acaba de retirarse.'}
               </div>
               <button
                 type="button"
                 disabled
-                className="w-full py-2.5 rounded-xl font-black text-xs bg-[#e9ecef] text-[#868e96] border-2 border-[#adb5bd] cursor-not-allowed"
+                className={`w-full py-2.5 rounded-xl font-black text-xs opacity-60 cursor-not-allowed ${t.btnNeutral}`}
               >
                 🚫 Revancha no disponible · Jugador retirado
               </button>
             </div>
           ) : estado.modoOnline && estadoRevanchaOnline === 'recibida' ? (
-            <div className="p-2.5 rounded-2xl bg-[#fff3bf] border-2 border-[#2b2140] flex flex-col gap-2 shadow-sm">
-              <p className="text-xs font-black text-[#2b2140] leading-snug">
+            <div className={`p-2.5 rounded-2xl flex flex-col gap-2 shadow-sm ${t.bannerWarn}`}>
+              <p className="text-xs font-black leading-snug">
                 🔄 <strong>{solicitanteRevancha || 'El otro jugador'}</strong> pidió una revancha.
                 ¿Confirmas jugar de nuevo?
               </p>
@@ -1770,7 +1898,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
                     sounds.playClick();
                     onAceptarRevancha?.();
                   }}
-                  className="py-2 rounded-xl font-black text-xs bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer"
+                  className={`py-2 rounded-xl font-black text-xs cursor-pointer ${t.btnPrimary}`}
                 >
                   ✓ Sí, jugar
                 </button>
@@ -1780,7 +1908,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
                     sounds.playClick();
                     onRechazarRevancha?.();
                   }}
-                  className="py-2 rounded-xl font-black text-xs bg-[#ffe3e3] text-[#c92a2a] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#ffc9c9] active:translate-y-0.5 cursor-pointer"
+                  className={`py-2 rounded-xl font-black text-xs cursor-pointer ${t.btnDanger}`}
                 >
                   ✕ Retirarme
                 </button>
@@ -1791,7 +1919,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
               <button
                 type="button"
                 disabled
-                className="flex-1 py-2.5 px-3 rounded-xl font-black text-xs bg-[#fff3bf] text-[#8f4b00] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] flex items-center justify-center gap-2 cursor-wait"
+                className={`flex-1 py-2.5 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-2 cursor-wait ${t.btnAmber}`}
               >
                 <span className="animate-spin">⏳</span>
                 <span>Esperando confirmación...</span>
@@ -1803,7 +1931,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
                     sounds.playClick();
                     onCancelarEsperaRevancha();
                   }}
-                  className="py-2.5 px-3 rounded-xl font-black text-xs bg-white text-[#c92a2a] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#ffe3e3] cursor-pointer shrink-0"
+                  className={`py-2.5 px-3 rounded-xl font-black text-xs cursor-pointer shrink-0 ${t.btnDanger}`}
                   title="Cancelar espera de revancha"
                 >
                   ✕ Cancelar
@@ -1816,7 +1944,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
                 sounds.playClick();
                 onRevancha();
               }}
-              className="w-full py-2.5 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer"
+              className={`w-full py-2.5 rounded-xl font-black text-sm cursor-pointer ${t.btnPrimary}`}
             >
               🔄 Jugar Revancha
             </button>
@@ -1827,7 +1955,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
                 sounds.playClick();
                 onVerTablero();
               }}
-              className="py-2 rounded-xl font-bold text-xs bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#f8f9fa] active:translate-y-0.5 cursor-pointer"
+              className={`py-2 rounded-xl font-bold text-xs cursor-pointer ${t.btnNeutral}`}
             >
               👀 Ver Tablero
             </button>
@@ -1836,7 +1964,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
                 sounds.playClick();
                 onVerRanking();
               }}
-              className="py-2 rounded-xl font-bold text-xs bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#fcc419] active:translate-y-0.5 cursor-pointer"
+              className={`py-2 rounded-xl font-bold text-xs cursor-pointer ${t.btnAmber}`}
             >
               🏆 Ver Ranking
             </button>
@@ -1846,7 +1974,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
               sounds.playClick();
               onIrAlMenu();
             }}
-            className="w-full py-2 rounded-xl font-bold text-xs bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#f1f3f5] active:translate-y-0.5 cursor-pointer"
+            className={`w-full py-2 rounded-xl font-bold text-xs cursor-pointer ${t.btnNeutral}`}
           >
             🏠 Volver al Menú
           </button>
@@ -1874,6 +2002,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
   onAbrirAdmin,
   onCerrar,
 }) => {
+  const { t } = useMurosTheme();
   const [tab, setTab] = useState<'login' | 'registro'>('login');
   const [perfilSubTab, setPerfilSubTab] = useState<'mi_perfil' | 'comunidad'>('mi_perfil');
   const [confirmandoBaja, setConfirmandoBaja] = useState(false);
@@ -1973,9 +2102,9 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-      <div className="relative w-full max-w-sm bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col max-h-[92vh] overflow-y-auto">
-        <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
-          <h3 className="text-xl font-black text-[#2b2140] flex items-center gap-2">
+      <div className={`relative w-full max-w-sm rounded-3xl p-5 flex flex-col max-h-[92vh] overflow-y-auto ${t.shellModal}`}>
+        <div className={`flex items-center justify-between pb-3 mb-2 border-b-2 ${t.divider}`}>
+          <h3 className={`text-xl font-black flex items-center gap-2 ${t.title}`}>
             <span>👤</span> {userActual ? 'Mi Perfil' : 'Perfil y Cuenta'}
           </h3>
           <button
@@ -1983,7 +2112,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
               sounds.playClick();
               onCerrar();
             }}
-            className="w-8 h-8 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-sm font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] flex items-center justify-center cursor-pointer"
+            className={`w-8 h-8 rounded-full text-sm font-black flex items-center justify-center cursor-pointer transition-colors ${t.closeBtn}`}
           >
             ✕
           </button>
@@ -1991,7 +2120,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
 
         {/* Estado Database en Perfil */}
         {diag.checkedOnce && !diag.dbConectado && (
-          <div className="p-2.5 mb-2 bg-[#ffe3e3] rounded-xl border-2 border-[#c92a2a] text-[11px] font-bold text-[#c92a2a] flex items-center justify-between gap-2">
+          <div className={`p-2.5 mb-2 rounded-xl text-[11px] font-bold flex items-center justify-between gap-2 ${t.bannerDanger}`}>
             <span>⚠️ Sin conexión a la Database: no se pueden enviar o recibir cambios.</span>
             <button
               type="button"
@@ -1999,7 +2128,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                 pingServidor();
                 sincronizarConNube(true);
               }}
-              className="py-1 px-2 bg-white rounded-lg border border-[#c92a2a] text-[10px] font-black cursor-pointer shrink-0"
+              className={`py-1 px-2 rounded-lg text-[10px] font-black cursor-pointer shrink-0 ${t.btnNeutral}`}
             >
               🔄 Conectar
             </button>
@@ -2008,7 +2137,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
 
         {userActual ? (
           <div className="flex flex-col gap-3 py-1">
-            <div className="grid grid-cols-2 p-1 bg-[#ede4d0] rounded-xl border-2 border-[#2b2140]">
+            <div className={`grid grid-cols-2 p-1 rounded-xl ${t.track}`}>
               <button
                 type="button"
                 onClick={() => {
@@ -2016,9 +2145,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                   setPerfilSubTab('mi_perfil');
                 }}
                 className={`py-1.5 rounded-lg font-black text-xs transition-all cursor-pointer ${
-                  perfilSubTab === 'mi_perfil'
-                    ? 'bg-white text-[#2b2140] border border-[#2b2140] shadow-sm'
-                    : 'text-[#86542d]'
+                  perfilSubTab === 'mi_perfil' ? t.tabActive : t.tabInactive
                 }`}
               >
                 👤 Mi Perfil
@@ -2030,9 +2157,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                   setPerfilSubTab('comunidad');
                 }}
                 className={`py-1.5 rounded-lg font-black text-xs transition-all cursor-pointer ${
-                  perfilSubTab === 'comunidad'
-                    ? 'bg-white text-[#2b2140] border border-[#2b2140] shadow-sm'
-                    : 'text-[#86542d]'
+                  perfilSubTab === 'comunidad' ? t.tabActive : t.tabInactive
                 }`}
               >
                 👥 Comunidad ({Object.keys(todasLasCuentas).length})
@@ -2041,7 +2166,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
 
             {perfilSubTab === 'mi_perfil' ? (
               <>
-                <div className="flex items-center gap-3 p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm">
+                <div className={`flex items-center gap-3 p-3 rounded-2xl shadow-sm ${t.card}`}>
                   <CartoonCharacter
                     color={userActual.avatarColor}
                     hat={userActual.avatarHat}
@@ -2053,33 +2178,33 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-black text-base text-[#2b2140] truncate">
+                      <span className={`font-black text-base truncate ${t.title}`}>
                         {userActual.nombre}
                       </span>
                       {(userActual.rol === 'dev' || userActual.id === 'admin') && (
-                        <span className="text-[10px] font-black text-[#d9480f]">
+                        <span className={`text-[10px] font-black ${t.esOscuro ? 'text-amber-300' : 'text-[#d9480f]'}`}>
                           · 👑 {userActual.id === 'admin' ? 'Dev Supremo' : 'Dev'}
                         </span>
                       )}
                       {userActual.rol === 'admin' && userActual.id !== 'admin' && (
-                        <span className="text-[10px] font-black text-[#364fc7]">
+                        <span className={`text-[10px] font-black ${t.esOscuro ? 'text-indigo-300' : 'text-[#364fc7]'}`}>
                           · 🛡️ Admin
                         </span>
                       )}
                       {userActual.rol === 'mod' && (
-                        <span className="text-[10px] font-black text-[#099268]">
+                        <span className={`text-[10px] font-black ${t.accentText}`}>
                           · 🔰 Mod
                         </span>
                       )}
                     </div>
-                    <span className="text-[11px] font-semibold text-[#495057] block">
+                    <span className={`text-[11px] font-semibold block ${t.sub}`}>
                       ID: {userActual.id} · {obtenerNivelYTitulo(userActual.puntos).titulo}
                     </span>
-                    <span className="text-xs font-black text-[#2b8a3e] block">
+                    <span className={`text-xs font-black block ${t.accentText}`}>
                       {userActual.puntos} puntos acumulados
                     </span>
                     {userActual.id !== 'admin' && perfilNombre.trim() !== userActual.nombre && (
-                      <span className="text-[10px] font-black text-[#d9480f] block mt-0.5">
+                      <span className={`text-[10px] font-black block mt-0.5 ${t.esOscuro ? 'text-amber-300' : 'text-[#d9480f]'}`}>
                         👀 Nombre sin guardar · Pulsa Guardar abajo
                       </span>
                     )}
@@ -2087,15 +2212,15 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 text-center">
-                  <div className="p-2.5 bg-white rounded-xl border-2 border-[#2b2140]">
-                    <span className="text-[11px] font-bold text-[#86542d] block">Victorias</span>
-                    <span className="text-lg font-black text-[#2b2140]">
+                  <div className={`p-2.5 rounded-xl ${t.card}`}>
+                    <span className={`text-[11px] font-bold block ${t.muted}`}>Victorias</span>
+                    <span className={`text-lg font-black ${t.title}`}>
                       {userActual.victorias} / {userActual.partidas}
                     </span>
                   </div>
-                  <div className="p-2.5 bg-white rounded-xl border-2 border-[#2b2140]">
-                    <span className="text-[11px] font-bold text-[#86542d] block">Nivel Actual</span>
-                    <span className="text-sm font-black text-[#2b2140]">
+                  <div className={`p-2.5 rounded-xl ${t.card}`}>
+                    <span className={`text-[11px] font-bold block ${t.muted}`}>Nivel Actual</span>
+                    <span className={`text-sm font-black ${t.title}`}>
                       {obtenerNivelYTitulo(userActual.puntos).icono} {obtenerNivelYTitulo(userActual.puntos).titulo}
                     </span>
                   </div>
@@ -2103,25 +2228,25 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
 
                 {/* Nombre visible en Perfil */}
                 {userActual.id !== 'admin' && (
-                  <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] flex flex-col gap-2 shadow-sm text-left">
+                  <div className={`p-3 rounded-2xl flex flex-col gap-2 shadow-sm text-left ${t.card}`}>
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-black text-[#593922] uppercase tracking-wider">
+                      <span className={`text-xs font-black uppercase tracking-wider ${t.sub}`}>
                         Nombre de Perfil
                       </span>
                       {toastMsg && (
-                        <span className="text-[10px] text-[#e03131] font-black animate-pulse">
+                        <span className={`text-[10px] font-black animate-pulse ${t.esOscuro ? 'text-rose-300' : 'text-[#e03131]'}`}>
                           {toastMsg}
                         </span>
                       )}
                       {guardadoOkMsg && (
-                        <span className="text-[10px] text-[#2b8a3e] font-black animate-bounce">
+                        <span className={`text-[10px] font-black animate-bounce ${t.accentText}`}>
                           ✓ ¡Guardado!
                         </span>
                       )}
                     </div>
 
                     <div>
-                      <label className="text-[10px] font-bold text-[#86542d] block mb-0.5">
+                      <label className={`text-[10px] font-bold block mb-0.5 ${t.muted}`}>
                         Nombre visible (3 a 15 caracteres):
                       </label>
                       <input
@@ -2130,7 +2255,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                         maxLength={15}
                         value={perfilNombre}
                         onChange={(e) => setPerfilNombre(e.target.value)}
-                        className="w-full text-xs font-bold text-[#2b2140] bg-[#f8f9fa] border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-[#ffd43b]"
+                        className={`w-full text-xs font-bold rounded-xl px-2.5 py-1.5 outline-none ${t.input}`}
                       />
                     </div>
 
@@ -2167,7 +2292,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                           setGuardandoPreferencias(false);
                         }
                       }}
-                      className="w-full py-1.5 rounded-xl font-black text-xs bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer mt-1 flex items-center justify-center gap-1.5"
+                      className={`w-full py-1.5 rounded-xl font-black text-xs cursor-pointer mt-1 flex items-center justify-center gap-1.5 ${t.btnPrimary}`}
                     >
                       <span>💾</span>
                       <span>
@@ -2186,7 +2311,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                       sounds.playClick();
                       onAbrirAdmin();
                     }}
-                    className="w-full py-2.5 rounded-xl font-black text-xs bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer flex items-center justify-center gap-1.5"
+                    className={`w-full py-2.5 rounded-xl font-black text-xs cursor-pointer flex items-center justify-center gap-1.5 ${t.btnAmber}`}
                   >
                     <span>
                       {userActual.rol === 'dev' || userActual.id === 'admin'
@@ -2212,13 +2337,13 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                     onLogout();
                     onCerrar();
                   }}
-                  className="w-full py-2 rounded-xl font-bold text-xs bg-white text-[#c92a2a] border-2 border-[#2b2140] hover:bg-[#ffe3e3] cursor-pointer"
+                  className={`w-full py-2 rounded-xl font-bold text-xs cursor-pointer ${t.btnDanger}`}
                 >
                   Cerrar Sesión
                 </button>
 
                 {/* Formulario de Cambio de Contraseña Personal */}
-                <div className="pt-2 border-t border-[#2b2140]/15">
+                <div className={`pt-2 border-t ${t.divider}`}>
                   {!mostrandoCambioClave ? (
                     <button
                       type="button"
@@ -2228,28 +2353,28 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                         setCambioClaveError(null);
                         setCambioClaveOk(false);
                       }}
-                      className="w-full py-1.5 px-3 rounded-xl font-bold text-[11px] bg-white text-[#2b2140] border border-[#2b2140]/30 hover:bg-[#fff9db] cursor-pointer flex items-center justify-center gap-1.5"
+                      className={`w-full py-1.5 px-3 rounded-xl font-bold text-[11px] cursor-pointer flex items-center justify-center gap-1.5 ${t.btnNeutral}`}
                     >
                       <span>🔑</span>
                       <span>Cambiar mi contraseña</span>
                     </button>
                   ) : (
-                    <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] flex flex-col gap-2 text-left">
+                    <div className={`p-3 rounded-2xl flex flex-col gap-2 text-left ${t.card}`}>
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-black text-[#2b2140] flex items-center gap-1">
+                        <span className={`text-xs font-black flex items-center gap-1 ${t.title}`}>
                           <span>🔑</span> Cambiar Contraseña
                         </span>
                         <button
                           type="button"
                           onClick={() => setMostrandoCambioClave(false)}
-                          className="text-[10px] text-[#86542d] font-bold hover:underline cursor-pointer"
+                          className={`text-[10px] font-bold hover:underline cursor-pointer ${t.muted}`}
                         >
                           Cancelar
                         </button>
                       </div>
 
                       {cambioClaveOk ? (
-                        <div className="p-2 bg-[#d3f9d8] text-[#134e20] text-xs font-bold rounded-xl border border-[#2b8a3e] text-center">
+                        <div className={`p-2 text-xs font-bold rounded-xl text-center ${t.bannerSuccess}`}>
                           ✅ Contraseña actualizada correctamente en la Database.
                         </div>
                       ) : (
@@ -2275,7 +2400,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                           className="flex flex-col gap-2"
                         >
                           <div>
-                            <label className="text-[10px] font-bold text-[#86542d] block mb-0.5">
+                            <label className={`text-[10px] font-bold block mb-0.5 ${t.muted}`}>
                               Contraseña actual:
                             </label>
                             <input
@@ -2284,12 +2409,12 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                               value={claveActualInput}
                               onChange={(e) => setClaveActualInput(e.target.value)}
                               placeholder="••••••••"
-                              className="w-full text-xs font-bold bg-[#f8f9fa] border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none"
+                              className={`w-full text-xs font-bold rounded-xl px-2.5 py-1.5 outline-none ${t.input}`}
                             />
                           </div>
 
                           <div>
-                            <label className="text-[10px] font-bold text-[#86542d] block mb-0.5">
+                            <label className={`text-[10px] font-bold block mb-0.5 ${t.muted}`}>
                               Nueva contraseña:
                             </label>
                             <input
@@ -2299,12 +2424,12 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                               value={nuevaClaveInput}
                               onChange={(e) => setNuevaClaveInput(e.target.value)}
                               placeholder="Mínimo 4 caracteres"
-                              className="w-full text-xs font-bold bg-[#f8f9fa] border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none"
+                              className={`w-full text-xs font-bold rounded-xl px-2.5 py-1.5 outline-none ${t.input}`}
                             />
                           </div>
 
                           {cambioClaveError && (
-                            <span className="text-[10px] font-bold text-[#c92a2a] block">
+                            <span className={`text-[10px] font-bold block ${t.esOscuro ? 'text-rose-300' : 'text-[#c92a2a]'}`}>
                               ⚠️ {cambioClaveError}
                             </span>
                           )}
@@ -2312,7 +2437,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                           <button
                             type="submit"
                             disabled={cambiandoClave || !claveActualInput || !nuevaClaveInput}
-                            className="w-full py-1.5 bg-[#ffd43b] text-[#5c3c00] font-black text-xs rounded-xl border-2 border-[#2b2140] hover:bg-[#fcc419] disabled:opacity-50 cursor-pointer shadow-sm"
+                            className={`w-full py-1.5 font-black text-xs rounded-xl disabled:opacity-50 cursor-pointer ${t.btnAmber}`}
                           >
                             {cambiandoClave ? 'Actualizando...' : 'Guardar Nueva Contraseña'}
                           </button>
@@ -2323,7 +2448,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                 </div>
 
                 {userActual.id !== 'admin' && (
-                  <div className="pt-2 border-t border-[#2b2140]/15">
+                  <div className={`pt-2 border-t ${t.divider}`}>
                     {!confirmandoBaja ? (
                       <button
                         type="button"
@@ -2332,17 +2457,17 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                           setConfirmandoBaja(true);
                           setTextoBajaConfirmacion('');
                         }}
-                        className="w-full py-1.5 px-3 rounded-xl font-bold text-[11px] bg-[#fff5f5] text-[#c92a2a] border border-[#ffc9c9] hover:bg-[#ffe3e3] cursor-pointer flex items-center justify-center gap-1"
+                        className={`w-full py-1.5 px-3 rounded-xl font-bold text-[11px] cursor-pointer flex items-center justify-center gap-1 ${t.btnDanger}`}
                       >
                         <span>🗑️</span>
                         <span>Darme de baja (Eliminar mi cuenta)</span>
                       </button>
                     ) : (
-                      <div className="p-3 bg-[#ffe3e3] rounded-2xl border-2 border-[#ff8787] flex flex-col gap-2 text-left animate-[fadeIn_0.2s_ease-out]">
-                        <div className="text-xs font-black text-[#c92a2a]">
+                      <div className={`p-3 rounded-2xl flex flex-col gap-2 text-left animate-[fadeIn_0.2s_ease-out] ${t.bannerDanger}`}>
+                        <div className="text-xs font-black">
                           ⚠️ ¿Confirmas eliminar tu cuenta permanentemente?
                         </div>
-                        <p className="text-[11px] font-bold text-[#c92a2a]">
+                        <p className="text-[11px] font-bold">
                           Escribe <strong>{userActual.nombre}</strong> o <strong>BORRAR</strong>:
                         </p>
                         <input
@@ -2350,13 +2475,13 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                           value={textoBajaConfirmacion}
                           onChange={(e) => setTextoBajaConfirmacion(e.target.value)}
                           placeholder={`Escribe ${userActual.nombre} o BORRAR`}
-                          className="w-full text-xs font-bold bg-white border-2 border-[#ff8787] rounded-xl px-2.5 py-1.5 outline-none"
+                          className={`w-full text-xs font-bold rounded-xl px-2.5 py-1.5 outline-none ${t.input}`}
                         />
                         <div className="flex gap-2 mt-1">
                           <button
                             type="button"
                             onClick={() => setConfirmandoBaja(false)}
-                            className="flex-1 py-1.5 rounded-xl font-bold text-xs bg-white text-[#495057] border border-[#ced4da] cursor-pointer"
+                            className={`flex-1 py-1.5 rounded-xl font-bold text-xs cursor-pointer ${t.btnNeutral}`}
                           >
                             Cancelar
                           </button>
@@ -2380,7 +2505,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                                 setToastMsg(res.error || '⚠️ Sin conexión a la Database para eliminar');
                               }
                             }}
-                            className="flex-1 py-1.5 rounded-xl font-black text-xs bg-[#c92a2a] text-white border border-[#a61e1e] disabled:opacity-40 cursor-pointer"
+                            className={`flex-1 py-1.5 rounded-xl font-black text-xs disabled:opacity-40 cursor-pointer ${t.btnDanger}`}
                           >
                             {cargando ? 'Eliminando...' : 'Sí, eliminar'}
                           </button>
@@ -2392,7 +2517,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
               </>
             ) : (
               <div className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
-                <span className="text-[11px] font-black uppercase text-[#86542d]">
+                <span className={`text-[11px] font-black uppercase ${t.muted}`}>
                   Jugadores Registrados ({comunidadLista.length})
                 </span>
                 {comunidadLista.map((u, idx) => {
@@ -2401,11 +2526,17 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                   return (
                     <div
                       key={u.id}
-                      className={`p-2.5 rounded-xl border-2 border-[#2b2140] flex items-center gap-2.5 ${
-                        esYo ? 'bg-[#fff9db] shadow-sm font-bold' : 'bg-white'
+                      className={`p-2.5 rounded-xl flex items-center gap-2.5 ${
+                        esYo
+                          ? t.esClasico
+                            ? 'bg-[#fff9db] border-2 border-[#2b2140] shadow-sm font-bold'
+                            : t.esClaro
+                            ? 'bg-[#FCE8B8]/65 border border-[#EAD08E] font-bold'
+                            : 'bg-amber-300/15 border border-amber-300/35 font-bold'
+                          : t.card
                       }`}
                     >
-                      <span className="text-xs font-black text-[#86542d] w-4">{idx + 1}º</span>
+                      <span className={`text-xs font-black w-4 ${t.muted}`}>{idx + 1}º</span>
                       <CartoonCharacter
                         color={u.avatarColor}
                         hat={u.avatarHat}
@@ -2417,21 +2548,21 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                       />
                       <div className="min-w-0 flex-1 text-left">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-xs font-extrabold text-[#2b2140] truncate">
+                          <span className={`text-xs font-extrabold truncate ${t.title}`}>
                             {u.nombre}
                           </span>
-                          {esYo && <span className="text-[10px] font-black text-[#2b8a3e]">· TÚ</span>}
+                          {esYo && <span className={`text-[10px] font-black ${t.accentText}`}>· TÚ</span>}
                           {(u.rol === 'dev' || u.id === 'admin') && <span className="text-[10px]">👑</span>}
                           {u.rol === 'admin' && u.id !== 'admin' && <span className="text-[10px]">🛡️</span>}
                           {u.rol === 'mod' && <span className="text-[10px]">🔰</span>}
                         </div>
-                        <span className="text-[10px] text-[#86542d] font-semibold block">
+                        <span className={`text-[10px] font-semibold block ${t.muted}`}>
                           {lvl.icono} {lvl.titulo} · {u.id}
                         </span>
                       </div>
                       <div className="text-right flex-shrink-0">
-                        <span className="text-xs font-black text-[#2b2140] block">{u.puntos} pts</span>
-                        <span className="text-[10px] text-[#86542d] block">{u.victorias} vic</span>
+                        <span className={`text-xs font-black block ${t.title}`}>{u.puntos} pts</span>
+                        <span className={`text-[10px] block ${t.muted}`}>{u.victorias} vic</span>
                       </div>
                     </div>
                   );
@@ -2441,7 +2572,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
           </div>
         ) : (
           <div className="flex flex-col gap-3 py-1">
-            <div className="grid grid-cols-2 p-1 bg-[#ede4d0] rounded-xl border-2 border-[#2b2140]">
+            <div className={`grid grid-cols-2 p-1 rounded-xl ${t.track}`}>
               <button
                 type="button"
                 onClick={() => {
@@ -2450,9 +2581,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                   setErrorMsg(null);
                 }}
                 className={`py-1.5 rounded-lg font-black text-xs transition-all cursor-pointer ${
-                  tab === 'login'
-                    ? 'bg-white text-[#2b2140] border border-[#2b2140] shadow-sm'
-                    : 'text-[#86542d]'
+                  tab === 'login' ? t.tabActive : t.tabInactive
                 }`}
               >
                 Iniciar Sesión
@@ -2466,8 +2595,12 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                 }}
                 className={`py-1.5 rounded-lg font-black text-xs transition-all cursor-pointer ${
                   tab === 'registro'
-                    ? 'bg-[#51cf66] text-[#134e20] border border-[#2b2140] shadow-sm'
-                    : 'text-[#86542d]'
+                    ? t.esClasico
+                      ? 'bg-[#51cf66] text-[#134e20] border border-[#2b2140] shadow-sm'
+                      : t.esClaro
+                      ? 'bg-[#B7EBD0] text-[#0F3D27] border border-[#8AD2AE] shadow-xs'
+                      : 'bg-emerald-400/25 text-emerald-100 border border-emerald-400/40 shadow-xs'
+                    : t.tabInactive
                 }`}
               >
                 Crear Perfil
@@ -2479,7 +2612,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
               className="flex flex-col gap-2.5"
             >
               <div>
-                <label className="text-xs font-bold text-[#86542d] block mb-0.5">
+                <label className={`text-xs font-bold block mb-0.5 ${t.muted}`}>
                   {tab === 'login' ? 'User ID:' : 'Nombre / User ID:'}
                 </label>
                 <input
@@ -2490,12 +2623,12 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                   value={nombre}
                   onChange={(e) => setNombre(e.target.value)}
                   placeholder={tab === 'login' ? 'Tu User ID' : 'Tu nombre / ID inicial (3-15 caracteres)'}
-                  className="w-full text-xs font-bold text-[#2b2140] bg-white border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-[#ffd43b]"
+                  className={`w-full text-xs font-bold rounded-xl px-2.5 py-1.5 outline-none ${t.input}`}
                 />
               </div>
 
               <div>
-                <label className="text-xs font-bold text-[#86542d] block mb-0.5">
+                <label className={`text-xs font-bold block mb-0.5 ${t.muted}`}>
                   Clave / Contraseña:
                 </label>
                 <input
@@ -2504,12 +2637,12 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
                   value={clave}
                   onChange={(e) => setClave(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full text-xs font-bold text-[#2b2140] bg-white border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-[#ffd43b]"
+                  className={`w-full text-xs font-bold rounded-xl px-2.5 py-1.5 outline-none ${t.input}`}
                 />
               </div>
 
               {errorMsg && (
-                <div className="p-2 bg-[#ffe3e3] text-[#c92a2a] text-xs font-bold rounded-xl border border-[#2b2140] text-center">
+                <div className={`p-2 text-xs font-bold rounded-xl text-center ${t.bannerDanger}`}>
                   {errorMsg}
                 </div>
               )}
@@ -2517,7 +2650,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
               <button
                 type="submit"
                 disabled={cargando}
-                className="w-full py-2.5 rounded-xl font-black text-sm bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#40c057] active:translate-y-0.5 cursor-pointer mt-1 disabled:opacity-60 flex items-center justify-center gap-2"
+                className={`w-full py-2.5 rounded-xl font-black text-sm cursor-pointer mt-1 disabled:opacity-60 flex items-center justify-center gap-2 ${t.btnPrimary}`}
               >
                 {cargando && <span className="animate-spin">⏳</span>}
                 <span>
@@ -2554,6 +2687,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   onuserActualizado,
   onAbrirLogin,
 }) => {
+  const { t } = useMurosTheme();
   const esAdminSupremoUnico = Boolean(
     userActual && (userActual.id === 'admin' || userActual.esSupremo)
   );
@@ -2574,6 +2708,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const [sincronizando, setSincronizando] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [diag, setDiag] = useState<DiagnosticoDeRed>(() => obtenerDiagnosticoRed());
+  const [adminSyncError, setAdminSyncError] = useState<string | null>(null);
 
   // Salas Personalizadas (Dev, Admin, Mod)
   const [salasPersonalizadas, setSalasPersonalizadas] = useState<SalaPersonalizada[]>([]);
@@ -2664,10 +2799,10 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const cargarDatosAdminAdicionales = React.useCallback(async () => {
     try {
       const [sol, cfg, desb, salas] = await Promise.all([
-        obtenerSolicitudResetRankingAsync(),
+        obtenerSolicitudResetRankingAsync(true),
         obtenerConfigSemanalAsync(),
-        obtenerDesbloqueosPersonajesAsync(),
-        obtenerSalasPersonalizadasAsync(),
+        obtenerDesbloqueosPersonajesAsync(true),
+        obtenerSalasPersonalizadasAsync(true),
       ]);
       setSolicitudReset(sol);
       if (desb) {
@@ -2685,8 +2820,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       if (cfg?.premioSemanal !== undefined) {
         setPremioActivo(cfg.premioSemanal || undefined);
       }
-    } catch {
-      // Ignorar errores transitorios de red
+      setAdminSyncError(cfg?._error || null);
+    } catch (err: any) {
+      setAdminSyncError(err?.message || 'Error cargando configuración administrativa desde D1.');
     }
   }, []);
 
@@ -2717,7 +2853,8 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           fresh.avatarHat !== cur.avatarHat ||
           fresh.avatarRopa !== cur.avatarRopa ||
           fresh.avatarAura !== cur.avatarAura ||
-          (fresh.inventario?.personajes?.length || 0) !== (cur.inventario?.personajes?.length || 0)
+          JSON.stringify(fresh.inventario || { personajes: [] }) !==
+            JSON.stringify(cur.inventario || { personajes: [] })
         ) {
           onuserActualizadoRef.current?.(fresh);
         }
@@ -3238,8 +3375,12 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     reader.readAsText(file);
   };
 
-  const cuentasFiltradas = Object.values(cuentas).filter((acc) =>
-    acc.nombre.toLowerCase().includes(filtro.toLowerCase())
+  const qFiltro = filtro.trim().toLowerCase();
+  const cuentasFiltradas = Object.values(cuentas).filter(
+    (acc) =>
+      !qFiltro ||
+      acc.nombre.toLowerCase().includes(qFiltro) ||
+      acc.id.toLowerCase().includes(qFiltro)
   );
 
   const listaJugadoresNormales = Object.values(cuentas).filter(
@@ -3286,20 +3427,20 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/65 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-      <div className="relative w-full max-w-xl bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-3.5 sm:p-5 shadow-[0_12px_0_#2b2140,0_25px_35px_rgba(0,0,0,0.4)] flex flex-col max-h-[92vh] overflow-hidden">
+      <div className={`relative w-full max-w-xl rounded-3xl p-3.5 sm:p-5 flex flex-col max-h-[92vh] overflow-hidden ${t.shellModal}`}>
         {/* Header */}
-        <div className="flex items-center justify-between pb-3 mb-2 border-b-2 border-[#2b2140]/15">
-          <div className="flex items-center gap-2">
-            <span className="text-2xl">{esYoSupremo ? '👑' : esAdmin ? '🛡️' : '🔰'}</span>
-            <div>
-              <h3 className="text-lg sm:text-xl font-black text-[#2b2140] leading-none">
+        <div className={`flex items-center justify-between pb-3 mb-2 border-b-2 ${t.divider}`}>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-2xl shrink-0">{esYoSupremo ? '👑' : esAdmin ? '🛡️' : '🔰'}</span>
+            <div className="min-w-0">
+              <h3 className={`text-lg sm:text-xl font-black leading-none truncate ${t.title}`}>
                 {esYoSupremo
                   ? 'Consola de Desarrollo (Dev)'
                   : esAdmin
                   ? 'Panel de Administración'
                   : 'Panel de Moderación (Salas)'}
               </h3>
-              <span className="text-[11px] font-bold text-[#86542d]">
+              <span className={`text-[11px] font-bold block truncate ${t.muted}`}>
                 {esYoSupremo
                   ? 'Control Total de la Database D1'
                   : esAdmin
@@ -3313,7 +3454,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
               sounds.playClick();
               onCerrar();
             }}
-            className="w-8 h-8 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-sm font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] flex items-center justify-center cursor-pointer"
+            className={`w-8 h-8 rounded-full text-sm font-black flex items-center justify-center cursor-pointer transition-colors shrink-0 ${t.closeBtn}`}
           >
             ✕
           </button>
@@ -3322,7 +3463,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         {!tieneRolStaff ? (
           <div className="flex flex-col items-center gap-3 my-6 text-center">
             <span className="text-4xl">🔒</span>
-            <p className="text-xs sm:text-sm text-[#593922] font-bold leading-relaxed">
+            <p className={`text-xs sm:text-sm font-bold leading-relaxed ${t.sub}`}>
               Para acceder al Panel de Administración, inicia sesión con tu cuenta de Staff o con el Dev Supremo en la Database.
             </p>
             {onAbrirLogin && (
@@ -3332,7 +3473,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   sounds.playClick();
                   onAbrirLogin();
                 }}
-                className="w-full py-2.5 rounded-xl font-black text-sm bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer"
+                className={`w-full py-2.5 rounded-xl font-black text-sm cursor-pointer ${t.btnAmber}`}
               >
                 👤 Ir a Iniciar Sesión
               </button>
@@ -3342,13 +3483,13 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
           <div className="flex-1 overflow-y-auto overflow-x-hidden pr-0.5 sm:pr-1 flex flex-col gap-3 my-1 min-w-0">
             {/* Status Bar */}
             {!diag.dbConectado ? (
-              <div className="p-2.5 rounded-2xl border-2 border-[#c92a2a] bg-[#ffe3e3] text-[#c92a2a] text-xs font-bold flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 shadow-sm min-w-0">
+              <div className={`p-2.5 rounded-2xl text-xs font-bold flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 shadow-sm min-w-0 ${t.bannerDanger}`}>
                 <div className="flex-1 min-w-0">
-                  <div className="font-black text-[#a61e1e] flex items-center gap-1">
+                  <div className="font-black flex items-center gap-1">
                     <span>⚠️</span>
                     <span>SIN CONEXIÓN A DATABASE (D1)</span>
                   </div>
-                  <p className="text-[10px] leading-tight mt-0.5">
+                  <p className="text-[10px] leading-tight mt-0.5 opacity-90">
                     Las acciones se sincronizarán en cuanto se restablezca la conexión con la Database.
                   </p>
                 </div>
@@ -3356,13 +3497,13 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   type="button"
                   onClick={() => sincronizar(true)}
                   disabled={sincronizando}
-                  className="py-1 px-2.5 rounded-xl bg-white border-2 border-[#c92a2a] text-[11px] font-black text-[#c92a2a] cursor-pointer shrink-0 ml-auto"
+                  className={`py-1 px-2.5 rounded-xl text-[11px] font-black cursor-pointer shrink-0 ml-auto ${t.btnNeutral}`}
                 >
                   {sincronizando ? '⏳...' : '🔄 Reconectar'}
                 </button>
               </div>
             ) : (
-              <div className="p-2 rounded-2xl border-2 border-[#2b2140] bg-[#d3f9d8] text-[#134e20] text-xs font-black flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 shadow-sm min-w-0">
+              <div className={`p-2 rounded-2xl text-xs font-black flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 shadow-sm min-w-0 ${t.bannerSuccess}`}>
                 <div className="flex items-center gap-1.5 min-w-0 flex-1">
                   <span className="text-base shrink-0">{esYoSupremo ? '👑' : esAdmin ? '🛡️' : '🔰'}</span>
                   <div className="leading-tight min-w-0">
@@ -3373,7 +3514,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                         ? `Admin: ${userActual?.nombre}`
                         : `Mod: ${userActual?.nombre}`}
                     </span>
-                    <span className="text-[10px] font-bold text-[#2b8a3e] block truncate">
+                    <span className="text-[10px] font-bold block truncate opacity-90">
                       🟢 Database D1 Conectada ({diag.serverPingMs} ms)
                     </span>
                   </div>
@@ -3381,7 +3522,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 <button
                   onClick={() => sincronizar(true)}
                   disabled={sincronizando}
-                  className="py-1 px-2 rounded-lg bg-white border border-[#2b2140] text-[10px] font-black text-[#2b2140] shadow-sm hover:bg-[#f1f3f5] cursor-pointer flex items-center gap-1 shrink-0"
+                  className={`py-1 px-2 rounded-lg text-[10px] font-black cursor-pointer flex items-center gap-1 shrink-0 ${t.btnNeutral}`}
                 >
                   <span className={sincronizando ? 'animate-spin' : ''}>🔄</span>
                   <span>Sincronizar</span>
@@ -3389,8 +3530,35 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
               </div>
             )}
 
+            {adminSyncError && (
+              <div className={`p-2 rounded-2xl text-[11px] font-bold flex items-center justify-between gap-2 ${t.bannerDanger}`}>
+                <span className="min-w-0 break-words">⚠️ Error de D1 en panel Staff: {adminSyncError}</span>
+                <button
+                  type="button"
+                  onClick={() => setAdminSyncError(null)}
+                  className={`px-2 py-0.5 rounded-lg text-[10px] font-black shrink-0 cursor-pointer ${t.btnNeutral}`}
+                >
+                  Ocultar
+                </button>
+              </div>
+            )}
+
+            {diag.advertenciasInventario && diag.advertenciasInventario.length > 0 && (
+              <div className={`p-2.5 rounded-2xl text-[11px] font-bold flex flex-col gap-1 ${t.bannerWarn}`}>
+                <div className="font-black">
+                  ⚠️ Inventario con JSON inválido detectado en D1 ({diag.advertenciasInventario.length}):
+                </div>
+                <div className="text-[10px] leading-snug opacity-90">
+                  Se protegió el dato original en D1 para evitar sobrescribirlo con vacío. Cuentas afectadas:{' '}
+                  {diag.advertenciasInventario
+                    .map((w) => `${w.nombre} (@${w.id})`)
+                    .join(', ')}
+                </div>
+              </div>
+            )}
+
             {/* Pestañas de Navegación (Responsivas: 2x2 en móvil, 4 cols en escritorio) */}
-            <div className={`grid ${esAdmin ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1'} gap-1.5 bg-[#ebdcc2] p-1.5 rounded-2xl border-2 border-[#2b2140]`}>
+            <div className={`grid ${esAdmin ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1'} gap-1.5 p-1.5 rounded-2xl ${t.track}`}>
               {esAdmin && (
                 <>
                   <button
@@ -3400,9 +3568,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       setAdminTab('jugadores');
                     }}
                     className={`py-1.5 px-2 rounded-xl font-black text-[11px] sm:text-xs leading-tight text-center transition-all flex items-center justify-center gap-1 cursor-pointer min-w-0 ${
-                      adminTab === 'jugadores'
-                        ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
-                        : 'text-[#5c3c00] hover:bg-white/40 border-2 border-transparent'
+                      adminTab === 'jugadores' ? t.tabActive : t.tabInactive
                     }`}
                   >
                     <span>👥</span>
@@ -3415,9 +3581,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       setAdminTab('editor');
                     }}
                     className={`py-1.5 px-2 rounded-xl font-black text-[11px] sm:text-xs leading-tight text-center transition-all flex items-center justify-center gap-1 cursor-pointer min-w-0 ${
-                      adminTab === 'editor'
-                        ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
-                        : 'text-[#5c3c00] hover:bg-white/40 border-2 border-transparent'
+                      adminTab === 'editor' ? t.tabActive : t.tabInactive
                     }`}
                   >
                     <span>🎨</span>
@@ -3430,9 +3594,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       setAdminTab('torneo');
                     }}
                     className={`py-1.5 px-2 rounded-xl font-black text-[11px] sm:text-xs leading-tight text-center transition-all flex items-center justify-center gap-1 cursor-pointer min-w-0 ${
-                      adminTab === 'torneo'
-                        ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
-                        : 'text-[#5c3c00] hover:bg-white/40 border-2 border-transparent'
+                      adminTab === 'torneo' ? t.tabActive : t.tabInactive
                     }`}
                   >
                     <span>🏆</span>
@@ -3447,9 +3609,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   setAdminTab('salas');
                 }}
                 className={`py-1.5 px-2 rounded-xl font-black text-[11px] sm:text-xs leading-tight text-center transition-all flex items-center justify-center gap-1 cursor-pointer min-w-0 ${
-                  adminTab === 'salas'
-                    ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
-                    : 'text-[#5c3c00] hover:bg-white/40 border-2 border-transparent'
+                  adminTab === 'salas' ? t.tabActive : t.tabInactive
                 }`}
               >
                 <span>🎮</span>
@@ -3459,15 +3619,15 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
             {/* Banner de Solicitud de Reset Pendiente */}
             {solicitudReset?.solicitada && (
-              <div className="p-3 bg-[#fff3bf] border-2 border-[#f59f00] rounded-2xl text-xs flex flex-col gap-2 shadow-sm">
+              <div className={`p-3 rounded-2xl text-xs flex flex-col gap-2 shadow-sm ${t.bannerWarn}`}>
                 <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="text-xl shrink-0">📨</span>
                     <div className="min-w-0">
-                      <span className="font-black text-[#d9480f] block">
+                      <span className="font-black block">
                         Solicitud de Reinicio de Ranking Semanal
                       </span>
-                      <span className="text-[11px] text-[#7f4f10] block">
+                      <span className="text-[11px] opacity-90 block">
                         Pedida por <strong>{solicitudReset.porNombre}</strong> ({solicitudReset.fecha})
                       </span>
                     </div>
@@ -3478,7 +3638,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                         type="button"
                         disabled={guardando}
                         onClick={() => responderSolicitudReset(true)}
-                        className="py-1 px-2 rounded-lg bg-[#51cf66] text-[#134e20] border border-[#2b2140] font-black text-[11px] hover:bg-[#40c057] cursor-pointer"
+                        className={`py-1 px-2 rounded-lg font-black text-[11px] cursor-pointer ${t.btnPrimary}`}
                       >
                         ✓ Aprobar y Reiniciar
                       </button>
@@ -3486,13 +3646,13 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                         type="button"
                         disabled={guardando}
                         onClick={() => responderSolicitudReset(false)}
-                        className="py-1 px-2 rounded-lg bg-[#ffc9c9] text-[#c92a2a] border border-[#2b2140] font-black text-[11px] hover:bg-[#ffa8a8] cursor-pointer"
+                        className={`py-1 px-2 rounded-lg font-black text-[11px] cursor-pointer ${t.btnDanger}`}
                       >
                         ✕ Rechazar
                       </button>
                     </div>
                   ) : (
-                    <span className="text-[10px] bg-white px-2 py-0.5 rounded-full border border-[#f59f00] font-black text-[#d9480f] self-start">
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-black self-start ${t.badgeNeutral}`}>
                       ⏳ Esperando al Dev
                     </span>
                   )}
@@ -3510,23 +3670,23 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     placeholder="🔍 Buscar jugador..."
                     value={filtro}
                     onChange={(e) => setFiltro(e.target.value)}
-                    className="w-full text-xs font-bold bg-white border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none"
+                    className={`w-full text-xs font-bold rounded-xl px-2.5 py-1.5 outline-none ${t.input}`}
                   />
-                  <span className="text-xs font-bold text-[#86542d] whitespace-nowrap">
+                  <span className={`text-xs font-bold whitespace-nowrap ${t.muted}`}>
                     {cuentasFiltradas.length} cuentas
                   </span>
                 </div>
 
                 {/* Alerta de Clave Temporal */}
                 {claveTemporalInfo && (
-                  <div className="p-3 bg-[#e7f5ff] border-2 border-[#1971c2] rounded-2xl flex items-start justify-between gap-3 text-xs shadow-sm">
+                  <div className={`p-3 rounded-2xl flex items-start justify-between gap-3 text-xs shadow-sm ${t.bannerInfo}`}>
                     <div className="flex-1 min-w-0">
-                      <div className="font-black text-[#1864ab] flex items-center gap-1.5">
+                      <div className="font-black flex items-center gap-1.5">
                         <span>🔑</span>
                         <span>Nueva clave temporal generada para <strong>{claveTemporalInfo.nombre}</strong></span>
                       </div>
                       <div className="mt-1.5 flex items-center gap-2">
-                        <code className="px-2 py-1 bg-white border border-[#1971c2]/40 rounded font-mono font-black text-sm text-[#0c8599] select-all">
+                        <code className={`px-2 py-1 rounded font-mono font-black text-sm select-all ${t.badgeNeutral}`}>
                           {claveTemporalInfo.clave}
                         </code>
                         <button
@@ -3535,19 +3695,19 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             navigator.clipboard?.writeText(claveTemporalInfo.clave);
                             onShowToast('📋 Clave copiada al portapapeles');
                           }}
-                          className="px-2 py-1 bg-[#1971c2] text-white rounded text-[11px] font-bold cursor-pointer hover:bg-[#1864ab]"
+                          className={`px-2 py-1 rounded text-[11px] font-bold cursor-pointer ${t.btnSky}`}
                         >
                           Copiar
                         </button>
                       </div>
-                      <p className="mt-1 text-[11px] text-[#495057]">
+                      <p className="mt-1 text-[11px] opacity-85">
                         Esta clave fue cifrada en la Database. Pásasela al user.
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={() => setClaveTemporalInfo(null)}
-                      className="p-1 rounded text-[#1971c2] hover:bg-[#d0ebff] font-bold cursor-pointer"
+                      className="p-1 rounded font-bold cursor-pointer"
                     >
                       ✕
                     </button>
@@ -3563,10 +3723,6 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     const isConfirmingDelete = confirmandoEliminarId === acc.id;
                     const cantInventario = acc.inventario?.personajes?.length || 0;
 
-                    // El root dev ('admin') no puede ser modificado por nadie.
-                    // Si la cuenta es 'dev', solo el Admin Supremo Único puede editarla o revocarla.
-                    // Si la cuenta es 'admin', cualquier Dev (Supremo) puede editarla.
-                    // Si la cuenta es 'mod' o 'jugador', cualquier Admin o Dev puede editarla.
                     const puedeEditarEstaCuenta = !isRootAdmin && (
                       isAccountDev
                         ? esAdminSupremoUnico
@@ -3577,19 +3733,31 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
                     const badgeRol =
                       acc.id === 'admin' || acc.rol === 'dev' ? (
-                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full bg-[#ffe8cc] text-[#d9480f] border border-[#ffa94d]">
+                        <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full border ${
+                          t.esOscuro
+                            ? 'bg-amber-300/15 text-amber-200 border-amber-300/35'
+                            : 'bg-[#ffe8cc] text-[#d9480f] border-[#ffa94d]'
+                        }`}>
                           👑 DEV
                         </span>
                       ) : acc.rol === 'admin' ? (
-                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full bg-[#dbe4ff] text-[#364fc7] border border-[#91a7ff]">
+                        <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full border ${
+                          t.esOscuro
+                            ? 'bg-indigo-300/15 text-indigo-200 border-indigo-300/35'
+                            : 'bg-[#dbe4ff] text-[#364fc7] border-[#91a7ff]'
+                        }`}>
                           🛡️ ADMIN
                         </span>
                       ) : acc.rol === 'mod' ? (
-                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full bg-[#e6fcf5] text-[#099268] border border-[#63e6be]">
+                        <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full border ${
+                          t.esOscuro
+                            ? 'bg-emerald-300/15 text-emerald-200 border-emerald-300/35'
+                            : 'bg-[#e6fcf5] text-[#099268] border-[#63e6be]'
+                        }`}>
                           🔰 MOD
                         </span>
                       ) : (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#f1f3f5] text-[#495057]">
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${t.badgeNeutral}`}>
                           🎮 JUGADOR
                         </span>
                       );
@@ -3597,7 +3765,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     return (
                       <div
                         key={acc.id}
-                        className="p-3 rounded-2xl border-2 border-[#2b2140] bg-white shadow-sm flex flex-col gap-2"
+                        className={`p-3 rounded-2xl shadow-sm flex flex-col gap-2 ${t.card}`}
                       >
                         {!isEditing ? (
                           <>
@@ -3616,12 +3784,12 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                 </div>
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="font-black text-xs sm:text-sm text-[#2b2140] truncate">
+                                    <span className={`font-black text-xs sm:text-sm truncate ${t.title}`}>
                                       {acc.nombre}
                                     </span>
                                     {badgeRol}
                                   </div>
-                                  <span className="text-[11px] text-[#86542d] font-semibold block truncate">
+                                  <span className={`text-[11px] font-semibold block truncate ${t.muted}`}>
                                     ID: {acc.id} · {acc.puntos} pts · {acc.victorias} vic
                                   </span>
                                 </div>
@@ -3635,7 +3803,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                     sounds.playClick();
                                     setInspectingUser(acc);
                                   }}
-                                  className="py-1 px-2 rounded-lg border border-[#2b2140] bg-[#fff3bf] text-[11px] font-black text-[#5c3c00] hover:bg-[#ffe066] cursor-pointer flex items-center gap-1"
+                                  className={`py-1 px-2 rounded-lg text-[11px] font-black cursor-pointer flex items-center gap-1 ${t.btnAmber}`}
                                   title="Ver inventario de avatares exclusivos"
                                 >
                                   <span>🎒</span>
@@ -3648,7 +3816,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                       <button
                                         type="button"
                                         onClick={() => handleRestablecerClave(acc.id, acc.nombre)}
-                                        className="p-1.5 rounded-lg border border-[#2b2140] bg-[#e7f5ff] text-xs hover:bg-[#d0ebff] cursor-pointer"
+                                        className={`p-1.5 rounded-lg text-xs cursor-pointer ${t.btnSky}`}
                                         title="Restablecer clave temporal (Solo Dev)"
                                       >
                                         🔑
@@ -3657,7 +3825,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                     <button
                                       type="button"
                                       onClick={() => iniciarEdicion(acc)}
-                                      className="p-1.5 rounded-lg border border-[#2b2140] bg-[#fff9db] text-xs hover:bg-[#fff3bf] cursor-pointer"
+                                      className={`p-1.5 rounded-lg text-xs cursor-pointer ${t.btnAmber}`}
                                       title="Editar jugador"
                                     >
                                       ✏️
@@ -3672,7 +3840,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                       sounds.playClick();
                                       setConfirmandoEliminarId(acc.id);
                                     }}
-                                    className="p-1.5 rounded-lg border border-[#2b2140] bg-[#ffe3e3] text-xs hover:bg-[#ffc9c9] cursor-pointer"
+                                    className={`p-1.5 rounded-lg text-xs cursor-pointer ${t.btnDanger}`}
                                     title="Eliminar permanentemente de la Database"
                                   >
                                     🗑️
@@ -3683,15 +3851,15 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
                             {/* Confirmación eliminación */}
                             {isConfirmingDelete && (
-                              <div className="p-2.5 bg-[#ffe3e3] rounded-xl border border-[#c92a2a] flex items-center justify-between gap-2 text-xs">
-                                <span className="font-black text-[#c92a2a]">
+                              <div className={`p-2.5 rounded-xl flex items-center justify-between gap-2 text-xs ${t.bannerDanger}`}>
+                                <span className="font-black">
                                   ¿Eliminar a "{acc.nombre}" de la Database?
                                 </span>
                                 <div className="flex gap-1.5 shrink-0">
                                   <button
                                     type="button"
                                     onClick={() => setConfirmandoEliminarId(null)}
-                                    className="py-1 px-2 rounded-lg bg-white border border-[#ced4da] font-bold text-[11px] cursor-pointer"
+                                    className={`py-1 px-2 rounded-lg font-bold text-[11px] cursor-pointer ${t.btnNeutral}`}
                                   >
                                     Cancelar
                                   </button>
@@ -3699,7 +3867,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                     type="button"
                                     disabled={guardando}
                                     onClick={() => ejecutarEliminarUser(acc.id, acc.nombre)}
-                                    className="py-1 px-2.5 rounded-lg bg-[#c92a2a] text-white font-black text-[11px] cursor-pointer"
+                                    className={`py-1 px-2.5 rounded-lg font-black text-[11px] cursor-pointer ${t.btnDanger}`}
                                   >
                                     {guardando ? 'Borrando...' : 'Sí, eliminar'}
                                   </button>
@@ -3709,32 +3877,32 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                           </>
                         ) : (
                           /* Formulario de Edición */
-                          <div className="flex flex-col gap-2 pt-1 border-t border-[#2b2140]/10">
+                          <div className={`flex flex-col gap-2 pt-2 border-t ${t.divider}`}>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                               <div>
-                                <label className="font-bold text-[#86542d] block">Nombre:</label>
+                                <label className={`font-bold block mb-0.5 ${t.muted}`}>Nombre:</label>
                                 <input
                                   type="text"
                                   minLength={3}
                                   maxLength={15}
                                   value={editNombre}
                                   onChange={(e) => setEditNombre(e.target.value)}
-                                  className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
+                                  className={`w-full rounded px-2 py-1 font-bold ${t.input}`}
                                 />
                               </div>
                               {esYoSupremo ? (
                                 <div>
-                                  <label className="font-bold text-[#86542d] block">Nueva Clave (Solo Dev):</label>
+                                  <label className={`font-bold block mb-0.5 ${t.muted}`}>Nueva Clave (Solo Dev):</label>
                                   <input
                                     type="password"
                                     placeholder="Dejar vacío para no cambiar"
                                     value={editClave}
                                     onChange={(e) => setEditClave(e.target.value)}
-                                    className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs"
+                                    className={`w-full rounded px-2 py-1 font-bold text-xs ${t.input}`}
                                   />
                                 </div>
                               ) : (
-                                <div className="flex items-center text-[10px] text-[#86542d] italic sm:pt-4">
+                                <div className={`flex items-center text-[10px] italic sm:pt-4 ${t.muted}`}>
                                   🔒 Claves protegidas (Solo Dev)
                                 </div>
                               )}
@@ -3742,28 +3910,28 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
                             <div className="grid grid-cols-2 gap-2 text-xs">
                               <div>
-                                <label className="font-bold text-[#86542d] block">Puntos:</label>
+                                <label className={`font-bold block mb-0.5 ${t.muted}`}>Puntos:</label>
                                 <input
                                   type="number"
                                   value={editPuntos}
                                   onChange={(e) => setEditPuntos(Number(e.target.value))}
-                                  className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
+                                  className={`w-full rounded px-2 py-1 font-bold ${t.input}`}
                                 />
                               </div>
                               <div>
-                                <label className="font-bold text-[#86542d] block">Victorias:</label>
+                                <label className={`font-bold block mb-0.5 ${t.muted}`}>Victorias:</label>
                                 <input
                                   type="number"
                                   value={editVictorias}
                                   onChange={(e) => setEditVictorias(Number(e.target.value))}
-                                  className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold"
+                                  className={`w-full rounded px-2 py-1 font-bold ${t.input}`}
                                 />
                               </div>
                             </div>
 
                             {esYoSupremo && acc.id !== 'admin' && (
                               <div className="text-xs">
-                                <label className="font-bold text-[#86542d] block">
+                                <label className={`font-bold block mb-0.5 ${t.muted}`}>
                                   🆔 ID de Cuenta en Cascada (Solo Dev):
                                 </label>
                                 <input
@@ -3772,18 +3940,18 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                   maxLength={20}
                                   value={editNuevoId}
                                   onChange={(e) => setEditNuevoId(e.target.value.toLowerCase())}
-                                  className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-2 py-1 font-mono font-bold text-xs"
+                                  className={`w-full rounded px-2 py-1 font-mono font-bold text-xs ${t.input}`}
                                 />
                               </div>
                             )}
 
                             <div className="text-xs">
-                              <label className="font-bold text-[#86542d] block">Rol Asignado:</label>
+                              <label className={`font-bold block mb-0.5 ${t.muted}`}>Rol Asignado:</label>
                               {esAdminSupremoUnico ? (
                                 <select
                                   value={editRol}
                                   onChange={(e) => setEditRol(e.target.value as UserRol)}
-                                  className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs cursor-pointer"
+                                  className={`w-full rounded px-2 py-1 font-bold text-xs cursor-pointer ${t.input}`}
                                 >
                                   <option value="jugador">🎮 Jugador Normal</option>
                                   <option value="mod">🔰 Moderador</option>
@@ -3795,7 +3963,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                   value={editRol === 'dev' ? 'dev' : editRol}
                                   disabled={editRol === 'dev'}
                                   onChange={(e) => setEditRol(e.target.value as UserRol)}
-                                  className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs cursor-pointer"
+                                  className={`w-full rounded px-2 py-1 font-bold text-xs cursor-pointer ${t.input}`}
                                 >
                                   <option value="jugador">🎮 Jugador Normal</option>
                                   <option value="mod">🔰 Moderador</option>
@@ -3805,7 +3973,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                 <select
                                   value={editRol === 'mod' ? 'mod' : 'jugador'}
                                   onChange={(e) => setEditRol(e.target.value as UserRol)}
-                                  className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs cursor-pointer"
+                                  className={`w-full rounded px-2 py-1 font-bold text-xs cursor-pointer ${t.input}`}
                                 >
                                   <option value="jugador">🎮 Jugador Normal</option>
                                   <option value="mod">🔰 Promover a Moderador</option>
@@ -3817,7 +3985,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                               <button
                                 type="button"
                                 onClick={() => setEditandoId(null)}
-                                className="px-2.5 py-1 rounded bg-[#f1f3f5] border border-[#2b2140] text-xs font-bold cursor-pointer"
+                                className={`px-2.5 py-1 rounded text-xs font-bold cursor-pointer ${t.btnNeutral}`}
                               >
                                 Cancelar
                               </button>
@@ -3825,7 +3993,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                 type="button"
                                 disabled={guardando}
                                 onClick={() => guardarEdicion(acc.id)}
-                                className="px-3 py-1 rounded bg-[#51cf66] text-[#134e20] border border-[#2b2140] text-xs font-black cursor-pointer shadow-sm"
+                                className={`px-3 py-1 rounded text-xs font-black cursor-pointer ${t.btnPrimary}`}
                               >
                                 {guardando ? 'Guardando...' : '💾 Guardar Cambios'}
                               </button>
@@ -3838,11 +4006,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 </div>
 
                 {/* Zona de Peligro / Reset de Ranking */}
-                <div className="p-3 bg-[#fff5f5] rounded-2xl border-2 border-[#ffc9c9] shadow-sm flex flex-col gap-2 mt-1">
-                  <span className="font-black text-xs text-[#c92a2a] flex items-center gap-1.5">
+                <div className={`p-3 rounded-2xl shadow-sm flex flex-col gap-2 mt-1 ${t.bannerDanger}`}>
+                  <span className="font-black text-xs flex items-center gap-1.5">
                     <span>⚠️</span> Reinicio de Ranking Semanal
                   </span>
-                  <p className="text-[11px] text-[#e03131] font-medium leading-relaxed">
+                  <p className="text-[11px] font-medium leading-relaxed opacity-90">
                     {esYoSupremo
                       ? 'Como Dev Supremo, puedes reiniciar inmediatamente todos los puntos del Ranking a cero.'
                       : 'Como Admin, puedes solicitar formalmente al Dev el reinicio del ranking semanal.'}
@@ -3856,14 +4024,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                           sounds.playClick();
                           setConfirmandoResetRanking(true);
                         }}
-                        className="w-full py-2 px-3 rounded-xl font-black text-xs bg-[#ffe3e3] text-[#c92a2a] border-2 border-[#ffa8a8] hover:bg-[#ffc9c9] cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                        className={`w-full py-2 px-3 rounded-xl font-black text-xs cursor-pointer flex items-center justify-center gap-1.5 ${t.btnDanger}`}
                       >
                         <span>🧹</span>
                         <span>Reiniciar Todo el Ranking Global a Cero</span>
                       </button>
                     ) : (
-                      <div className="p-3 bg-[#ffe3e3] rounded-xl border-2 border-[#c92a2a] flex flex-col gap-2">
-                        <span className="text-xs font-black text-[#a61e1e]">
+                      <div className={`p-3 rounded-xl flex flex-col gap-2 ${t.card}`}>
+                        <span className={`text-xs font-black ${t.esOscuro ? 'text-rose-300' : 'text-[#a61e1e]'}`}>
                           🚨 ¿CONFIRMAS reiniciar todo el Ranking Global a 0 en la Database D1?
                         </span>
                         <div className="flex gap-2">
@@ -3871,7 +4039,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             type="button"
                             disabled={guardando}
                             onClick={() => setConfirmandoResetRanking(false)}
-                            className="flex-1 py-1.5 rounded-xl bg-white border border-[#2b2140] text-xs font-bold text-[#2b2140] cursor-pointer"
+                            className={`flex-1 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${t.btnNeutral}`}
                           >
                             Cancelar
                           </button>
@@ -3879,7 +4047,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             type="button"
                             disabled={guardando}
                             onClick={ejecutarResetRankingGlobal}
-                            className="flex-1 py-1.5 rounded-xl bg-[#c92a2a] border-2 border-[#2b2140] text-xs font-black text-white hover:bg-[#a61e1e] cursor-pointer shadow-sm"
+                            className={`flex-1 py-1.5 rounded-xl text-xs font-black cursor-pointer ${t.btnDanger}`}
                           >
                             {guardando ? '⏳ Borrando...' : '✓ Sí, reiniciar'}
                           </button>
@@ -3891,7 +4059,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       type="button"
                       disabled={guardando || Boolean(solicitudReset?.solicitada)}
                       onClick={solicitarResetRanking}
-                      className="w-full py-2 px-3 rounded-xl font-black text-xs bg-[#fff3bf] text-[#d9480f] border-2 border-[#f59f00] hover:bg-[#ffe066] cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                      className={`w-full py-2 px-3 rounded-xl font-black text-xs cursor-pointer flex items-center justify-center gap-1.5 ${t.btnAmber}`}
                     >
                       <span>📨</span>
                       <span>
@@ -3904,25 +4072,25 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 </div>
 
                 {/* Copia de Seguridad */}
-                <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-2">
-                  <span className="font-black text-xs text-[#2b2140] flex items-center gap-1.5">
+                <div className={`p-3 rounded-2xl shadow-sm flex flex-col gap-2 ${t.card}`}>
+                  <span className={`font-black text-xs flex items-center gap-1.5 ${t.title}`}>
                     <span>📦</span> Copia de Seguridad JSON
                   </span>
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <button
                       type="button"
                       onClick={handleExportBackup}
-                      className="py-1.5 px-3 rounded-xl font-bold bg-[#f8f9fa] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#e9ecef] cursor-pointer flex items-center justify-center gap-1"
+                      className={`py-1.5 px-3 rounded-xl font-bold cursor-pointer flex items-center justify-center gap-1 ${t.btnNeutral}`}
                     >
                       📥 Descargar Copia
                     </button>
                     {esYoSupremo ? (
-                      <label className="py-1.5 px-3 rounded-xl font-bold bg-[#f8f9fa] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#e9ecef] cursor-pointer flex items-center justify-center gap-1">
+                      <label className={`py-1.5 px-3 rounded-xl font-bold cursor-pointer flex items-center justify-center gap-1 ${t.btnNeutral}`}>
                         📤 Restaurar Copia
                         <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
                       </label>
                     ) : (
-                      <div className="py-1.5 px-3 rounded-xl font-bold bg-[#f1f3f5] text-[#868e96] border border-[#ced4da] flex items-center justify-center text-[11px]">
+                      <div className={`py-1.5 px-3 rounded-xl font-bold flex items-center justify-center text-[11px] opacity-60 ${t.badgeNeutral}`}>
                         🔒 Restaurar (Dev)
                       </div>
                     )}
@@ -3931,13 +4099,19 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
               </div>
             )}
 
-            {/* TAB 2: EDITOR VISUAL DE PERSONAJES */}
+            {/* TAB 2: EDITOR VISUAL DE AVATARES */}
             {adminTab === 'editor' && (
               <div className="flex flex-col gap-3">
                 {/* Tarjeta de Previsualización en Vivo */}
-                <div className="p-4 bg-gradient-to-b from-[#f8f0fc] to-[#eebefa] rounded-3xl border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140] flex flex-col sm:flex-row items-center gap-4 justify-between">
+                <div className={`p-4 rounded-3xl flex flex-col sm:flex-row items-center gap-4 justify-between ${
+                  t.esClasico
+                    ? 'bg-gradient-to-b from-[#f8f0fc] to-[#eebefa] border-3 border-[#2b2140] shadow-[0_4px_0_#2b2140]'
+                    : t.esClaro
+                    ? 'bg-gradient-to-b from-[#EAE4FC]/70 to-[#DFD6FA]/70 border border-[#CCC1F2]'
+                    : 'bg-gradient-to-b from-violet-300/15 to-fuchsia-300/10 border border-violet-300/30'
+                }`}>
                   <div className="flex items-center gap-3">
-                    <div className="p-2 bg-white/70 rounded-2xl border-2 border-[#2b2140] shadow-sm flex items-center justify-center">
+                    <div className={`p-2 rounded-2xl shadow-sm flex items-center justify-center ${t.cardInner}`}>
                       <CartoonCharacter
                         size={84}
                         color={editorColor}
@@ -3948,20 +4122,20 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       />
                     </div>
                     <div>
-                      <span className="text-[10px] font-black tracking-wider uppercase text-[#862e9c] bg-white px-2 py-0.5 rounded-full border border-[#da77f2]">
+                      <span className={`text-[10px] font-black tracking-wider uppercase px-2 py-0.5 rounded-full ${t.bannerViolet}`}>
                         Edición Exclusiva
                       </span>
-                      <h4 className="text-base sm:text-lg font-black text-[#2b2140] leading-tight mt-1">
+                      <h4 className={`text-base sm:text-lg font-black leading-tight mt-1 ${t.title}`}>
                         {editorNombre.trim() || 'Sin Nombre'}
                       </h4>
                       <div className="flex flex-wrap gap-1 mt-1 text-[10px] font-bold">
-                        <span className="bg-white/80 px-1.5 py-0.5 rounded border border-[#2b2140]/20 text-[#495057]">
+                        <span className={`px-1.5 py-0.5 rounded ${t.badgeNeutral}`}>
                           👒 {editorHat}
                         </span>
-                        <span className="bg-white/80 px-1.5 py-0.5 rounded border border-[#2b2140]/20 text-[#495057]">
+                        <span className={`px-1.5 py-0.5 rounded ${t.badgeNeutral}`}>
                           👕 {editorRopa}
                         </span>
-                        <span className="bg-white/80 px-1.5 py-0.5 rounded border border-[#2b2140]/20 text-[#495057]">
+                        <span className={`px-1.5 py-0.5 rounded ${t.badgeNeutral}`}>
                           ✨ {editorAura}
                         </span>
                       </div>
@@ -3970,9 +4144,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 </div>
 
                 {/* Controles de Diseño */}
-                <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-2.5 text-xs">
+                <div className={`p-3 rounded-2xl shadow-sm flex flex-col gap-2.5 text-xs ${t.card}`}>
                   <div>
-                    <label className="font-black text-[#86542d] block mb-1">
+                    <label className={`font-black block mb-1 ${t.muted}`}>
                       Nombre del Avatar Exclusivo:
                     </label>
                     <input
@@ -3981,13 +4155,13 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       value={editorNombre}
                       onChange={(e) => setEditorNombre(e.target.value)}
                       placeholder="Ej: Guerrero del Dragón, Neón Ninja..."
-                      className="w-full text-xs font-black bg-[#f8f9fa] border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 outline-none"
+                      className={`w-full text-xs font-black rounded-xl px-2.5 py-1.5 outline-none ${t.input}`}
                     />
                   </div>
 
                   {/* Selector de Color */}
                   <div>
-                    <label className="font-black text-[#86542d] block mb-1">Color Base del Cuerpo:</label>
+                    <label className={`font-black block mb-1 ${t.muted}`}>Color Base del Cuerpo:</label>
                     <div className="flex flex-wrap gap-1.5">
                       {coloresDisponibles.map((c) => (
                         <button
@@ -3998,8 +4172,12 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             setEditorColor(c);
                           }}
                           style={{ backgroundColor: c }}
-                          className={`w-7 h-7 rounded-full border-2 border-[#2b2140] transition-transform cursor-pointer ${
-                            editorColor === c ? 'scale-115 ring-3 ring-[#2b2140] shadow-md' : 'hover:scale-105'
+                          className={`w-7 h-7 rounded-full border-2 transition-transform cursor-pointer ${
+                            t.esOscuro ? 'border-white/30' : 'border-[#2b2140]'
+                          } ${
+                            editorColor === c
+                              ? `scale-115 shadow-md ${t.esOscuro ? 'ring-3 ring-white' : 'ring-3 ring-[#2b2140]'}`
+                              : 'hover:scale-105'
                           }`}
                         />
                       ))}
@@ -4008,7 +4186,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
                   {/* Selector de Sombreros */}
                   <div>
-                    <label className="font-black text-[#86542d] block mb-1">Sombrero / Accesorio Cabeza:</label>
+                    <label className={`font-black block mb-1 ${t.muted}`}>Sombrero / Accesorio Cabeza:</label>
                     <div className="flex flex-wrap gap-1">
                       {sombrerosDisponibles.map((h) => (
                         <button
@@ -4018,10 +4196,8 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             sounds.playClick();
                             setEditorHat(h);
                           }}
-                          className={`py-1 px-2 rounded-lg text-[11px] font-bold border capitalize transition-all cursor-pointer ${
-                            editorHat === h
-                              ? 'bg-[#ffd43b] text-[#5c3c00] border-[#2b2140] font-black shadow-sm'
-                              : 'bg-[#f8f9fa] text-[#495057] border-[#ced4da] hover:bg-[#e9ecef]'
+                          className={`py-1 px-2 rounded-lg text-[11px] font-bold capitalize transition-all cursor-pointer ${
+                            editorHat === h ? t.btnAmber : t.btnNeutral
                           }`}
                         >
                           {h}
@@ -4032,7 +4208,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
                   {/* Selector de Ropa */}
                   <div>
-                    <label className="font-black text-[#86542d] block mb-1">Ropa & Atuendo Exclusivo:</label>
+                    <label className={`font-black block mb-1 ${t.muted}`}>Ropa & Atuendo Exclusivo:</label>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-1">
                       {ropasDisponibles.map((r) => (
                         <button
@@ -4042,10 +4218,8 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             sounds.playClick();
                             setEditorRopa(r.id);
                           }}
-                          className={`py-1.5 px-2 rounded-xl text-[11px] font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
-                            editorRopa === r.id
-                              ? 'bg-[#d3f9d8] text-[#134e20] border-[#2b2140] font-black shadow-sm'
-                              : 'bg-[#f8f9fa] text-[#495057] border-[#ced4da] hover:bg-[#e9ecef]'
+                          className={`py-1.5 px-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                            editorRopa === r.id ? t.btnPrimary : t.btnNeutral
                           }`}
                         >
                           <span>{r.icon}</span>
@@ -4056,8 +4230,8 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
                     {/* Selector de Color de Ropa */}
                     {editorRopa !== 'ninguna' && (
-                      <div className="mt-2 p-2 bg-[#f8f9fa] rounded-xl border border-[#ced4da]">
-                        <label className="font-bold text-[#86542d] block text-[11px] mb-1">
+                      <div className={`mt-2 p-2 rounded-xl ${t.cardInner}`}>
+                        <label className={`font-bold block text-[11px] mb-1 ${t.muted}`}>
                           🎨 Color del Atuendo / Ropa:
                         </label>
                         <div className="flex flex-wrap gap-1.5">
@@ -4070,8 +4244,12 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                 setEditorRopaColor(rc);
                               }}
                               style={{ backgroundColor: rc }}
-                              className={`w-6 h-6 rounded-full border-2 border-[#2b2140] transition-transform cursor-pointer ${
-                                editorRopaColor === rc ? 'scale-120 ring-2 ring-[#2b2140] shadow-md' : 'hover:scale-105'
+                              className={`w-6 h-6 rounded-full border-2 transition-transform cursor-pointer ${
+                                t.esOscuro ? 'border-white/30' : 'border-[#2b2140]'
+                              } ${
+                                editorRopaColor === rc
+                                  ? `scale-120 shadow-md ${t.esOscuro ? 'ring-2 ring-white' : 'ring-2 ring-[#2b2140]'}`
+                                  : 'hover:scale-105'
                               }`}
                             />
                           ))}
@@ -4082,7 +4260,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
                   {/* Selector de Aura */}
                   <div>
-                    <label className="font-black text-[#86542d] block mb-1">Efecto Especial de Aura:</label>
+                    <label className={`font-black block mb-1 ${t.muted}`}>Efecto Especial de Aura:</label>
                     <div className="grid grid-cols-2 sm:grid-cols-5 gap-1">
                       {aurasDisponibles.map((a) => (
                         <button
@@ -4092,10 +4270,8 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             sounds.playClick();
                             setEditorAura(a.id);
                           }}
-                          className={`py-1.5 px-2 rounded-xl text-[11px] font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
-                            editorAura === a.id
-                              ? 'bg-[#e7f5ff] text-[#1864ab] border-[#2b2140] font-black shadow-sm'
-                              : 'bg-[#f8f9fa] text-[#495057] border-[#ced4da] hover:bg-[#e9ecef]'
+                          className={`py-1.5 px-2 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                            editorAura === a.id ? t.btnSky : t.btnNeutral
                           }`}
                         >
                           <span>{a.icon}</span>
@@ -4109,14 +4285,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 {/* Acciones del Editor */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {/* Opción 1: Regalar a un Jugador */}
-                  <div className="p-3 bg-[#e7f5ff] rounded-2xl border-2 border-[#1971c2] flex flex-col gap-2">
-                    <span className="text-xs font-black text-[#1864ab] flex items-center gap-1">
+                  <div className={`p-3 rounded-2xl flex flex-col gap-2 ${t.bannerInfo}`}>
+                    <span className="text-xs font-black flex items-center gap-1">
                       <span>🎁</span> Opción A: Regalar a un Jugador
                     </span>
                     <select
                       value={editorTargetId}
                       onChange={(e) => setEditorTargetId(e.target.value)}
-                      className="w-full text-xs font-bold bg-white border-2 border-[#1971c2] rounded-xl px-2 py-1.5 outline-none cursor-pointer"
+                      className={`w-full text-xs font-bold rounded-xl px-2 py-1.5 outline-none cursor-pointer ${t.input}`}
                     >
                       <option value="">Selecciona destinatario...</option>
                       {listaJugadoresNormales.map((p) => (
@@ -4129,19 +4305,19 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       type="button"
                       disabled={guardandoEditor || !editorTargetId}
                       onClick={handleRegalarPersonaje}
-                      className="w-full py-2 rounded-xl font-black text-xs bg-[#339af0] text-white border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#228be6] disabled:opacity-50 cursor-pointer"
+                      className={`w-full py-2 rounded-xl font-black text-xs disabled:opacity-50 cursor-pointer ${t.btnSky}`}
                     >
                       {guardandoEditor ? '⏳ Entregando...' : '🎁 Otorgar a Inventario'}
                     </button>
                   </div>
 
                   {/* Opción 2: Fijar como Premio Semanal */}
-                  <div className="p-3 bg-[#fff9db] rounded-2xl border-2 border-[#f59f00] flex flex-col gap-2 justify-between">
+                  <div className={`p-3 rounded-2xl flex flex-col gap-2 justify-between ${t.bannerWarn}`}>
                     <div>
-                      <span className="text-xs font-black text-[#d9480f] flex items-center gap-1">
+                      <span className="text-xs font-black flex items-center gap-1">
                         <span>🏆</span> Opción B: Premio de Torneo
                       </span>
-                      <p className="text-[11px] text-[#7f4f10] font-medium leading-tight mt-1">
+                      <p className="text-[11px] font-medium leading-tight mt-1 opacity-90">
                         El jugador que termine en 1er lugar del torneo el domingo se lo llevará de forma exclusiva a su inventario.
                       </p>
                     </div>
@@ -4149,7 +4325,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       type="button"
                       disabled={guardandoEditor}
                       onClick={handleFijarPremioSemanal}
-                      className="w-full py-2 rounded-xl font-black text-xs bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer"
+                      className={`w-full py-2 rounded-xl font-black text-xs cursor-pointer ${t.btnAmber}`}
                     >
                       {guardandoEditor ? '⏳ Fijando...' : '🏆 Fijar como Premio Semanal'}
                     </button>
@@ -4162,18 +4338,18 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
             {adminTab === 'torneo' && (
               <div className="flex flex-col gap-3">
                 {/* Premio Semanal Activo */}
-                <div className="p-3.5 bg-gradient-to-r from-[#fff9db] to-[#ffe8cc] rounded-2xl border-2 border-[#f59f00] shadow-sm flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black text-[#d9480f] flex items-center gap-1.5">
+                <div className={`p-3.5 rounded-2xl shadow-sm flex flex-col gap-2 ${t.bannerWarn}`}>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="text-xs font-black flex items-center gap-1.5">
                       <span>🏆</span> Premio Activo para el Ganador de la Semana
                     </span>
-                    <span className="text-[10px] bg-white px-2 py-0.5 rounded-full border border-[#f59f00] font-bold text-[#d9480f]">
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${t.badgeNeutral}`}>
                       Domingo medianoche
                     </span>
                   </div>
 
                   {premioActivo ? (
-                    <div className="flex items-center gap-3 bg-white/80 p-2.5 rounded-xl border border-[#f59f00]/40">
+                    <div className={`flex items-center gap-3 p-2.5 rounded-xl ${t.card}`}>
                       <CartoonCharacter
                         size={56}
                         color={premioActivo.color}
@@ -4183,76 +4359,76 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                         aura={premioActivo.aura}
                       />
                       <div className="min-w-0">
-                        <h4 className="font-black text-sm text-[#2b2140] truncate">{premioActivo.nombre}</h4>
-                        <span className="text-[11px] text-[#86542d] font-bold block">
+                        <h4 className={`font-black text-sm truncate ${t.title}`}>{premioActivo.nombre}</h4>
+                        <span className={`text-[11px] font-bold block ${t.muted}`}>
                           Atuendo: {premioActivo.ropa || 'básico'} · Aura: {premioActivo.aura || 'ninguna'}
                         </span>
-                        <span className="text-[10px] text-[#2b8a3e] font-black">
+                        <span className={`text-[10px] font-black ${t.accentText}`}>
                           ✓ Se otorga automáticamente al 1er puesto del Ranking
                         </span>
                       </div>
                     </div>
                   ) : (
-                    <div className="p-3 bg-white/70 rounded-xl text-center text-xs text-[#86542d] font-bold">
-                      No hay premio exclusivo activo esta semana. Diseña uno en la pestaña <strong>[🎨 Editor de Avatares]</strong> y fíjalo como premio.
+                    <div className={`p-3 rounded-xl text-center text-xs font-bold ${t.card} ${t.muted}`}>
+                      No hay premio exclusivo activo esta semana. Diseña uno en la pestaña <strong>[🎨 Avatares]</strong> y fíjalo como premio.
                     </div>
                   )}
                 </div>
 
                 {/* Configuración de Puntos Semanales */}
-                <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-3">
+                <div className={`p-3 rounded-2xl shadow-sm flex flex-col gap-3 ${t.card}`}>
                   <div>
-                    <h4 className="text-xs font-black text-[#2b2140] flex items-center gap-1.5">
+                    <h4 className={`text-xs font-black flex items-center gap-1.5 ${t.title}`}>
                       <span>⚙️</span> Escala de Puntos Semanales
                     </h4>
-                    <p className="text-[11px] text-[#86542d] font-medium mt-0.5">
+                    <p className={`text-[11px] font-medium mt-0.5 ${t.muted}`}>
                       Puntos sumados al Ranking Global al cerrar el Torneo Semanal cada domingo.
                     </p>
                   </div>
 
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                    <div className="p-2 bg-[#fff9db] rounded-xl border border-[#ffd43b]">
-                      <label className="font-black text-[#5c3c00] block text-[11px]">🥇 1er Puesto:</label>
+                    <div className={`p-2 rounded-xl ${t.bannerWarn}`}>
+                      <label className="font-black block text-[11px]">🥇 1er Puesto:</label>
                       <input
                         type="number"
                         min={0}
                         max={500}
                         value={puntos1}
                         onChange={(e) => setPuntos1(Number(e.target.value))}
-                        className="w-full bg-white border border-[#2b2140] rounded px-1.5 py-1 font-black text-xs mt-1"
+                        className={`w-full rounded px-1.5 py-1 font-black text-xs mt-1 ${t.input}`}
                       />
                     </div>
-                    <div className="p-2 bg-[#f1f3f5] rounded-xl border border-[#ced4da]">
-                      <label className="font-black text-[#495057] block text-[11px]">🥈 2do Puesto:</label>
+                    <div className={`p-2 rounded-xl ${t.cardInner}`}>
+                      <label className={`font-black block text-[11px] ${t.sub}`}>🥈 2do Puesto:</label>
                       <input
                         type="number"
                         min={0}
                         max={500}
                         value={puntos2}
                         onChange={(e) => setPuntos2(Number(e.target.value))}
-                        className="w-full bg-white border border-[#2b2140] rounded px-1.5 py-1 font-black text-xs mt-1"
+                        className={`w-full rounded px-1.5 py-1 font-black text-xs mt-1 ${t.input}`}
                       />
                     </div>
-                    <div className="p-2 bg-[#ffe8cc] rounded-xl border border-[#ffa94d]">
-                      <label className="font-black text-[#d9480f] block text-[11px]">🥉 3er Puesto:</label>
+                    <div className={`p-2 rounded-xl ${t.bannerDanger}`}>
+                      <label className="font-black block text-[11px]">🥉 3er Puesto:</label>
                       <input
                         type="number"
                         min={0}
                         max={500}
                         value={puntos3}
                         onChange={(e) => setPuntos3(Number(e.target.value))}
-                        className="w-full bg-white border border-[#2b2140] rounded px-1.5 py-1 font-black text-xs mt-1"
+                        className={`w-full rounded px-1.5 py-1 font-black text-xs mt-1 ${t.input}`}
                       />
                     </div>
-                    <div className="p-2 bg-[#e7f5ff] rounded-xl border border-[#a5d8ff]">
-                      <label className="font-black text-[#1864ab] block text-[11px]">🎮 Participar:</label>
+                    <div className={`p-2 rounded-xl ${t.bannerInfo}`}>
+                      <label className="font-black block text-[11px]">🎮 Participar:</label>
                       <input
                         type="number"
                         min={0}
                         max={100}
                         value={puntosPart}
                         onChange={(e) => setPuntosPart(Number(e.target.value))}
-                        className="w-full bg-white border border-[#2b2140] rounded px-1.5 py-1 font-black text-xs mt-1"
+                        className={`w-full rounded px-1.5 py-1 font-black text-xs mt-1 ${t.input}`}
                       />
                     </div>
                   </div>
@@ -4261,32 +4437,32 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     type="button"
                     disabled={guardandoTorneo}
                     onClick={handleGuardarPuntosTorneo}
-                    className="w-full py-2 rounded-xl font-black text-xs bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#40c057] cursor-pointer"
+                    className={`w-full py-2 rounded-xl font-black text-xs cursor-pointer ${t.btnPrimary}`}
                   >
                     {guardandoTorneo ? '⏳ Guardando en Database...' : '💾 Guardar Escala de Puntos en Database'}
                   </button>
                 </div>
 
-                {/* Requisitos de Desbloqueo de Personajes Base (Solo Dev) */}
+                {/* Requisitos de Desbloqueo de Avatares Base (Solo Dev) */}
                 {esYoSupremo && (
-                  <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-3">
+                  <div className={`p-3 rounded-2xl shadow-sm flex flex-col gap-3 ${t.card}`}>
                     <div>
-                      <h4 className="text-xs font-black text-[#2b2140] flex items-center gap-1.5">
+                      <h4 className={`text-xs font-black flex items-center gap-1.5 ${t.title}`}>
                         <span>🔓</span> Requisitos de Desbloqueo de Avatares Base (Solo Dev)
                       </h4>
-                      <p className="text-[11px] text-[#86542d] font-medium mt-0.5">
+                      <p className={`text-[11px] font-medium mt-0.5 ${t.muted}`}>
                         Puntos requeridos en el Ranking Global para que cada avatar base aparezca y se desbloquee a los users. Los 5 iniciales siempre están disponibles desde 0 pts.
                       </p>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                       {RegDeAvatar.filter((p) => p.desbloqueoTipo === 'puntos').map((item) => (
-                        <div key={item.id} className="p-2 bg-[#f8f9fa] rounded-xl border border-[#2b2140]/20 flex items-center justify-between gap-2">
+                        <div key={item.id} className={`p-2 rounded-xl flex items-center justify-between gap-2 ${t.cardInner}`}>
                           <div className="flex items-center gap-2 min-w-0">
                             <span className="text-lg">{item.emoji}</span>
                             <div className="min-w-0">
-                              <span className="font-black text-xs text-[#2b2140] block truncate">{item.nombre}</span>
-                              <span className="text-[10px] text-[#86542d] block">Puntos mínimos:</span>
+                              <span className={`font-black text-xs block truncate ${t.title}`}>{item.nombre}</span>
+                              <span className={`text-[10px] block ${t.muted}`}>Puntos mínimos:</span>
                             </div>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
@@ -4299,9 +4475,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                                 const val = Math.max(0, Number(e.target.value));
                                 setDesbloqueosDev((prev) => ({ ...prev, [item.id]: val }));
                               }}
-                              className="w-16 bg-white border border-[#2b2140] rounded px-1.5 py-1 font-black text-xs text-center"
+                              className={`w-16 rounded px-1.5 py-1 font-black text-xs text-center ${t.input}`}
                             />
-                            <span className="text-[11px] font-bold text-[#86542d]">pts</span>
+                            <span className={`text-[11px] font-bold ${t.muted}`}>pts</span>
                           </div>
                         </div>
                       ))}
@@ -4311,7 +4487,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       type="button"
                       disabled={guardandoDesbloqueos}
                       onClick={handleGuardarDesbloqueosBase}
-                      className="w-full py-2 rounded-xl font-black text-xs bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#fcc419] cursor-pointer"
+                      className={`w-full py-2 rounded-xl font-black text-xs cursor-pointer ${t.btnAmber}`}
                     >
                       {guardandoDesbloqueos ? '⏳ Guardando Requisitos...' : '💾 Guardar Requisitos de Desbloqueo en Database'}
                     </button>
@@ -4324,62 +4500,62 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
             {adminTab === 'salas' && (
               <div className="flex flex-col gap-3">
                 {/* Formulario de Creación de Sala Oficial */}
-                <div className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex flex-col gap-2.5">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-black text-[#2b2140] flex items-center gap-1.5">
+                <div className={`p-3 rounded-2xl shadow-sm flex flex-col gap-2.5 ${t.card}`}>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <h4 className={`text-xs font-black flex items-center gap-1.5 ${t.title}`}>
                       <span>🔰</span> Crear Sala Oficial / Evento Personalizado
                     </h4>
-                    <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-[#d3f9d8] text-[#134e20] border border-[#2b2140]">
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${t.bannerSuccess}`}>
                       Staff {esYoSupremo ? 'Dev' : esAdmin ? 'Admin' : 'Mod'}
                     </span>
                   </div>
-                  <p className="text-[11px] text-[#86542d] leading-tight font-medium">
+                  <p className={`text-[11px] leading-tight font-medium ${t.muted}`}>
                     Las salas creadas aquí aparecen destacadas en la parte superior del Lobby Online para todos los jugadores con reglas personalizadas.
                   </p>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                     <div>
-                      <label className="font-bold text-[#86542d] block text-[11px]">Código de Sala:</label>
+                      <label className={`font-bold block text-[11px] mb-0.5 ${t.muted}`}>Código de Sala:</label>
                       <input
                         type="text"
                         maxLength={10}
                         placeholder="Ej: TORNEO1"
                         value={nuevaSalaCodigo}
                         onChange={(e) => setNuevaSalaCodigo(e.target.value.toUpperCase())}
-                        className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-black text-xs uppercase"
+                        className={`w-full rounded px-2 py-1 font-black text-xs uppercase ${t.input}`}
                       />
                     </div>
                     <div>
-                      <label className="font-bold text-[#86542d] block text-[11px]">Nombre de la Sala / Evento:</label>
+                      <label className={`font-bold block text-[11px] mb-0.5 ${t.muted}`}>Nombre de la Sala / Evento:</label>
                       <input
                         type="text"
                         maxLength={32}
                         placeholder="Ej: Sala Oficial Moderación"
                         value={nuevaSalaNombre}
                         onChange={(e) => setNuevaSalaNombre(e.target.value)}
-                        className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-bold text-xs"
+                        className={`w-full rounded px-2 py-1 font-bold text-xs ${t.input}`}
                       />
                     </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
                     <div>
-                      <label className="font-bold text-[#86542d] block text-[11px]">Jugadores:</label>
+                      <label className={`font-bold block text-[11px] mb-0.5 ${t.muted}`}>Jugadores:</label>
                       <select
                         value={nuevaSalaMaxJugadores}
                         onChange={(e) => setNuevaSalaMaxJugadores(Number(e.target.value) as 2 | 4)}
-                        className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-1.5 py-1 font-bold text-xs cursor-pointer"
+                        className={`w-full rounded px-1.5 py-1 font-bold text-xs cursor-pointer ${t.input}`}
                       >
                         <option value={2}>2 Jugadores (1v1)</option>
                         <option value={4}>4 Jugadores (FFA)</option>
                       </select>
                     </div>
                     <div>
-                      <label className="font-bold text-[#86542d] block text-[11px]">Modo de Muros:</label>
+                      <label className={`font-bold block text-[11px] mb-0.5 ${t.muted}`}>Modo de Muros:</label>
                       <select
                         value={nuevaSalaModo}
                         onChange={(e) => setNuevaSalaModo(e.target.value as any)}
-                        className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-1.5 py-1 font-bold text-xs cursor-pointer"
+                        className={`w-full rounded px-1.5 py-1 font-bold text-xs cursor-pointer ${t.input}`}
                       >
                         <option value="estandar">🧱 Estándar (10 muros)</option>
                         <option value="tactico">🎯 Táctico (5 muros)</option>
@@ -4387,11 +4563,11 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       </select>
                     </div>
                     <div>
-                      <label className="font-bold text-[#86542d] block text-[11px]">Tablero:</label>
+                      <label className={`font-bold block text-[11px] mb-0.5 ${t.muted}`}>Tablero:</label>
                       <select
                         value={nuevaSalaTablero}
                         onChange={(e) => setNuevaSalaTablero(Number(e.target.value) as TamanoTablero)}
-                        className="w-full bg-[#fff9db] border border-[#2b2140] rounded px-1.5 py-1 font-bold text-xs cursor-pointer"
+                        className={`w-full rounded px-1.5 py-1 font-bold text-xs cursor-pointer ${t.input}`}
                       >
                         <option value={5}>5 × 5 (Relámpago)</option>
                         <option value={7}>7 × 7 (Rápido)</option>
@@ -4401,14 +4577,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   </div>
 
                   <div>
-                    <label className="font-bold text-[#86542d] block text-[11px]">Mensaje o Regla Especial (Opcional):</label>
+                    <label className={`font-bold block text-[11px] mb-0.5 ${t.muted}`}>Mensaje o Regla Especial (Opcional):</label>
                     <input
                       type="text"
                       maxLength={80}
                       placeholder="Ej: Sala de entrenamiento oficial para el torneo del fin de semana"
                       value={nuevaSalaMensaje}
                       onChange={(e) => setNuevaSalaMensaje(e.target.value)}
-                      className="w-full bg-[#f8f9fa] border border-[#2b2140] rounded px-2 py-1 font-medium text-xs"
+                      className={`w-full rounded px-2 py-1 font-medium text-xs ${t.input}`}
                     />
                   </div>
 
@@ -4416,7 +4592,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     type="button"
                     disabled={creandoSala}
                     onClick={handleCrearSalaPersonalizada}
-                    className="w-full py-2 rounded-xl font-black text-xs bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] hover:bg-[#40c057] cursor-pointer"
+                    className={`w-full py-2 rounded-xl font-black text-xs cursor-pointer ${t.btnPrimary}`}
                   >
                     {creandoSala ? '⏳ Creando Sala Oficial...' : '✨ Publicar Sala Oficial en Lobby'}
                   </button>
@@ -4425,7 +4601,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 {/* Lista de Salas Oficiales Activas */}
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-black text-[#2b2140]">
+                    <span className={`text-xs font-black ${t.title}`}>
                       Salas Oficiales Destacadas ({salasPersonalizadas.length})
                     </span>
                     <button
@@ -4434,14 +4610,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                         const s = await obtenerSalasPersonalizadasAsync();
                         setSalasPersonalizadas(s);
                       }}
-                      className="text-[10px] font-bold text-[#1971c2] hover:underline cursor-pointer"
+                      className={`text-[10px] font-bold hover:underline cursor-pointer ${t.esOscuro ? 'text-sky-300' : 'text-[#1971c2]'}`}
                     >
                       🔄 Actualizar
                     </button>
                   </div>
 
                   {salasPersonalizadas.length === 0 ? (
-                    <div className="p-4 bg-white rounded-2xl border-2 border-dashed border-[#2b2140]/30 text-center text-xs text-[#86542d] font-bold">
+                    <div className={`p-4 rounded-2xl border-2 border-dashed text-center text-xs font-bold ${t.card} ${t.muted}`}>
                       No hay salas personalizadas creadas actualmente.
                       <br />
                       ¡Crea una arriba para que los jugadores la vean destacada en el Lobby!
@@ -4450,26 +4626,26 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                     salasPersonalizadas.map((sala) => (
                       <div
                         key={sala.codigo}
-                        className="p-3 bg-white rounded-2xl border-2 border-[#2b2140] shadow-sm flex items-center justify-between gap-2"
+                        className={`p-3 rounded-2xl shadow-sm flex items-center justify-between gap-2 ${t.card}`}
                       >
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-mono font-black text-sm text-[#d9480f] bg-[#ffe8cc] px-2 py-0.5 rounded-lg border border-[#ffa94d]">
+                            <span className={`font-mono font-black text-sm px-2 py-0.5 rounded-lg ${t.bannerWarn}`}>
                               {sala.codigo}
                             </span>
-                            <span className="font-black text-xs text-[#2b2140] truncate">
+                            <span className={`font-black text-xs truncate ${t.title}`}>
                               {sala.nombre}
                             </span>
-                            <span className="text-[10px] font-black px-1.5 py-0.5 rounded-full bg-[#dbe4ff] text-[#364fc7]">
+                            <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full ${t.bannerInfo}`}>
                               {sala.maxJugadores} Jugadores · {sala.tamanoTablero || 9}x{sala.tamanoTablero || 9}
                             </span>
                           </div>
                           {sala.mensajeEspecial && (
-                            <p className="text-[11px] text-[#2b8a3e] font-semibold mt-0.5 truncate">
+                            <p className={`text-[11px] font-semibold mt-0.5 truncate ${t.accentText}`}>
                               💬 {sala.mensajeEspecial}
                             </p>
                           )}
-                          <span className="text-[10px] text-[#86542d] block mt-0.5">
+                          <span className={`text-[10px] block mt-0.5 ${t.muted}`}>
                             Creada por: <strong>{sala.creador}</strong> ({sala.creadorRol?.toUpperCase() || 'MOD'})
                           </span>
                         </div>
@@ -4477,7 +4653,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                         <button
                           type="button"
                           onClick={() => handleEliminarSalaPersonalizada(sala.codigo)}
-                          className="p-1.5 rounded-xl bg-[#ffe3e3] border border-[#c92a2a] text-[#c92a2a] hover:bg-[#ffc9c9] cursor-pointer text-xs font-black shrink-0"
+                          className={`p-1.5 rounded-xl cursor-pointer text-xs font-black shrink-0 ${t.btnDanger}`}
                           title="Eliminar esta sala oficial"
                         >
                           🗑️
@@ -4494,15 +4670,15 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
         {/* Submodal Inspector de Inventario */}
         {inspectingUser && (
           <div className="fixed inset-0 z-60 flex items-center justify-center p-3 bg-black/70 backdrop-blur-sm animate-[fadeIn_0.15s_ease-out]">
-            <div className="relative w-full max-w-md bg-[#fff8e7] border-4 border-[#2b2140] rounded-3xl p-3.5 sm:p-4 shadow-[0_10px_0_#2b2140] flex flex-col max-h-[85vh] overflow-hidden">
-              <div className="flex items-center justify-between pb-2 mb-2 border-b-2 border-[#2b2140]/15">
+            <div className={`relative w-full max-w-md rounded-3xl p-3.5 sm:p-4 flex flex-col max-h-[85vh] overflow-hidden ${t.shellModal}`}>
+              <div className={`flex items-center justify-between pb-2 mb-2 border-b-2 ${t.divider}`}>
                 <div className="flex items-center gap-2">
                   <span className="text-xl">🎒</span>
                   <div>
-                    <h4 className="font-black text-sm text-[#2b2140] leading-tight">
+                    <h4 className={`font-black text-sm leading-tight ${t.title}`}>
                       Inventario de {inspectingUser.nombre}
                     </h4>
-                    <span className="text-[10px] text-[#86542d] font-bold">
+                    <span className={`text-[10px] font-bold ${t.muted}`}>
                       Avatares exclusivos coleccionados
                     </span>
                   </div>
@@ -4510,7 +4686,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setInspectingUser(null)}
-                  className="w-7 h-7 rounded-full bg-[#f1f3f5] border-2 border-[#2b2140] text-xs font-black hover:bg-[#ffe3e3] cursor-pointer"
+                  className={`w-7 h-7 rounded-full text-xs font-black flex items-center justify-center cursor-pointer transition-colors ${t.closeBtn}`}
                 >
                   ✕
                 </button>
@@ -4518,16 +4694,16 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
               <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-2 my-1">
                 {(!inspectingUser.inventario?.personajes || inspectingUser.inventario.personajes.length === 0) ? (
-                  <div className="p-6 text-center text-xs text-[#86542d] font-bold">
+                  <div className={`p-6 text-center text-xs font-bold ${t.muted}`}>
                     Este jugador no tiene avatares exclusivos aún en su inventario.
                     <br />
-                    Puedes regalarle uno desde la pestaña <strong>[🎨 Editor de Avatares]</strong>.
+                    Puedes regalarle uno desde la pestaña <strong>[🎨 Avatares]</strong>.
                   </div>
                 ) : (
                   inspectingUser.inventario.personajes.map((char) => (
                     <div
                       key={char.id}
-                      className="p-2.5 rounded-2xl border-2 border-[#2b2140] bg-white flex flex-col gap-2 shadow-sm"
+                      className={`p-2.5 rounded-2xl flex flex-col gap-2 shadow-sm ${t.card}`}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0">
@@ -4540,13 +4716,13 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             aura={char.aura}
                           />
                           <div className="min-w-0">
-                            <span className="font-black text-xs text-[#2b2140] block truncate">
+                            <span className={`font-black text-xs block truncate ${t.title}`}>
                               {char.nombre}
                             </span>
-                            <span className="text-[10px] text-[#86542d] block">
+                            <span className={`text-[10px] block ${t.muted}`}>
                               Atuendo: {char.ropa || 'ninguno'} · Aura: {char.aura || 'ninguna'}
                             </span>
-                            <span className="text-[9px] text-[#2b8a3e] font-black block">
+                            <span className={`text-[9px] font-black block ${t.accentText}`}>
                               {typeof char.origen === 'object' && char.origen?.tipo === 'torneo_semanal'
                                 ? '🏆 Premio Torneo Semanal'
                                 : typeof char.origen === 'object' && char.origen?.tipo === 'regalo_dev'
@@ -4563,7 +4739,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                           <button
                             type="button"
                             onClick={() => handleQuitarPersonaje(inspectingUser.id, char.id)}
-                            className="py-1 px-2 rounded-lg bg-[#ffe3e3] border border-[#c92a2a] text-[10px] font-black text-[#c92a2a] hover:bg-[#ffc9c9] cursor-pointer shrink-0"
+                            className={`py-1 px-2 rounded-lg text-[10px] font-black cursor-pointer shrink-0 ${t.btnDanger}`}
                             title="Retirar avatar del inventario del user"
                           >
                             🗑️ Retirar
@@ -4572,13 +4748,13 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                       </div>
 
                       {esAdmin && (
-                        <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 pt-1.5 border-t border-[#2b2140]/10 min-w-0">
+                        <div className={`flex flex-col sm:flex-row sm:items-center gap-1.5 pt-1.5 border-t min-w-0 ${t.divider}`}>
                           <select
                             value={moveTargets[char.id] || ''}
                             onChange={(e) =>
                               setMoveTargets((prev) => ({ ...prev, [char.id]: e.target.value }))
                             }
-                            className="flex-1 min-w-0 text-[11px] font-bold bg-[#f8f9fa] border border-[#2b2140] rounded-lg px-2 py-1 outline-none cursor-pointer"
+                            className={`flex-1 min-w-0 text-[11px] font-bold rounded-lg px-2 py-1 outline-none cursor-pointer ${t.input}`}
                           >
                             <option value="">Mover a otro jugador...</option>
                             {Object.values(cuentas)
@@ -4595,7 +4771,7 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                             onClick={() =>
                               handleMoverPersonaje(inspectingUser.id, moveTargets[char.id] || '', char.id)
                             }
-                            className="py-1 px-2.5 rounded-lg bg-[#e7f5ff] border border-[#1971c2] text-[10px] font-black text-[#1864ab] hover:bg-[#d0ebff] disabled:opacity-50 cursor-pointer shrink-0"
+                            className={`py-1 px-2.5 rounded-lg text-[10px] font-black disabled:opacity-50 cursor-pointer shrink-0 ${t.btnSky}`}
                           >
                             {moviendoCharId === char.id ? '⏳...' : '📦 Mover'}
                           </button>

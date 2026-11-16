@@ -10,7 +10,7 @@ import { sounds } from '../game/murosLocosEngine';
 import {
   AjustesDeApp,
   TemaTablero,
-  EstiloVisual,
+  EstiloMuros,
   AvatarTipoDeGorro,
   ConfigDePartida,
   RegDeAvatar,
@@ -23,14 +23,13 @@ import {
 import { CartoonCharacter } from './CartoonCharacter';
 import { AspectoModal } from './Modals';
 import { actualizarNombreInvitadoLocal } from '../game/storage';
+import { ESTILO_MUROS_META, useMurosTheme } from '../game/murosTheme';
 
 // =========================================================================
 // 1. MENU SCREEN
 // =========================================================================
 interface MenuScreenProps {
   userActual: UserCuenta | null;
-  estiloVisual?: EstiloVisual;
-  onToggleEstiloVisual?: () => void;
   onAbrirPerfil: () => void;
   onAbrirAdmin?: () => void;
   onIniciarPartida: () => void;
@@ -46,8 +45,6 @@ interface MenuScreenProps {
 
 export const MenuScreen: React.FC<MenuScreenProps> = ({
   userActual,
-  estiloVisual = 'clasico',
-  onToggleEstiloVisual,
   onAbrirPerfil,
   onAbrirAdmin,
   onIniciarPartida,
@@ -60,21 +57,9 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
   onAbrirAjustes,
   onAbrirCandado,
 }) => {
+  const { estilo, setEstilo, t } = useMurosTheme();
   const [menuJuegosAbierto, setMenuJuegosAbierto] = useState(false);
-
-  const pastelLetters = [
-    { char: 'M', color: '#fca5a5' },
-    { char: 'U', color: '#fdba74' },
-    { char: 'R', color: '#fde68a' },
-    { char: 'O', color: '#86efac' },
-    { char: 'S', color: '#93c5fd' },
-    { char: ' ', color: 'transparent' },
-    { char: 'L', color: '#c7d2fe' },
-    { char: 'O', color: '#ddd6fe' },
-    { char: 'C', color: '#fbcfe8' },
-    { char: 'O', color: '#fed7aa' },
-    { char: 'S', color: '#a7f3d0' },
-  ];
+  const [menuEstiloAbierto, setMenuEstiloAbierto] = useState(false);
 
   const letters = [
     { char: 'M', color: '#ff6b6b' },
@@ -90,55 +75,75 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
     { char: 'S', color: '#51cf66' },
   ];
 
-  const esDev = Boolean(userActual && (userActual.rol === 'dev' || userActual.id === 'admin' || userActual.esSupremo));
+  const esDev = Boolean(
+    userActual && (userActual.rol === 'dev' || userActual.id === 'admin' || userActual.esSupremo)
+  );
   const esAdmin = Boolean(userActual && (userActual.rol === 'admin' || esDev));
   const esMod = Boolean(userActual && userActual.rol === 'mod');
   const esStaff = esDev || esAdmin || esMod;
 
-  const esMinimalista = estiloVisual === 'minimalista';
+  const metaEstiloActual = ESTILO_MUROS_META[estilo];
 
   return (
-    <div className={`relative w-full h-full flex flex-col items-center justify-between p-3 sm:p-5 z-10 transition-colors duration-300 ${
-      esMinimalista ? 'text-slate-100' : 'text-[#2b2140]'
-    }`}>
+    <div
+      className={`relative w-full h-full flex flex-col items-center justify-between p-3 sm:p-5 z-10 transition-colors duration-300 ${t.title}`}
+    >
       {/* Top Bar */}
-      <div className="w-full max-w-lg flex items-center justify-between px-0.5 sm:px-1 z-20 gap-1.5 min-w-0">
-        <div className="relative">
+      <div className="w-full max-w-lg flex items-center justify-between px-0.5 sm:px-1 z-30 gap-1.5 min-w-0">
+        {/* Selector de Juegos */}
+        <div className="relative shrink-0">
           <button
             type="button"
             onClick={() => {
               sounds.playClick();
+              setMenuEstiloAbierto(false);
               setMenuJuegosAbierto((v) => !v);
             }}
             className={
-              esMinimalista
-                ? 'flex items-center gap-1.5 bg-slate-900/80 hover:bg-slate-800 text-slate-200 px-3 py-1.5 rounded-xl border border-white/10 shadow-sm active:scale-95 cursor-pointer transition-all'
-                : 'flex items-center gap-1.5 bg-white hover:bg-[#fff9db] px-3 py-1.5 rounded-2xl border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] active:translate-y-0.5 cursor-pointer transition-all'
+              t.esClasico
+                ? 'flex items-center gap-1.5 bg-white hover:bg-[#fff9db] px-3 py-1.5 rounded-2xl border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] active:translate-y-0.5 cursor-pointer transition-all whitespace-nowrap'
+                : t.esOscuro
+                ? 'flex items-center gap-1.5 bg-slate-800/80 hover:bg-slate-800 text-slate-200 px-3 py-1.5 rounded-xl border border-white/10 shadow-xs active:scale-95 cursor-pointer transition-all whitespace-nowrap'
+                : 'flex items-center gap-1.5 bg-[#FFFDF6]/95 hover:bg-[#F5EEDB] text-[#171923] px-3 py-1.5 rounded-xl border border-[#DFD6BF] shadow-2xs active:scale-98 cursor-pointer transition-all whitespace-nowrap'
             }
             title="Selector de modos rápidos y juegos"
           >
-            <span className="text-sm">🕹️</span>
-            <span className={esMinimalista ? 'font-semibold text-xs text-slate-200' : 'font-black text-xs text-[#2b2140] tracking-wide'}>
+            {t.esClasico && <span className="text-sm">🕹️</span>}
+            <span className={t.esClasico ? 'font-black text-xs text-[#2b2140] tracking-wide' : 'text-xs font-semibold'}>
               Juegos
             </span>
-            <span className={esMinimalista ? 'text-[10px] text-slate-400' : 'text-[10px] font-black text-[#86542d]'}>
+            <span className={t.esClasico ? 'text-[10px] font-black text-[#86542d]' : 'text-[10px] opacity-75'}>
               {menuJuegosAbierto ? '▴' : '▾'}
             </span>
           </button>
 
           {menuJuegosAbierto && (
-            <div className={
-              esMinimalista
-                ? 'absolute top-11 left-0 w-60 bg-slate-900/95 border border-white/15 rounded-xl p-2.5 shadow-2xl backdrop-blur-md flex flex-col gap-2 z-40 animate-[fadeIn_0.15s_ease-out]'
-                : 'absolute top-11 left-0 w-56 bg-[#fff8e7] border-3 border-[#2b2140] rounded-2xl p-2 shadow-[0_8px_0_#2b2140,0_16px_25px_rgba(0,0,0,0.3)] flex flex-col gap-1.5 z-40 animate-[fadeIn_0.15s_ease-out]'
-            }>
-              <div className={
-                esMinimalista
-                  ? 'px-3 py-2 rounded-lg bg-emerald-950/60 border border-emerald-500/30 flex items-center justify-between text-xs font-semibold text-emerald-300'
-                  : 'px-2.5 py-1.5 rounded-xl bg-[#d3f9d8] border-2 border-[#2b2140] flex items-center justify-between text-xs font-black text-[#134e20]'
-              }>
-                <span>🧱 Muros Locos</span>
-                <span className={esMinimalista ? 'text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded' : 'text-[9px] bg-white px-1.5 py-0.5 rounded border border-[#2b2140]'}>
+            <div
+              className={
+                t.esClasico
+                  ? 'absolute top-11 left-0 w-56 bg-[#fff8e7] border-3 border-[#2b2140] rounded-2xl p-2 shadow-[0_8px_0_#2b2140,0_16px_25px_rgba(0,0,0,0.3)] flex flex-col gap-1.5 z-40 animate-[fadeIn_0.15s_ease-out]'
+                  : t.esOscuro
+                  ? 'absolute top-11 left-0 w-60 bg-[#1B1F30]/95 border border-white/12 rounded-2xl p-2 shadow-2xl backdrop-blur-md flex flex-col gap-1.5 z-40 animate-[fadeIn_0.15s_ease-out]'
+                  : 'absolute top-11 left-0 w-60 bg-[#FFFDF6] border border-[#DFD6BF] rounded-2xl p-2 shadow-[0_14px_32px_-8px_rgba(38,41,59,0.16)] flex flex-col gap-1.5 z-40 animate-[fadeIn_0.15s_ease-out]'
+              }
+            >
+              <div
+                className={
+                  t.esClasico
+                    ? 'px-2.5 py-1.5 rounded-xl bg-[#d3f9d8] border-2 border-[#2b2140] flex items-center justify-between text-xs font-black text-[#134e20]'
+                    : t.esOscuro
+                    ? 'px-3 py-2 rounded-xl bg-emerald-400/15 border border-emerald-400/25 flex items-center justify-between text-xs font-semibold text-emerald-200'
+                    : 'px-3 py-2 rounded-xl bg-[#E1F5EA] border border-[#BCE5CE] flex items-center justify-between text-xs font-semibold text-[#0F3D27]'
+                }
+              >
+                <span>{t.esClasico ? '🧱 Muros Locos' : 'Muros Locos'}</span>
+                <span
+                  className={
+                    t.esClasico
+                      ? 'text-[9px] bg-white px-1.5 py-0.5 rounded border border-[#2b2140]'
+                      : 'text-[10px] opacity-85'
+                  }
+                >
                   Activo
                 </span>
               </div>
@@ -152,15 +157,31 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
                     onPartidaSorpresa();
                   }}
                   className={
-                    esMinimalista
-                      ? 'px-3 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-white/10 text-left cursor-pointer transition-colors'
-                      : 'px-2.5 py-2 rounded-xl bg-[#ffd43b] hover:bg-[#fcc419] border-2 border-[#2b2140] text-left cursor-pointer transition-colors'
+                    t.esClasico
+                      ? 'px-2.5 py-2 rounded-xl bg-[#ffd43b] hover:bg-[#fcc419] border-2 border-[#2b2140] text-left cursor-pointer transition-colors'
+                      : t.esOscuro
+                      ? 'px-3 py-2 rounded-xl bg-amber-300/15 hover:bg-amber-300/25 border border-amber-300/25 text-left cursor-pointer transition-colors'
+                      : 'px-3 py-2 rounded-xl bg-[#FDF4DB] hover:bg-[#FCEAC0] border border-[#EAD59B] text-[#4A3309] text-left cursor-pointer transition-colors'
                   }
                 >
-                  <span className={esMinimalista ? 'text-xs font-bold text-amber-300 block' : 'text-xs font-black text-[#2b2140] block'}>
-                    🎲 Reto Aleatorio
+                  <span
+                    className={
+                      t.esClasico
+                        ? 'text-xs font-black text-[#2b2140] block'
+                        : t.esOscuro
+                        ? 'text-xs font-semibold text-amber-200 block'
+                        : 'text-xs font-semibold block'
+                    }
+                  >
+                    {t.esClasico ? '🎲 Reto Aleatorio' : 'Reto Aleatorio'}
                   </span>
-                  <span className={esMinimalista ? 'text-[10px] text-slate-400 block leading-tight' : 'text-[10px] font-bold text-[#5c3c00] block leading-tight'}>
+                  <span
+                    className={
+                      t.esClasico
+                        ? 'text-[10px] font-bold text-[#5c3c00] block leading-tight'
+                        : 'text-[11px] opacity-80 block leading-tight mt-0.5'
+                    }
+                  >
                     Rival y terreno al azar al instante
                   </span>
                 </button>
@@ -175,20 +196,42 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
                     onAbrirCandado();
                   }}
                   className={
-                    esMinimalista
-                      ? 'px-3 py-2 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-400/30 text-left cursor-pointer transition-colors'
-                      : 'px-2.5 py-2 rounded-xl bg-[#e7f5ff] hover:bg-[#d0ebff] border-2 border-[#2b2140] text-left cursor-pointer transition-colors'
+                    t.esClasico
+                      ? 'px-2.5 py-2 rounded-xl bg-[#e7f5ff] hover:bg-[#d0ebff] border-2 border-[#2b2140] text-left cursor-pointer transition-colors'
+                      : t.esOscuro
+                      ? 'px-3 py-2 rounded-xl bg-sky-300/15 hover:bg-sky-300/25 border border-sky-300/25 text-left cursor-pointer transition-colors'
+                      : 'px-3 py-2 rounded-xl bg-[#CEE4FF]/70 hover:bg-[#BBD8FE] border border-[#A4C6F4] text-[#143254] text-left cursor-pointer transition-colors'
                   }
                 >
                   <div className="flex items-center justify-between gap-1">
-                    <span className={esMinimalista ? 'text-xs font-bold text-indigo-200 block' : 'text-xs font-black text-[#1864ab] block'}>
-                      🔐 Candado
+                    <span
+                      className={
+                        t.esClasico
+                          ? 'text-xs font-black text-[#1864ab] block'
+                          : t.esOscuro
+                          ? 'text-xs font-semibold text-sky-200 block'
+                          : 'text-xs font-semibold block'
+                      }
+                    >
+                      {t.esClasico ? '🔐 Candado' : 'Candado'}
                     </span>
-                    <span className={esMinimalista ? 'text-[9px] bg-emerald-500/30 text-emerald-200 px-1.5 py-0.5 rounded' : 'text-[9px] font-black bg-[#d3f9d8] text-[#134e20] px-1.5 py-0.5 rounded border border-[#2b2140]'}>
-                      Nuevo
+                    <span
+                      className={
+                        t.esClasico
+                          ? 'text-[9px] font-black bg-[#d3f9d8] text-[#134e20] px-1.5 py-0.5 rounded border border-[#2b2140]'
+                          : 'text-[10px] opacity-80'
+                      }
+                    >
+                      Pasatiempo
                     </span>
                   </div>
-                  <span className={esMinimalista ? 'text-[10px] text-slate-400 block leading-tight mt-0.5' : 'text-[10px] font-bold text-[#364fc7] block leading-tight mt-0.5'}>
+                  <span
+                    className={
+                      t.esClasico
+                        ? 'text-[10px] font-bold text-[#364fc7] block leading-tight mt-0.5'
+                        : 'text-[11px] opacity-80 block leading-tight mt-0.5'
+                    }
+                  >
                     Descifra la clave · Local y Duelo P2P
                   </span>
                 </button>
@@ -197,27 +240,75 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
           )}
         </div>
 
-        {/* Quick Style Switcher (Prueba en 1 clic) */}
-        {onToggleEstiloVisual && (
+        {/* Selector de Estética Visual (Pastel Oscuro / Pastel Claro / Clásico) */}
+        <div className="relative shrink-0">
           <button
             type="button"
             onClick={() => {
               sounds.playClick();
-              onToggleEstiloVisual();
+              setMenuJuegosAbierto(false);
+              setMenuEstiloAbierto((v) => !v);
             }}
             className={
-              esMinimalista
-                ? 'flex items-center gap-1.5 bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-400/30 px-2.5 py-1 rounded-xl text-[11px] font-semibold backdrop-blur-sm transition-all cursor-pointer shadow-xs active:scale-95'
-                : 'flex items-center gap-1 bg-white hover:bg-[#fff9db] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] px-2 py-1 rounded-2xl text-[10px] sm:text-[11px] font-black active:translate-y-0.5 cursor-pointer transition-all'
+              t.esClasico
+                ? 'flex items-center gap-1 bg-white hover:bg-[#fff9db] text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] px-2.5 py-1.5 rounded-2xl text-[11px] font-black active:translate-y-0.5 cursor-pointer transition-all whitespace-nowrap'
+                : t.esOscuro
+                ? 'flex items-center gap-1.5 bg-slate-800/80 hover:bg-slate-700/80 text-slate-200 border border-white/10 px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] font-semibold transition-all cursor-pointer whitespace-nowrap'
+                : 'flex items-center gap-1.5 bg-[#FFFDF6]/95 hover:bg-[#F5EEDB] text-[#171923] border border-[#DFD6BF] shadow-2xs px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] font-semibold transition-all cursor-pointer whitespace-nowrap'
             }
-            title="Alternar entre estilo Clásico Infantil y Moderno Minimalista"
+            title="Cambiar estética visual entre Pastel Oscuro, Pastel Claro y Clásico"
           >
-            <span>{esMinimalista ? '🧸' : '✨'}</span>
-            <span className="hidden sm:inline">{esMinimalista ? 'Cambiar a' : 'Vista'}</span>
-            <span>{esMinimalista ? 'Clásico' : 'Minimal'}</span>
+            <span>{metaEstiloActual.icon}</span>
+            <span>{metaEstiloActual.shortLabel}</span>
+            <span className="text-[10px] opacity-70">{menuEstiloAbierto ? '▴' : '▾'}</span>
           </button>
-        )}
 
+          {menuEstiloAbierto && (
+            <div
+              className={
+                t.esClasico
+                  ? 'absolute top-11 left-1/2 -translate-x-1/2 w-56 bg-[#fff8e7] border-3 border-[#2b2140] rounded-2xl p-2 shadow-[0_8px_0_#2b2140,0_16px_25px_rgba(0,0,0,0.3)] flex flex-col gap-1.5 z-40 animate-[fadeIn_0.15s_ease-out]'
+                  : t.esOscuro
+                  ? 'absolute top-11 left-1/2 -translate-x-1/2 w-60 bg-[#1B1F30]/95 border border-white/12 rounded-2xl p-2 shadow-2xl backdrop-blur-md flex flex-col gap-1.5 z-40 animate-[fadeIn_0.15s_ease-out]'
+                  : 'absolute top-11 left-1/2 -translate-x-1/2 w-60 bg-[#FFFDF6] border border-[#DFD6BF] rounded-2xl p-2 shadow-[0_14px_32px_-8px_rgba(38,41,59,0.16)] flex flex-col gap-1.5 z-40 animate-[fadeIn_0.15s_ease-out]'
+              }
+            >
+              <span className={`px-2 pt-0.5 text-[10px] font-bold uppercase tracking-wider ${t.muted}`}>
+                Estética visual
+              </span>
+              {(['pastel_oscuro', 'pastel_claro', 'clasico'] as EstiloMuros[]).map((op) => {
+                const meta = ESTILO_MUROS_META[op];
+                const activo = estilo === op;
+                return (
+                  <button
+                    key={op}
+                    type="button"
+                    onClick={() => {
+                      sounds.playClick();
+                      setEstilo(op);
+                      setMenuEstiloAbierto(false);
+                    }}
+                    className={`px-2.5 py-2 rounded-xl text-left cursor-pointer transition-all flex items-center justify-between gap-2 ${
+                      activo ? t.bannerSuccess : `${t.card} ${t.cardHover}`
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <span className="text-xs font-bold block truncate">
+                        {meta.icon} {meta.label}
+                      </span>
+                      <span className="text-[10px] opacity-80 block leading-tight mt-0.5">
+                        {meta.desc}
+                      </span>
+                    </div>
+                    {activo && <span className="text-xs font-bold shrink-0">✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Derecha: Staff + Perfil */}
         <div className="flex items-center gap-1 sm:gap-1.5 min-w-0">
           {esStaff && onAbrirAdmin && (
             <button
@@ -226,11 +317,17 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
                 onAbrirAdmin();
               }}
               className={
-                esMinimalista
-                  ? 'py-1 px-2 sm:px-2.5 rounded-xl bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 font-bold text-xs cursor-pointer flex items-center gap-1 transition-all shrink-0'
-                  : 'py-1 px-2 sm:px-2.5 rounded-2xl bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] font-black text-xs cursor-pointer flex items-center gap-1 active:translate-y-0.5 shrink-0'
+                t.esClasico
+                  ? 'py-1 px-2 sm:px-2.5 rounded-2xl bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fcc419] font-black text-xs cursor-pointer flex items-center gap-1 active:translate-y-0.5 shrink-0'
+                  : `${t.btnAmber} py-1.5 px-2 sm:px-2.5 rounded-xl font-semibold text-xs cursor-pointer flex items-center gap-1 transition-all shrink-0`
               }
-              title={esDev ? 'Panel Dev Supremo' : esAdmin ? 'Panel de Administración' : 'Panel de Moderación (Salas Oficiales)'}
+              title={
+                esDev
+                  ? 'Panel Dev Supremo'
+                  : esAdmin
+                  ? 'Panel de Administración'
+                  : 'Panel de Moderación (Salas Oficiales)'
+              }
             >
               <span>{esDev ? '👑' : esAdmin ? '🛡️' : '🔰'}</span>
               <span className="hidden sm:inline">{esDev ? 'Dev' : esAdmin ? 'Admin' : 'Mod'}</span>
@@ -243,11 +340,13 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
               onAbrirPerfil();
             }}
             className={
-              esMinimalista
-                ? 'py-1 px-2 sm:px-3 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-white/10 text-white transition-all cursor-pointer flex items-center gap-1.5 sm:gap-2 group shadow-sm min-w-0 max-w-full'
-                : 'py-1 px-2 sm:px-3 rounded-2xl bg-white border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fff9db] hover:-translate-y-0.5 active:translate-y-1 active:shadow-none transition-all cursor-pointer flex items-center gap-1.5 sm:gap-2 group min-w-0 max-w-full'
+              t.esClasico
+                ? 'py-1 px-2 sm:px-3 rounded-2xl bg-white border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] hover:bg-[#fff9db] hover:-translate-y-0.5 active:translate-y-1 active:shadow-none transition-all cursor-pointer flex items-center gap-1.5 sm:gap-2 group min-w-0 max-w-full'
+                : t.esOscuro
+                ? 'py-1 px-2 sm:px-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-800 border border-white/10 text-slate-100 transition-all cursor-pointer flex items-center gap-1.5 sm:gap-2 group min-w-0 max-w-full'
+                : 'py-1 px-2 sm:px-2.5 rounded-xl bg-[#FFFDF6]/95 hover:bg-[#F5EEDB] border border-[#DFD6BF] shadow-2xs text-[#171923] transition-all cursor-pointer flex items-center gap-1.5 sm:gap-2 group min-w-0 max-w-full'
             }
-            title="Gestionar perfil de user o iniciar sesión"
+            title="Gestionar perfil de usuario o iniciar sesión"
           >
             {userActual ? (
               <>
@@ -258,34 +357,54 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
                     ropa={userActual.avatarRopa}
                     ropaColor={userActual.avatarRopaColor}
                     aura={userActual.avatarAura}
-                    size={26}
+                    size={t.esClasico ? 26 : 22}
                     showShadow={false}
                   />
                 </div>
                 <div className="text-left leading-tight min-w-0">
                   <div className="flex items-center gap-1 min-w-0">
-                    <span className={esMinimalista ? 'text-xs font-semibold text-slate-200 max-w-[78px] sm:max-w-[105px] truncate' : 'text-xs font-black text-[#2b2140] max-w-[78px] sm:max-w-[105px] truncate'}>
+                    <span
+                      className={`text-xs max-w-[74px] sm:max-w-[105px] truncate ${
+                        t.esClasico ? 'font-black text-[#2b2140]' : 'font-semibold'
+                      }`}
+                    >
                       {userActual.nombre}
                     </span>
                     {esStaff && (
-                      <span className={
-                        esMinimalista
-                          ? esDev
-                            ? 'text-[8px] bg-amber-400/20 text-amber-300 font-bold px-1 rounded border border-amber-400/30 shrink-0'
+                      <span
+                        className={
+                          t.esClasico
+                            ? esDev
+                              ? 'text-[8px] bg-[#ffd43b] text-[#5c3c00] font-black px-1 rounded border border-[#2b2140] shrink-0'
+                              : esAdmin
+                              ? 'text-[8px] bg-[#a5d8ff] text-[#1864ab] font-black px-1 rounded border border-[#2b2140] shrink-0'
+                              : 'text-[8px] bg-[#b2f2bb] text-[#2b8a3e] font-black px-1 rounded border border-[#2b2140] shrink-0'
+                            : t.esOscuro
+                            ? esDev
+                              ? 'text-[8px] bg-amber-400/20 text-amber-200 font-bold px-1 rounded border border-amber-400/30 shrink-0'
+                              : esAdmin
+                              ? 'text-[8px] bg-sky-400/20 text-sky-200 font-bold px-1 rounded border border-sky-400/30 shrink-0'
+                              : 'text-[8px] bg-emerald-400/20 text-emerald-200 font-bold px-1 rounded border border-emerald-400/30 shrink-0'
+                            : esDev
+                            ? 'text-[8px] bg-[#FCE8B8] text-[#4A3309] font-bold px-1 rounded border border-[#EAD08E] shrink-0'
                             : esAdmin
-                            ? 'text-[8px] bg-blue-400/20 text-blue-300 font-bold px-1 rounded border border-blue-400/30 shrink-0'
-                            : 'text-[8px] bg-emerald-400/20 text-emerald-300 font-bold px-1 rounded border border-emerald-400/30 shrink-0'
-                          : esDev
-                          ? 'text-[8px] bg-[#ffd43b] text-[#5c3c00] font-black px-1 rounded border border-[#2b2140] shrink-0'
-                          : esAdmin
-                          ? 'text-[8px] bg-[#a5d8ff] text-[#1864ab] font-black px-1 rounded border border-[#2b2140] shrink-0'
-                          : 'text-[8px] bg-[#b2f2bb] text-[#2b8a3e] font-black px-1 rounded border border-[#2b2140] shrink-0'
-                      }>
+                            ? 'text-[8px] bg-[#CEE4FF] text-[#143254] font-bold px-1 rounded border border-[#A4C6F4] shrink-0'
+                            : 'text-[8px] bg-[#B7EBD0] text-[#0F3D27] font-bold px-1 rounded border border-[#8AD2AE] shrink-0'
+                        }
+                      >
                         {userActual.id === 'admin' ? 'DEV' : esDev ? 'DEV' : esAdmin ? 'ADMIN' : 'MOD'}
                       </span>
                     )}
                   </div>
-                  <span className={esMinimalista ? 'text-[10px] font-semibold text-emerald-400 block truncate' : 'text-[10px] font-bold text-[#2b8a3e] block truncate'}>
+                  <span
+                    className={
+                      t.esClasico
+                        ? 'text-[10px] font-bold text-[#2b8a3e] block truncate'
+                        : t.esOscuro
+                        ? 'text-[10px] font-medium text-emerald-300 block truncate'
+                        : 'text-[10px] font-semibold text-[#0F5C38] block truncate'
+                    }
+                  >
                     ⭐ {userActual.puntos} pts
                   </span>
                 </div>
@@ -293,7 +412,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
             ) : (
               <>
                 <span className="text-sm group-hover:scale-110 transition-transform">👤</span>
-                <span className={esMinimalista ? 'text-xs font-semibold text-slate-200' : 'text-xs font-black text-[#2b2140]'}>
+                <span className={t.esClasico ? 'text-xs font-black text-[#2b2140]' : 'text-xs font-semibold'}>
                   Mi Perfil
                 </span>
               </>
@@ -303,32 +422,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
       </div>
 
       {/* Header / Title */}
-      {esMinimalista ? (
-        <div className="flex flex-col items-center mt-3 sm:mt-5 text-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900/80 border border-white/10 text-slate-300 text-[11px] font-semibold tracking-wider uppercase mb-2.5 shadow-sm">
-            <span>🧱</span>
-            <span className="text-slate-400">Juego Táctico de Estrategia</span>
-          </div>
-          <div className="flex items-center justify-center gap-1 sm:gap-2 select-none">
-            {pastelLetters.map((l, i) =>
-              l.char === ' ' ? (
-                <span key={i} className="w-2.5 sm:w-4" />
-              ) : (
-                <span
-                  key={i}
-                  className="text-4xl sm:text-6xl md:text-7xl font-black tracking-tight inline-block filter drop-shadow-[0_2px_14px_rgba(255,255,255,0.12)]"
-                  style={{ color: l.color }}
-                >
-                  {l.char}
-                </span>
-              )
-            )}
-          </div>
-          <p className="mt-2.5 text-xs sm:text-sm text-slate-400 max-w-xs sm:max-w-md font-medium leading-relaxed">
-            Bloquea el camino de tus rivales, calcula tus saltos y alcanza la meta antes que nadie.
-          </p>
-        </div>
-      ) : (
+      {t.esClasico ? (
         <div className="flex flex-col items-center mt-2 sm:mt-4">
           <div className="flex items-center justify-center gap-1 sm:gap-2">
             {letters.map((l, i) =>
@@ -352,27 +446,39 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
             🧱 ¡El juego de mesa de carreras, muros y saltos locos!
           </p>
         </div>
+      ) : (
+        <div className="flex flex-col items-center mt-4 sm:mt-6 text-center px-2">
+          <span
+            className={`text-[11px] font-semibold tracking-[0.16em] uppercase mb-2 ${
+              t.esOscuro ? 'text-indigo-200/75' : 'text-[#3A3F54]'
+            }`}
+          >
+            Juego de carreras, muros y saltos
+          </span>
+          <h1
+            className={`text-3xl sm:text-5xl font-extrabold tracking-[0.16em] pl-[0.16em] ${t.title}`}
+          >
+            MUROS LOCOS
+          </h1>
+          <div
+            className={`mt-2.5 h-1 w-24 rounded-full ${
+              t.esOscuro
+                ? 'bg-gradient-to-r from-emerald-300/60 via-sky-300/60 to-violet-300/60'
+                : 'bg-gradient-to-r from-[#8CD7B0] via-[#9BC0F5] to-[#BEB0F5]'
+            }`}
+          />
+          <p
+            className={`mt-3 text-xs sm:text-sm max-w-xs sm:max-w-md leading-relaxed font-medium ${
+              t.esOscuro ? 'text-slate-400' : 'text-[#353A4D]'
+            }`}
+          >
+            Bloquea el camino de tus rivales, calcula tus saltos y alcanza la meta antes que nadie.
+          </p>
+        </div>
       )}
 
-      {/* Mascots Display (Personajes estáticos sin movimiento) */}
-      {esMinimalista ? (
-        <div className="flex items-center justify-center gap-3 sm:gap-5 my-3 p-3 bg-slate-900/40 border border-white/10 rounded-2xl backdrop-blur-md shadow-inner">
-          <div className="flex items-center gap-3 sm:gap-4">
-            <div className="p-1.5 rounded-xl bg-white/5 border border-white/5 hover:border-white/20 transition-all hover:-translate-y-0.5">
-              <CartoonCharacter color="#ff6b6b" hat="corona" size={50} />
-            </div>
-            <div className="p-1.5 rounded-xl bg-white/5 border border-white/5 hover:border-white/20 transition-all hover:-translate-y-0.5">
-              <CartoonCharacter color="#4dabf7" hat="pompon" size={50} />
-            </div>
-            <div className="p-1.5 rounded-xl bg-white/5 border border-white/5 hover:border-white/20 transition-all hover:-translate-y-0.5">
-              <CartoonCharacter color="#ffd43b" hat="antena" size={50} />
-            </div>
-            <div className="p-1.5 rounded-xl bg-white/5 border border-white/5 hover:border-white/20 transition-all hover:-translate-y-0.5">
-              <CartoonCharacter color="#51cf66" hat="brote" size={50} />
-            </div>
-          </div>
-        </div>
-      ) : (
+      {/* Mascots Display (Avatares idénticos en todos los temas) */}
+      {t.esClasico ? (
         <div className="flex items-center justify-center gap-4 sm:gap-8 my-4">
           <div>
             <CartoonCharacter color="#ff6b6b" hat="corona" size={64} />
@@ -387,91 +493,54 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
             <CartoonCharacter color="#51cf66" hat="brote" size={64} />
           </div>
         </div>
+      ) : (
+        <div
+          className={`flex items-center justify-center gap-2 sm:gap-3.5 my-4 p-2.5 sm:p-3 rounded-2xl border select-none ${
+            t.esOscuro
+              ? 'bg-slate-900/60 border-white/10 shadow-inner'
+              : 'bg-[#FFFDF6]/90 border-[#DFD6BF] shadow-[0_10px_28px_-10px_rgba(38,41,59,0.08)]'
+          }`}
+        >
+          {[
+            {
+              color: '#ff6b6b',
+              hat: 'corona' as const,
+              dark: 'bg-rose-400/10 border-rose-300/25',
+              light: 'bg-[#FAD8DD]/60 border-[#EEB1B9]',
+            },
+            {
+              color: '#4dabf7',
+              hat: 'pompon' as const,
+              dark: 'bg-sky-300/10 border-sky-300/25',
+              light: 'bg-[#DCEBFF]/80 border-[#B2CEF5]',
+            },
+            {
+              color: '#ffd43b',
+              hat: 'antena' as const,
+              dark: 'bg-amber-300/10 border-amber-200/25',
+              light: 'bg-[#FDF0CC]/80 border-[#EDD595]',
+            },
+            {
+              color: '#51cf66',
+              hat: 'brote' as const,
+              dark: 'bg-emerald-400/10 border-emerald-300/25',
+              light: 'bg-[#D7F3E4]/80 border-[#A8DFC2]',
+            },
+          ].map((m, idx) => (
+            <div
+              key={idx}
+              className={`p-1.5 sm:p-2 rounded-xl border transition-transform hover:-translate-y-0.5 ${
+                t.esOscuro ? m.dark : m.light
+              }`}
+            >
+              <CartoonCharacter color={m.color} hat={m.hat} size={50} />
+            </div>
+          ))}
+        </div>
       )}
 
       {/* Action Buttons Menu */}
-      {esMinimalista ? (
-        <div className="w-full max-w-xs sm:max-w-sm flex flex-col gap-2.5 mb-4">
-          <button
-            onClick={() => {
-              sounds.playClick();
-              onIniciarPartida();
-            }}
-            className="w-full py-3.5 px-6 rounded-xl font-bold text-base bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 shadow-lg shadow-emerald-950/40 hover:-translate-y-0.5 active:translate-y-0 transition-all cursor-pointer flex items-center justify-center gap-2 group"
-          >
-            <span className="text-lg group-hover:scale-110 transition-transform">🎮</span>
-            <span className="tracking-wide">PARTIDA RÁPIDA</span>
-          </button>
-
-          <button
-            onClick={() => {
-              sounds.playClick();
-              onIniciarTorneo();
-            }}
-            className="w-full py-3 px-6 rounded-xl font-semibold text-sm sm:text-base bg-slate-900/90 text-amber-300 hover:bg-slate-800 border border-amber-500/30 shadow-md hover:-translate-y-0.5 active:translate-y-0 transition-all cursor-pointer flex items-center justify-center gap-2 group"
-          >
-            <span className="text-lg group-hover:scale-110 transition-transform">🏆</span>
-            <span className="tracking-wide">MODO TORNEO</span>
-          </button>
-
-          <button
-            onClick={() => {
-              sounds.playClick();
-              onAbrirOnline();
-            }}
-            className="w-full py-3 px-6 rounded-xl font-semibold text-sm sm:text-base bg-slate-900/90 text-sky-300 hover:bg-slate-800 border border-sky-500/30 shadow-md hover:-translate-y-0.5 active:translate-y-0 transition-all cursor-pointer flex items-center justify-center gap-2 group"
-          >
-            <span className="text-lg group-hover:scale-110 transition-transform">🌐</span>
-            <span className="tracking-wide">JUGAR EN LÍNEA (P2P)</span>
-          </button>
-
-          <div className="grid grid-cols-2 gap-2 mt-1">
-            <button
-              onClick={() => {
-                sounds.playClick();
-                onAbrirRanking();
-              }}
-              className="py-2.5 px-3 rounded-xl font-semibold text-xs bg-slate-900/60 hover:bg-slate-800 text-slate-300 hover:text-white border border-white/10 hover:border-white/20 transition-all cursor-pointer flex items-center justify-center gap-1.5"
-            >
-              <span>🏆</span>
-              <span>Ranking</span>
-            </button>
-
-            <button
-              onClick={() => {
-                sounds.playClick();
-                onAbrirLogros();
-              }}
-              className="py-2.5 px-3 rounded-xl font-semibold text-xs bg-slate-900/60 hover:bg-slate-800 text-slate-300 hover:text-white border border-white/10 hover:border-white/20 transition-all cursor-pointer flex items-center justify-center gap-1.5"
-            >
-              <span>🏅</span>
-              <span>Logros</span>
-            </button>
-
-            <button
-              onClick={() => {
-                sounds.playClick();
-                onAbrirComoJugar();
-              }}
-              className="py-2.5 px-3 rounded-xl font-semibold text-xs bg-slate-900/60 hover:bg-slate-800 text-slate-300 hover:text-white border border-white/10 hover:border-white/20 transition-all cursor-pointer flex items-center justify-center gap-1.5"
-            >
-              <span>📖</span>
-              <span>Reglas</span>
-            </button>
-
-            <button
-              onClick={() => {
-                sounds.playClick();
-                onAbrirAjustes();
-              }}
-              className="py-2.5 px-3 rounded-xl font-semibold text-xs bg-slate-900/60 hover:bg-slate-800 text-slate-300 hover:text-white border border-white/10 hover:border-white/20 transition-all cursor-pointer flex items-center justify-center gap-1.5"
-            >
-              <span>⚙️</span>
-              <span>Ajustes</span>
-            </button>
-          </div>
-        </div>
-      ) : (
+      {t.esClasico ? (
         <div className="w-full max-w-xs sm:max-w-sm flex flex-col gap-2.5 mb-5">
           <button
             onClick={() => {
@@ -552,6 +621,80 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
             </button>
           </div>
         </div>
+      ) : (
+        <div className="w-full max-w-xs sm:max-w-sm flex flex-col gap-2.5 mb-5">
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onIniciarPartida();
+            }}
+            className={`w-full py-3.5 px-6 rounded-xl font-bold text-sm sm:text-base transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap ${t.btnPrimary}`}
+          >
+            <span>Partida Rápida</span>
+          </button>
+
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onIniciarTorneo();
+            }}
+            className={`w-full py-3 px-6 rounded-xl font-semibold text-sm transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap ${t.btnAmber}`}
+          >
+            <span>Modo Torneo</span>
+          </button>
+
+          <button
+            onClick={() => {
+              sounds.playClick();
+              onAbrirOnline();
+            }}
+            className={`w-full py-3 px-6 rounded-xl font-semibold text-sm transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap ${t.btnSky}`}
+          >
+            <span>Jugar en Línea (P2P)</span>
+          </button>
+
+          <div className="grid grid-cols-2 gap-2 mt-1">
+            <button
+              onClick={() => {
+                sounds.playClick();
+                onAbrirRanking();
+              }}
+              className={`py-2.5 px-3 rounded-xl font-semibold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${t.btnNeutral}`}
+            >
+              <span>Ranking</span>
+            </button>
+
+            <button
+              onClick={() => {
+                sounds.playClick();
+                onAbrirLogros();
+              }}
+              className={`py-2.5 px-3 rounded-xl font-semibold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${t.btnNeutral}`}
+            >
+              <span>Logros</span>
+            </button>
+
+            <button
+              onClick={() => {
+                sounds.playClick();
+                onAbrirComoJugar();
+              }}
+              className={`py-2.5 px-3 rounded-xl font-semibold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${t.btnNeutral}`}
+            >
+              <span>Reglas</span>
+            </button>
+
+            <button
+              onClick={() => {
+                sounds.playClick();
+                onAbrirAjustes();
+              }}
+              className={`py-2.5 px-3 rounded-xl font-semibold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 ${t.btnNeutral}`}
+            >
+              <span>Ajustes</span>
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -586,6 +729,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
   onuserActualizado,
   onShowToast,
 }) => {
+  const { t } = useMurosTheme();
   const [numJugadores, setNumJugadores] = useState<2 | 4>(2);
   const [tamanoTablero, setTamanoTablero] = useState<TamanoTablero>(9);
   const [modalAspectoAbierto, setModalAspectoAbierto] = useState(false);
@@ -644,6 +788,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
     }
   }, [
     userActual?.id,
+    userActual?.nombre,
     userActual?.avatarHat,
     userActual?.avatarColor,
     userActual?.avatarRopa,
@@ -659,7 +804,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
   const [segundosPorTurno, setSegundosPorTurno] = useState<number>(30);
   const [esTorneo, setEsTorneo] = useState<boolean>(esTorneoInicial);
   const [totalRondasTorneo, setTotalRondasTorneo] = useState<number>(3);
-  const [rotationMode, setRotationMode] = useState<boolean>(
+  const [, setRotationMode] = useState<boolean>(
     Boolean(ajustes?.cambiarVistaPorTurno ?? false)
   );
   const [avisoInvitadoVisible, setAvisoInvitadoVisible] = useState<boolean>(true);
@@ -669,11 +814,6 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
       setRotationMode(Boolean(ajustes.cambiarVistaPorTurno));
     }
   }, [ajustes?.cambiarVistaPorTurno]);
-
-  const humanosActivos = jugadores
-    .slice(0, numJugadores)
-    .filter((j) => j.tipo === 'humano').length;
-  const puedeGirarTablero = humanosActivos >= 2;
 
   const updateJugador = (idx: number, patch: Partial<(typeof jugadores)[0]>) => {
     setJugadores((prev) => {
@@ -731,26 +871,25 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
       totalRondasTorneo,
       tamanoTablero,
       temaTablero,
-      // Giro completamente desactivado (vista fija sin rotaciones)
       rotationMode: false,
     });
   };
 
   return (
-    <div className="relative w-full h-full flex flex-col items-center justify-between p-3 sm:p-5 max-w-xl mx-auto z-10 overflow-y-auto">
-      {/* Top Header con el ÚNICO botón de Aspecto general */}
-      <div className="w-full flex items-center justify-between pb-3 mb-2 border-b-3 border-[#2b2140]/15 gap-2">
+    <div className={`relative w-full h-full flex flex-col items-center justify-between p-3 sm:p-5 max-w-xl mx-auto z-10 overflow-y-auto ${t.title}`}>
+      {/* Top Header */}
+      <div className={`w-full flex items-center justify-between pb-3 mb-2 ${t.esClasico ? 'border-b-3 border-[#2b2140]/15' : `border-b ${t.divider}`} gap-2`}>
         <button
           onClick={() => {
             sounds.playClick();
             onVolver();
           }}
-          className="py-1.5 px-3 rounded-xl bg-white border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] text-xs font-bold text-[#2b2140] hover:bg-[#f1f3f5] active:translate-y-0.5 cursor-pointer flex items-center gap-1 shrink-0"
+          className={`py-1.5 px-3 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1 shrink-0 ${t.btnNeutral}`}
         >
           ◀ Menú
         </button>
 
-        <h2 className="text-lg sm:text-2xl font-black text-[#2b2140] truncate text-center">
+        <h2 className={`text-lg sm:text-xl font-extrabold truncate text-center ${t.title}`}>
           {esTorneo ? 'Configurar Torneo' : 'Configurar Partida'}
         </h2>
 
@@ -760,7 +899,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
             sounds.playClick();
             setModalAspectoAbierto(true);
           }}
-          className="py-1.5 px-2.5 rounded-xl bg-[#fff9db] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] text-xs font-black text-[#5c3c00] hover:bg-[#ffd43b] active:translate-y-0.5 cursor-pointer flex items-center gap-1 shrink-0"
+          className={`py-1.5 px-2.5 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1 shrink-0 ${t.esClasico ? 'bg-[#fff9db] border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] text-[#5c3c00] hover:bg-[#ffd43b] active:translate-y-0.5' : t.btnViolet}`}
           title="Personalizar tu avatar y terreno de la arena"
         >
           <span>🎨</span>
@@ -771,10 +910,10 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
       {/* Main Settings Body */}
       <div className="w-full flex-1 flex flex-col gap-3 py-1">
         {!userActual && avisoInvitadoVisible && (
-          <div className="w-full p-2.5 bg-[#fff3bf] rounded-2xl border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] flex items-center justify-between gap-2 text-xs animate-[fadeIn_0.2s_ease-out]">
+          <div className={`w-full p-2.5 rounded-2xl flex items-center justify-between gap-2 text-xs animate-[fadeIn_0.2s_ease-out] ${t.bannerWarn}`}>
             <div className="flex items-center gap-2 min-w-0">
               <span className="text-xl shrink-0">ℹ️</span>
-              <div className="text-[11px] font-bold text-[#8f4b00] leading-tight">
+              <div className="text-[11px] font-semibold leading-tight">
                 <strong>Modo Invitado:</strong> Tus partidas se guardarán en tu <u>Ranking Local</u>. Inicia sesión para competir en el Ranking Global y guardar tu avatar y terreno predeterminados.
               </div>
             </div>
@@ -784,7 +923,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
                 sounds.playClick();
                 setAvisoInvitadoVisible(false);
               }}
-              className="w-6 h-6 rounded-full bg-white border border-[#2b2140] text-xs font-black text-[#2b2140] hover:bg-[#ffe3e3] shrink-0 flex items-center justify-center cursor-pointer"
+              className={`w-6 h-6 rounded-full text-xs font-bold shrink-0 flex items-center justify-center cursor-pointer ${t.closeBtn}`}
               title="Quitar aviso"
             >
               ✕
@@ -795,19 +934,17 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
         {/* Modalidad y Número de Jugadores */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
           <div className="flex flex-col items-center gap-1">
-            <span className="text-xs font-extrabold uppercase tracking-wider text-[#593922]">
+            <span className={`text-[11px] font-bold uppercase tracking-wider ${t.sub}`}>
               Modalidad
             </span>
-            <div className="relative flex p-1 bg-[#ede4d0] rounded-2xl border-3 border-[#2b2140] shadow-[0_3px_0_#2b2140] w-full">
+            <div className={`relative flex p-1 rounded-2xl w-full ${t.esClasico ? 'bg-[#ede4d0] border-3 border-[#2b2140] shadow-[0_3px_0_#2b2140]' : t.track}`}>
               <button
                 onClick={() => {
                   setEsTorneo(false);
                   sounds.playClick();
                 }}
-                className={`flex-1 py-1.5 rounded-xl font-black text-xs transition-all cursor-pointer ${
-                  !esTorneo
-                    ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
-                    : 'text-[#86542d] hover:text-[#2b2140]'
+                className={`flex-1 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+                  !esTorneo ? t.tabActive : t.tabInactive
                 }`}
               >
                 🎮 Rápida
@@ -817,10 +954,12 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
                   setEsTorneo(true);
                   sounds.playClick();
                 }}
-                className={`flex-1 py-1.5 rounded-xl font-black text-xs transition-all cursor-pointer ${
+                className={`flex-1 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
                   esTorneo
-                    ? 'bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
-                    : 'text-[#86542d] hover:text-[#2b2140]'
+                    ? t.esClasico
+                      ? 'bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                      : t.tabActive
+                    : t.tabInactive
                 }`}
               >
                 🏆 Torneo
@@ -829,19 +968,21 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
           </div>
 
           <div className="flex flex-col items-center gap-1">
-            <span className="text-xs font-extrabold uppercase tracking-wider text-[#593922]">
+            <span className={`text-[11px] font-bold uppercase tracking-wider ${t.sub}`}>
               Jugadores
             </span>
-            <div className="relative flex p-1 bg-[#ede4d0] rounded-2xl border-3 border-[#2b2140] shadow-[0_3px_0_#2b2140] w-full">
+            <div className={`relative flex p-1 rounded-2xl w-full ${t.esClasico ? 'bg-[#ede4d0] border-3 border-[#2b2140] shadow-[0_3px_0_#2b2140]' : t.track}`}>
               <button
                 onClick={() => {
                   setNumJugadores(2);
                   sounds.playClick();
                 }}
-                className={`flex-1 py-1.5 rounded-xl font-black text-xs transition-all cursor-pointer ${
+                className={`flex-1 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
                   numJugadores === 2
-                    ? 'bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
-                    : 'text-[#86542d] hover:text-[#2b2140]'
+                    ? t.esClasico
+                      ? 'bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                      : t.tabActive
+                    : t.tabInactive
                 }`}
               >
                 👥 2 Jugadores
@@ -851,10 +992,12 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
                   setNumJugadores(4);
                   sounds.playClick();
                 }}
-                className={`flex-1 py-1.5 rounded-xl font-black text-xs transition-all cursor-pointer ${
+                className={`flex-1 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
                   numJugadores === 4
-                    ? 'bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
-                    : 'text-[#86542d] hover:text-[#2b2140]'
+                    ? t.esClasico
+                      ? 'bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                      : t.tabActive
+                    : t.tabInactive
                 }`}
               >
                 🎉 4 Jugadores
@@ -865,10 +1008,10 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
 
         {/* Tamaño del Tablero (3 tamaños: 5x5, 7x7, 9x9) */}
         <div className="flex flex-col items-center gap-1">
-          <span className="text-xs font-extrabold uppercase tracking-wider text-[#593922]">
+          <span className={`text-[11px] font-bold uppercase tracking-wider ${t.sub}`}>
             Tamaño de la Mesa
           </span>
-          <div className="grid grid-cols-3 gap-1.5 p-1 bg-[#ede4d0] rounded-2xl border-3 border-[#2b2140] shadow-[0_3px_0_#2b2140] w-full">
+          <div className={`grid grid-cols-3 gap-1.5 p-1 rounded-2xl w-full ${t.esClasico ? 'bg-[#ede4d0] border-3 border-[#2b2140] shadow-[0_3px_0_#2b2140]' : t.track}`}>
             {(
               [
                 { val: 5, label: '5×5', sub: 'Relámpago' },
@@ -883,24 +1026,26 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
                   setTamanoTablero(op.val);
                   sounds.playClick();
                 }}
-                className={`py-1.5 px-1 rounded-xl font-black text-xs transition-all cursor-pointer flex flex-col items-center leading-tight ${
+                className={`py-1.5 px-1 rounded-xl font-bold text-xs transition-all cursor-pointer flex flex-col items-center leading-tight ${
                   tamanoTablero === op.val
-                    ? 'bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
-                    : 'text-[#86542d] hover:text-[#2b2140]'
+                    ? t.esClasico
+                      ? 'bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                      : t.tabActive
+                    : t.tabInactive
                 }`}
               >
                 <span>{op.label}</span>
-                <span className="text-[9px] font-bold opacity-80">{op.sub}</span>
+                <span className="text-[9px] font-semibold opacity-80">{op.sub}</span>
               </button>
             ))}
           </div>
         </div>
 
         {esTorneo && (
-          <div className="p-3 bg-[#fff9db] rounded-2xl border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140] flex items-center justify-between gap-3 animate-[slideDown_0.2s_ease-out]">
+          <div className={`p-3 rounded-2xl flex items-center justify-between gap-3 animate-[slideDown_0.2s_ease-out] ${t.bannerWarn}`}>
             <div className="text-left">
-              <span className="font-black text-xs text-[#2b2140] block">Total de Rondas del Torneo:</span>
-              <span className="text-[11px] text-[#86542d] font-semibold">
+              <span className="font-bold text-xs block">Total de Rondas del Torneo:</span>
+              <span className="text-[11px] opacity-85 font-medium">
                 Suma puntos en cada ronda hasta coronar al Gran Campeón
               </span>
             </div>
@@ -912,10 +1057,8 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
                     setTotalRondasTorneo(rondas);
                     sounds.playClick();
                   }}
-                  className={`py-1.5 px-3 rounded-xl font-black text-xs border-2 border-[#2b2140] cursor-pointer ${
-                    totalRondasTorneo === rondas
-                      ? 'bg-[#ffd43b] text-[#5c3c00] shadow-[0_2px_0_#2b2140]'
-                      : 'bg-white text-[#2b2140]'
+                  className={`py-1.5 px-3 rounded-xl font-bold text-xs cursor-pointer ${
+                    totalRondasTorneo === rondas ? t.btnAmber : t.btnNeutral
                   }`}
                 >
                   {rondas} rondas
@@ -925,19 +1068,19 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
           </div>
         )}
 
-        {/* Indicador informativo del terreno activo (se edita desde el único botón Aspecto) */}
-        <div className="px-3 py-1.5 bg-white/80 rounded-xl border-2 border-[#2b2140]/30 flex items-center justify-between text-xs">
-          <span className="font-bold text-[#593922]">
-            Terreno seleccionado: <strong className="text-[#2b2140]">{TEMA_ICONOS[temaTablero]}</strong>
+        {/* Indicador informativo del terreno activo */}
+        <div className={`px-3 py-2 rounded-xl flex items-center justify-between text-xs ${t.card}`}>
+          <span className={`font-semibold ${t.sub}`}>
+            Terreno seleccionado: <strong className={t.title}>{TEMA_ICONOS[temaTablero]}</strong>
           </span>
-          <span className="text-[11px] font-semibold text-[#86542d]">
+          <span className={`text-[11px] font-medium ${t.muted}`}>
             {userActual?.temaTablero === temaTablero && userActual?.avatarHat === jugadores[0].hat
               ? '⭐ Predeterminado de tu perfil'
               : 'Usa 🎨 Aspecto arriba para cambiar'}
           </span>
         </div>
 
-        {/* Players List (Sin duplicar botón de Aspecto en la fila del jugador) */}
+        {/* Players List */}
         <div className="space-y-2">
           {jugadores.slice(0, numJugadores).map((j, idx) => {
             const isUserPlayer = idx === 0;
@@ -945,7 +1088,9 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
             return (
               <div
                 key={idx}
-                className="p-2.5 bg-white rounded-2xl border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140] flex items-center gap-3 animate-[slideDown_0.2s_ease-out]"
+                className={`p-2.5 rounded-2xl flex items-center gap-3 animate-[slideDown_0.2s_ease-out] ${
+                  t.esClasico ? 'bg-white border-2 border-[#2b2140] shadow-[0_3px_0_#2b2140]' : t.card
+                }`}
               >
                 {isUserPlayer && userActual ? (
                   <div className="shrink-0" title="Tu avatar de cuenta">
@@ -961,8 +1106,10 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
                   </div>
                 ) : j.tipo !== 'humano' ? (
                   <div
-                    className="shrink-0 p-0.5 rounded-xl bg-[#2b2140]/5 border border-[#2b2140]/20 flex items-center justify-center"
-                    title="Avatar exclusivo de Bot CPU (todos los bots usan este diseño único)"
+                    className={`shrink-0 p-0.5 rounded-xl flex items-center justify-center ${
+                      t.esClasico ? 'bg-[#2b2140]/5 border border-[#2b2140]/20' : t.cardInner
+                    }`}
+                    title="Avatar exclusivo de Bot CPU"
                   >
                     <CartoonCharacter color={j.color} hat="bot_cpu" size={44} showShadow={false} />
                   </div>
@@ -995,9 +1142,13 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
 
                 <div className="flex-1 min-w-0">
                   {isUserPlayer && userActual ? (
-                    <div className="w-full flex items-center justify-between text-sm font-extrabold text-[#2b2140] bg-[#e7f5ff] border-2 border-[#2b2140] rounded-xl px-2.5 py-1.5 shadow-xs select-none">
+                    <div
+                      className={`w-full flex items-center justify-between text-sm font-bold rounded-xl px-2.5 py-1.5 shadow-xs select-none ${t.bannerInfo}`}
+                    >
                       <span className="truncate">{userActual.nombre}</span>
-                      <span className="text-[10px] text-[#1971c2] font-black uppercase tracking-wider flex items-center gap-1 shrink-0 bg-white px-1.5 py-0.5 rounded border border-[#1971c2]/30">
+                      <span
+                        className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-1 shrink-0 px-1.5 py-0.5 rounded ${t.badgeNeutral}`}
+                      >
                         🔒 Cuenta
                       </span>
                     </div>
@@ -1008,7 +1159,7 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
                       value={j.nombre}
                       onChange={(e) => updateJugador(idx, { nombre: e.target.value })}
                       placeholder={isUserPlayer ? 'Nombre invitado' : `Jugador ${idx + 1}`}
-                      className="w-full text-sm font-extrabold text-[#2b2140] bg-[#f8f9fa] border-2 border-[#2b2140]/30 rounded-xl px-2.5 py-1.5 outline-none focus:border-[#2b2140]"
+                      className={`w-full text-sm font-bold rounded-xl px-2.5 py-1.5 outline-none ${t.input}`}
                     />
                   )}
                 </div>
@@ -1029,12 +1180,19 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
                       else if (newTipo === 'bot_normal') newNombre = 'Bot Normal';
                       else if (newTipo === 'bot_dificil') newNombre = 'Bot Difícil';
                     }
-                    const newHat: AvatarTipoDeGorro = newTipo !== 'humano'
-                      ? 'bot_cpu'
-                      : (idx === 0 && userActual?.avatarHat ? userActual.avatarHat : 'corona');
+                    const newHat: AvatarTipoDeGorro =
+                      newTipo !== 'humano'
+                        ? 'bot_cpu'
+                        : idx === 0 && userActual?.avatarHat
+                        ? userActual.avatarHat
+                        : 'corona';
                     updateJugador(idx, { tipo: newTipo, nombre: newNombre, hat: newHat });
                   }}
-                  className="text-xs font-bold text-[#2b2140] bg-[#fff9db] border-2 border-[#2b2140] rounded-xl px-2 py-1.5 outline-none cursor-pointer shadow-sm shrink-0"
+                  className={`text-xs font-bold rounded-xl px-2 py-1.5 outline-none cursor-pointer shadow-xs shrink-0 ${
+                    t.esClasico
+                      ? 'text-[#2b2140] bg-[#fff9db] border-2 border-[#2b2140]'
+                      : t.input
+                  }`}
                 >
                   <option value="humano">👤 Humano</option>
                   <option value="bot_facil">🤖 Bot Fácil</option>
@@ -1048,97 +1206,46 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
 
         {/* Match Toggles */}
         <div className="grid grid-cols-2 gap-2 mt-1">
-          <div
-            onClick={() => {
-              setEmpiezaAlAzar(!empiezaAlAzar);
-              sounds.playClick();
-            }}
-            className="p-2 bg-white rounded-xl border-2 border-[#2b2140] flex items-center justify-between cursor-pointer select-none"
-          >
-            <span className="text-xs font-bold text-[#2b2140]">🎲 Empieza al azar</span>
+          {[
+            { label: '🎲 Empieza al azar', val: empiezaAlAzar, toggle: () => setEmpiezaAlAzar(!empiezaAlAzar) },
+            { label: '↩ Permitir deshacer', val: permitirDeshacer, toggle: () => setPermitirDeshacer(!permitirDeshacer) },
+            { label: '💡 Permitir pistas', val: permitirPistas, toggle: () => setPermitirPistas(!permitirPistas) },
+            { label: '⏱️ Modo con tiempo', val: modoConTiempo, toggle: () => setModoConTiempo(!modoConTiempo) },
+          ].map((item, idx) => (
             <div
-              className={`w-9 h-5 rounded-full p-0.5 border border-[#2b2140] transition-colors ${
-                empiezaAlAzar ? 'bg-[#51cf66]' : 'bg-[#ced4da]'
-              }`}
+              key={idx}
+              onClick={() => {
+                item.toggle();
+                sounds.playClick();
+              }}
+              className={`p-2 rounded-xl flex items-center justify-between cursor-pointer select-none ${t.card}`}
             >
+              <span className={`text-xs font-bold ${t.title}`}>{item.label}</span>
               <div
-                className={`w-3.5 h-3.5 rounded-full bg-white border border-[#2b2140] transition-transform ${
-                  empiezaAlAzar ? 'translate-x-4' : ''
+                className={`w-9 h-5 rounded-full p-0.5 transition-colors shrink-0 ${
+                  t.esClasico
+                    ? `border border-[#2b2140] ${item.val ? 'bg-[#51cf66]' : 'bg-[#ced4da]'}`
+                    : t.esOscuro
+                    ? `border border-white/15 ${item.val ? 'bg-emerald-400/70' : 'bg-slate-700'}`
+                    : `border border-[#D4C9AE] ${item.val ? 'bg-[#8CD7B0]' : 'bg-[#E5DEC9]'}`
                 }`}
-              />
+              >
+                <div
+                  className={`w-3.5 h-3.5 rounded-full bg-white transition-transform ${
+                    t.esClasico ? 'border border-[#2b2140]' : 'shadow-xs'
+                  } ${item.val ? 'translate-x-4' : ''}`}
+                />
+              </div>
             </div>
-          </div>
+          ))}
 
-          <div
-            onClick={() => {
-              setPermitirDeshacer(!permitirDeshacer);
-              sounds.playClick();
-            }}
-            className="p-2 bg-white rounded-xl border-2 border-[#2b2140] flex items-center justify-between cursor-pointer select-none"
-          >
-            <span className="text-xs font-bold text-[#2b2140]">↩ Permitir deshacer</span>
-            <div
-              className={`w-9 h-5 rounded-full p-0.5 border border-[#2b2140] transition-colors ${
-                permitirDeshacer ? 'bg-[#51cf66]' : 'bg-[#ced4da]'
-              }`}
-            >
-              <div
-                className={`w-3.5 h-3.5 rounded-full bg-white border border-[#2b2140] transition-transform ${
-                  permitirDeshacer ? 'translate-x-4' : ''
-                }`}
-              />
-            </div>
-          </div>
-
-          <div
-            onClick={() => {
-              setPermitirPistas(!permitirPistas);
-              sounds.playClick();
-            }}
-            className="p-2 bg-white rounded-xl border-2 border-[#2b2140] flex items-center justify-between cursor-pointer select-none"
-          >
-            <span className="text-xs font-bold text-[#2b2140]">💡 Permitir pistas</span>
-            <div
-              className={`w-9 h-5 rounded-full p-0.5 border border-[#2b2140] transition-colors ${
-                permitirPistas ? 'bg-[#51cf66]' : 'bg-[#ced4da]'
-              }`}
-            >
-              <div
-                className={`w-3.5 h-3.5 rounded-full bg-white border border-[#2b2140] transition-transform ${
-                  permitirPistas ? 'translate-x-4' : ''
-                }`}
-              />
-            </div>
-          </div>
-
-          <div
-            onClick={() => {
-              setModoConTiempo(!modoConTiempo);
-              sounds.playClick();
-            }}
-            className="p-2 bg-white rounded-xl border-2 border-[#2b2140] flex items-center justify-between cursor-pointer select-none"
-          >
-            <span className="text-xs font-bold text-[#2b2140]">⏱️ Modo con tiempo</span>
-            <div
-              className={`w-9 h-5 rounded-full p-0.5 border border-[#2b2140] transition-colors ${
-                modoConTiempo ? 'bg-[#51cf66]' : 'bg-[#ced4da]'
-              }`}
-            >
-              <div
-                className={`w-3.5 h-3.5 rounded-full bg-white border border-[#2b2140] transition-transform ${
-                  modoConTiempo ? 'translate-x-4' : ''
-                }`}
-              />
-            </div>
-          </div>
-
-          {/* Vista Fija Estable: sin giros ni rotaciones para evitar mareos */}
-          <div className="p-2 rounded-xl border-2 border-[#2b2140] flex items-center justify-between select-none col-span-2 bg-[#e7f5ff]">
+          {/* Vista Fija Estable */}
+          <div className={`p-2 rounded-xl flex items-center justify-between select-none col-span-2 ${t.bannerInfo}`}>
             <div className="flex flex-col text-left">
-              <span className="text-xs font-bold text-[#1864ab] flex items-center gap-1">
+              <span className="text-xs font-bold flex items-center gap-1">
                 <span>🧭</span> Vista Fija Estable (Sin Giros)
               </span>
-              <span className="text-[10px] text-[#1c7ed6]">
+              <span className="text-[10px] opacity-85">
                 El tablero se mantiene siempre fijo sin rotaciones para evitar mareos, con indicadores claros del lado e inicio del oponente.
               </span>
             </div>
@@ -1148,15 +1255,13 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
 
         {modoConTiempo && (
           <div className="flex items-center justify-center gap-2 mt-1">
-            <span className="text-xs font-bold text-[#593922]">Segundos por turno:</span>
+            <span className={`text-xs font-bold ${t.sub}`}>Segundos por turno:</span>
             {[15, 30, 60].map((sec) => (
               <button
                 key={sec}
                 onClick={() => setSegundosPorTurno(sec)}
-                className={`px-3 py-1 rounded-lg text-xs font-bold border-2 border-[#2b2140] cursor-pointer ${
-                  segundosPorTurno === sec
-                    ? 'bg-[#ffd43b] text-[#5c3c00] shadow-[0_2px_0_#2b2140]'
-                    : 'bg-white text-[#2b2140]'
+                className={`px-3 py-1 rounded-lg text-xs font-bold cursor-pointer ${
+                  segundosPorTurno === sec ? t.btnAmber : t.btnNeutral
                 }`}
               >
                 {sec}s
@@ -1169,10 +1274,16 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
       {/* Start Button */}
       <button
         onClick={handleStart}
-        className={`w-full py-3.5 px-6 rounded-2xl font-black text-lg border-4 border-[#2b2140] shadow-[0_6px_0_#2b2140] active:translate-y-1 active:shadow-[0_2px_0_#2b2140] transition-all cursor-pointer flex items-center justify-center gap-2 mt-2 ${
-          esTorneo
-            ? 'bg-[#ffd43b] text-[#5c3c00] hover:bg-[#fcc419]'
-            : 'bg-[#51cf66] text-[#134e20] hover:bg-[#40c057]'
+        className={`w-full py-3.5 px-6 rounded-2xl font-extrabold text-base sm:text-lg transition-all cursor-pointer flex items-center justify-center gap-2 mt-2 ${
+          t.esClasico
+            ? `border-4 border-[#2b2140] shadow-[0_6px_0_#2b2140] active:translate-y-1 active:shadow-[0_2px_0_#2b2140] ${
+                esTorneo
+                  ? 'bg-[#ffd43b] text-[#5c3c00] hover:bg-[#fcc419]'
+                  : 'bg-[#51cf66] text-[#134e20] hover:bg-[#40c057]'
+              }`
+            : esTorneo
+            ? t.btnAmber
+            : t.btnPrimary
         }`}
       >
         <span>{esTorneo ? '🏆' : '🚀'}</span>

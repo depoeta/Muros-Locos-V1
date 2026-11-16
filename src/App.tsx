@@ -14,10 +14,16 @@ import {
   EstadoTorneo,
   InfoNivel,
   ConfigDePartida,
+  EstiloMuros,
   PantallaApp,
   TamanoTablero,
   TemaTablero,
 } from './types/murosLocos';
+import {
+  cargarEstiloMuros,
+  guardarEstiloMuros,
+  MurosThemeProvider,
+} from './game/murosTheme';
 import {
   calcularDesglosePuntos,
   calcularDesglosesPuntuacion,
@@ -234,12 +240,19 @@ export const App: React.FC = () => {
     obteneruserActual()
   );
   const [ajustes, setAjustes] = useState<AjustesDeApp>(() => cargarAjustes());
+  const [estiloMuros, setEstiloMuros] = useState<EstiloMuros>(() => cargarEstiloMuros());
   const [modalAspectoAbierto, setModalAspectoAbierto] = useState(false);
+
+  const handleCambiarEstiloMuros = useCallback((nuevo: EstiloMuros) => {
+    setEstiloMuros(nuevo);
+    guardarEstiloMuros(nuevo);
+  }, []);
 
   // Diagnóstico en tiempo real de conexión a la Database (D1) (aviso permanente en todo momento)
   const [diagRed, setDiagRed] = useState<DiagnosticoDeRed>(() => obtenerDiagnosticoRed());
   const [reconectandoDb, setReconectandoDb] = useState(false);
   const prevDbRef = useRef<boolean>(true);
+  const prevInvCorruptoRef = useRef<boolean>(false);
 
   // Estado de partida
   const [estado, setEstado] = useState<EstadoDeJuego | null>(() =>
@@ -347,6 +360,12 @@ export const App: React.FC = () => {
           showToast('🟢 Conexión con la Database restablecida');
         }
         prevDbRef.current = d.dbConectado;
+        if (d.miInventarioCorrupto && !prevInvCorruptoRef.current) {
+          prevInvCorruptoRef.current = true;
+          showToast('⚠️ Tu inventario en la Database D1 tiene datos dañados. Contacta al Dev.');
+        } else if (!d.miInventarioCorrupto) {
+          prevInvCorruptoRef.current = false;
+        }
       }
     });
 
@@ -412,7 +431,8 @@ export const App: React.FC = () => {
           fresh.avatarRopaColor !== current.avatarRopaColor ||
           fresh.avatarAura !== current.avatarAura ||
           fresh.temaTablero !== current.temaTablero ||
-          (fresh.inventario?.personajes?.length || 0) !== (current.inventario?.personajes?.length || 0)
+          JSON.stringify(fresh.inventario || { personajes: [] }) !==
+            JSON.stringify(current.inventario || { personajes: [] })
         ) {
           const teniaStaff = current.rol === 'admin' || current.rol === 'mod' || current.rol === 'dev';
           const mantieneStaff = fresh.rol === 'admin' || fresh.rol === 'mod' || fresh.rol === 'dev';
@@ -1366,18 +1386,34 @@ export const App: React.FC = () => {
     };
   }, [dbDesconectado]);
 
+  const murosRootClass =
+    estiloMuros === 'pastel_oscuro'
+      ? 'bg-gradient-to-br from-[#11131E] via-[#151828] to-[#191D30] text-slate-100 selection:bg-indigo-300/30 selection:text-white'
+      : estiloMuros === 'pastel_claro'
+      ? 'bg-gradient-to-b from-[#FCF8EC] via-[#FAF4E4] to-[#F7EFE0] text-[#171923] selection:bg-[#FCE8B8] selection:text-[#171923]'
+      : 'bg-[#74c0fc] text-[#2b2140] selection:bg-[#ffd43b] selection:text-[#2b2140]';
+
   return (
+    <MurosThemeProvider estilo={estiloMuros} onChangeEstilo={handleCambiarEstiloMuros}>
     <div
       className={`relative w-full h-full min-h-dvh flex flex-col items-center justify-between overflow-x-hidden overflow-y-auto transition-colors duration-300 ${
         juegoActivo === 'candado'
           ? 'bg-[#131624] text-slate-100 selection:bg-indigo-300/30 selection:text-white'
-          : 'bg-[#74c0fc] text-[#2b2140] selection:bg-[#ffd43b] selection:text-[#2b2140]'
+          : murosRootClass
       }`}
     >
       {/* Aviso que desaparece en 10 segundos al detectar desconexión */}
       {dbDesconectado && mostrarBannerDesconexion && (
-        <div className="sticky top-0 left-0 right-0 z-[60] w-full bg-[#c92a2a] text-white border-b-3 border-[#2b2140] px-3 py-1.5 shadow-md flex items-center justify-between gap-2 text-xs animate-[slideDown_0.2s_ease-out]">
-          <span className="font-black text-center flex-1 leading-tight text-[11px] sm:text-xs">
+        <div
+          className={`sticky top-0 left-0 right-0 z-[60] w-full px-3 py-1.5 shadow-md flex items-center justify-between gap-2 text-xs animate-[slideDown_0.2s_ease-out] ${
+            estiloMuros === 'clasico'
+              ? 'bg-[#c92a2a] text-white border-b-3 border-[#2b2140]'
+              : estiloMuros === 'pastel_claro'
+              ? 'bg-[#FAD8DD] text-[#661924] border-b border-[#EEB1B9]'
+              : 'bg-[#2C1821] text-rose-100 border-b border-rose-400/30'
+          }`}
+        >
+          <span className="font-bold sm:font-extrabold text-center flex-1 leading-tight text-[11px] sm:text-xs">
             ⚠️ Sin conexión a la Database (D1) — No se pueden enviar ni recibir cambios globales en este momento.
           </span>
           <div className="flex items-center gap-1.5 shrink-0">
@@ -1385,14 +1421,20 @@ export const App: React.FC = () => {
               type="button"
               disabled={reconectandoDb}
               onClick={handleReintentarDb}
-              className="py-1 px-2.5 rounded-xl bg-[#ffd43b] text-[#2b2140] border-2 border-[#2b2140] font-black text-[11px] hover:bg-[#fcc419] cursor-pointer"
+              className={`py-1 px-2.5 rounded-xl font-bold text-[11px] cursor-pointer ${
+                estiloMuros === 'clasico'
+                  ? 'bg-[#ffd43b] text-[#2b2140] border-2 border-[#2b2140] hover:bg-[#fcc419]'
+                  : estiloMuros === 'pastel_claro'
+                  ? 'bg-[#FFFDF6] text-[#661924] border border-[#DF9AA4] hover:bg-[#FCE8B8]'
+                  : 'bg-rose-400/20 text-rose-100 border border-rose-300/35 hover:bg-rose-400/30'
+              }`}
             >
               {reconectandoDb ? '⏳ Conectando...' : '🔄 Conectar'}
             </button>
             <button
               type="button"
               onClick={() => setMostrarBannerDesconexion(false)}
-              className="w-6 h-6 rounded-lg bg-black/20 hover:bg-black/35 text-white flex items-center justify-center font-bold text-xs cursor-pointer"
+              className="w-6 h-6 rounded-lg bg-black/15 hover:bg-black/30 flex items-center justify-center font-bold text-xs cursor-pointer"
               title="Cerrar aviso"
             >
               ✕
@@ -1401,8 +1443,8 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Nubes decorativas de fondo (solo en Muros Locos) */}
-      {juegoActivo === 'muros' && (
+      {/* Nubes decorativas de fondo (solo en Muros Locos estilo Clásico) */}
+      {juegoActivo === 'muros' && estiloMuros === 'clasico' && (
         <div className="pointer-events-none fixed inset-0 overflow-hidden z-0">
           <div
             className="absolute top-10 w-48 h-16 bg-white/40 rounded-full filter blur-xs animate-[cloudDriftA_35s_linear_infinite]"
@@ -1421,14 +1463,38 @@ export const App: React.FC = () => {
 
       {/* Alerta de desconexión del rival en modo Online */}
       {desconexionSegundos !== null && (
-        <div className="fixed top-10 left-1/2 -translate-x-1/2 z-50 w-11/12 max-w-md bg-[#fff3bf] border-3 border-[#2b2140] rounded-2xl p-2.5 shadow-[0_6px_0_#2b2140,0_10px_20px_rgba(0,0,0,0.25)] flex items-center justify-between gap-3 animate-[slideDown_0.25s_ease-out]">
+        <div
+          className={`fixed top-10 left-1/2 -translate-x-1/2 z-50 w-11/12 max-w-md rounded-2xl p-2.5 flex items-center justify-between gap-3 animate-[slideDown_0.25s_ease-out] ${
+            estiloMuros === 'clasico'
+              ? 'bg-[#fff3bf] border-3 border-[#2b2140] shadow-[0_6px_0_#2b2140,0_10px_20px_rgba(0,0,0,0.25)]'
+              : estiloMuros === 'pastel_claro'
+              ? 'bg-[#FCE8B8] border border-[#EAD08E] text-[#4A3309] shadow-lg'
+              : 'bg-[#1B1F30] border border-amber-300/35 text-amber-100 shadow-2xl'
+          }`}
+        >
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-xl shrink-0 animate-bounce">⚠️</span>
             <div className="text-left min-w-0">
-              <span className="text-xs font-black text-[#8f4b00] block truncate">
+              <span
+                className={`text-xs font-extrabold block truncate ${
+                  estiloMuros === 'clasico'
+                    ? 'text-[#8f4b00]'
+                    : estiloMuros === 'pastel_claro'
+                    ? 'text-[#4A3309]'
+                    : 'text-amber-200'
+                }`}
+              >
                 Rival ausente · Turno pausado
               </span>
-              <span className="text-[11px] font-semibold text-[#5c3c00] block leading-tight">
+              <span
+                className={`text-[11px] font-semibold block leading-tight ${
+                  estiloMuros === 'clasico'
+                    ? 'text-[#5c3c00]'
+                    : estiloMuros === 'pastel_claro'
+                    ? 'text-[#5C4110]'
+                    : 'text-slate-300'
+                }`}
+              >
                 Esperando reconexión ({formatMMSS(desconexionSegundos)})...
               </span>
             </div>
@@ -1436,7 +1502,13 @@ export const App: React.FC = () => {
           <button
             type="button"
             onClick={handleVolverAlMenu}
-            className="py-1 px-2.5 rounded-xl bg-white border border-[#2b2140] text-[11px] font-black text-[#c92a2a] hover:bg-[#ffe3e3] cursor-pointer shrink-0"
+            className={`py-1 px-2.5 rounded-xl text-[11px] font-bold cursor-pointer shrink-0 ${
+              estiloMuros === 'clasico'
+                ? 'bg-white border border-[#2b2140] text-[#c92a2a] hover:bg-[#ffe3e3]'
+                : estiloMuros === 'pastel_claro'
+                ? 'bg-[#FFFDF6] border border-[#D4C9AE] text-[#661924] hover:bg-[#FAD8DD]'
+                : 'bg-rose-400/15 border border-rose-400/30 text-rose-200 hover:bg-rose-400/25'
+            }`}
           >
             Salir al Menú
           </button>
@@ -1445,7 +1517,15 @@ export const App: React.FC = () => {
 
       {/* Toast Global */}
       {toast && (
-        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-[70] bg-[#2b2140] text-white text-xs sm:text-sm font-black py-2 px-4 rounded-full border-2 border-white/20 shadow-[0_8px_20px_rgba(0,0,0,0.35)] animate-[slideDown_0.2s_ease-out]">
+        <div
+          className={`fixed top-14 left-1/2 -translate-x-1/2 z-[70] text-xs sm:text-sm font-bold py-2 px-4 rounded-full shadow-xl animate-[slideDown_0.2s_ease-out] ${
+            estiloMuros === 'clasico'
+              ? 'bg-[#2b2140] text-white border-2 border-white/20'
+              : estiloMuros === 'pastel_claro'
+              ? 'bg-[#171923] text-[#FFFDF6] border border-[#3E4359]'
+              : 'bg-slate-800/95 text-slate-100 border border-white/15 backdrop-blur-md'
+          }`}
+        >
           {toast}
         </div>
       )}
@@ -1530,15 +1610,37 @@ export const App: React.FC = () => {
       {juegoActivo === 'muros' && screen === 'juego' && estado && (
         <div className="relative w-full max-w-6xl mx-auto flex-1 flex flex-col justify-start gap-1.5 sm:gap-2 p-1.5 sm:p-2.5 lg:p-3 z-10 min-h-0">
           {/* Barra superior de la partida con el ÚNICO botón de Aspecto */}
-          <div className="w-full flex items-center justify-between gap-1.5 px-2 sm:px-2.5 py-1.5 bg-white/80 backdrop-blur-xs rounded-2xl border-2 border-[#2b2140] shadow-sm shrink-0 min-w-0">
+          <div
+            className={`w-full flex items-center justify-between gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-2xl shrink-0 min-w-0 ${
+              estiloMuros === 'clasico'
+                ? 'bg-white/80 backdrop-blur-xs border-2 border-[#2b2140] shadow-sm'
+                : estiloMuros === 'pastel_claro'
+                ? 'bg-[#FFFDF6]/95 border border-[#DFD6BF] shadow-xs text-[#171923]'
+                : 'bg-[#1B1F30]/90 border border-white/12 shadow-lg text-slate-100 backdrop-blur-md'
+            }`}
+          >
             <button
               onClick={handleVolverAlMenu}
-              className="py-1 px-2 sm:px-2.5 rounded-xl bg-white border border-[#2b2140] text-xs font-black text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] cursor-pointer transition-colors shrink-0"
+              className={`py-1 px-2 sm:px-2.5 rounded-xl text-xs font-bold cursor-pointer transition-colors shrink-0 ${
+                estiloMuros === 'clasico'
+                  ? 'bg-white border border-[#2b2140] text-[#2b2140] hover:bg-[#ffe3e3] hover:text-[#c92a2a] font-black'
+                  : estiloMuros === 'pastel_claro'
+                  ? 'bg-[#FAF4E4] border border-[#D4C9AE] text-[#171923] hover:bg-[#FAD8DD] hover:text-[#661924]'
+                  : 'bg-slate-800/80 border border-white/12 text-slate-200 hover:bg-rose-400/20 hover:text-rose-200'
+              }`}
             >
               ◀ <span className="hidden xs:inline sm:inline">Salir</span>
             </button>
 
-            <div className="flex items-center justify-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs font-black text-[#593922] min-w-0 truncate">
+            <div
+              className={`flex items-center justify-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs font-bold min-w-0 truncate ${
+                estiloMuros === 'clasico'
+                  ? 'text-[#593922] font-black'
+                  : estiloMuros === 'pastel_claro'
+                  ? 'text-[#3E4359]'
+                  : 'text-slate-300'
+              }`}
+            >
               {estado.torneo && (
                 <span className="tabular-nums truncate">
                   Ronda {estado.torneo.rondaActual}/{estado.torneo.totalRondas}
@@ -1547,8 +1649,18 @@ export const App: React.FC = () => {
               {estado.modoOnline && <span className="truncate">Sala {estado.codigoSala}</span>}
               {estado.config.modoConTiempo && (
                 <span
-                  className={`font-mono-num font-black tabular-nums shrink-0 ${
-                    estado.tiempoRestante <= 5 ? 'text-[#c92a2a] animate-pulse' : 'text-[#2b2140]'
+                  className={`font-mono-num font-bold tabular-nums shrink-0 ${
+                    estado.tiempoRestante <= 5
+                      ? estiloMuros === 'clasico'
+                        ? 'text-[#c92a2a] animate-pulse'
+                        : estiloMuros === 'pastel_claro'
+                        ? 'text-[#9B1C2E] animate-pulse'
+                        : 'text-rose-300 animate-pulse'
+                      : estiloMuros === 'clasico'
+                      ? 'text-[#2b2140]'
+                      : estiloMuros === 'pastel_claro'
+                      ? 'text-[#171923]'
+                      : 'text-slate-100'
                   }`}
                 >
                   ⏱️ {estado.tiempoRestante}s
@@ -1563,7 +1675,13 @@ export const App: React.FC = () => {
                   sounds.playClick();
                   setModalAspectoAbierto(true);
                 }}
-                className="py-1 px-2 sm:px-2.5 rounded-xl bg-white border border-[#2b2140] flex items-center gap-1 text-xs font-black text-[#2b2140] hover:bg-[#fff9db] cursor-pointer shadow-xs active:translate-y-0.5"
+                className={`py-1 px-2 sm:px-2.5 rounded-xl flex items-center gap-1 text-xs font-bold cursor-pointer shadow-xs active:translate-y-0.5 ${
+                  estiloMuros === 'clasico'
+                    ? 'bg-white border border-[#2b2140] font-black text-[#2b2140] hover:bg-[#fff9db]'
+                    : estiloMuros === 'pastel_claro'
+                    ? 'bg-[#EAE4FC] border border-[#CCC1F2] text-[#2E2054] hover:bg-[#DFD6FA]'
+                    : 'bg-violet-300/15 border border-violet-300/30 text-violet-200 hover:bg-violet-300/25'
+                }`}
                 title="Cambiar tu avatar o el terreno del tablero"
               >
                 <span>🎨</span>
@@ -1574,7 +1692,13 @@ export const App: React.FC = () => {
                   setModalPrevio(modalActivo);
                   setModalActivo('ajustes');
                 }}
-                className="w-7 h-7 rounded-xl bg-white border border-[#2b2140] flex items-center justify-center text-xs font-black text-[#2b2140] hover:bg-[#f1f3f5] cursor-pointer shadow-xs"
+                className={`w-7 h-7 rounded-xl flex items-center justify-center text-xs font-bold cursor-pointer shadow-xs ${
+                  estiloMuros === 'clasico'
+                    ? 'bg-white border border-[#2b2140] font-black text-[#2b2140] hover:bg-[#f1f3f5]'
+                    : estiloMuros === 'pastel_claro'
+                    ? 'bg-[#FAF4E4] border border-[#D4C9AE] text-[#171923] hover:bg-[#F2EBD9]'
+                    : 'bg-slate-800/80 border border-white/12 text-slate-200 hover:bg-slate-700'
+                }`}
                 title="Ajustes rápidos"
               >
                 ⚙️
@@ -1637,13 +1761,27 @@ export const App: React.FC = () => {
           </div>
 
           {mostrarBarraPostPartida && estado.terminada && (
-            <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-[#fff8e7] border-4 border-[#2b2140] rounded-2xl p-2 sm:p-2.5 shadow-[0_8px_0_#2b2140,0_20px_30px_rgba(0,0,0,0.35)] flex items-center gap-2 animate-[slideUp_0.2s_ease-out]">
+            <div
+              className={`fixed bottom-4 left-1/2 -translate-x-1/2 z-40 rounded-2xl p-2 sm:p-2.5 flex flex-wrap justify-center items-center gap-2 max-w-[95vw] animate-[slideUp_0.2s_ease-out] ${
+                estiloMuros === 'clasico'
+                  ? 'bg-[#fff8e7] border-4 border-[#2b2140] shadow-[0_8px_0_#2b2140,0_20px_30px_rgba(0,0,0,0.35)]'
+                  : estiloMuros === 'pastel_claro'
+                  ? 'bg-[#FFFDF6] border border-[#DFD6BF] shadow-[0_14px_30px_rgba(38,41,59,0.18)]'
+                  : 'bg-[#1B1F30] border border-white/15 shadow-2xl'
+              }`}
+            >
               <button
                 onClick={() => {
                   sounds.playClick();
                   setModalActivo(estado.torneo && estado.torneo.activo ? 'torneo' : 'victoria');
                 }}
-                className="py-1.5 px-3 rounded-xl bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] font-black text-xs hover:bg-[#fcc419] cursor-pointer flex items-center gap-1 shadow-sm"
+                className={`py-1.5 px-3 rounded-xl font-bold text-xs cursor-pointer flex items-center gap-1 shadow-xs ${
+                  estiloMuros === 'clasico'
+                    ? 'bg-[#ffd43b] text-[#5c3c00] border-2 border-[#2b2140] hover:bg-[#fcc419] font-black'
+                    : estiloMuros === 'pastel_claro'
+                    ? 'bg-[#FCE8B8] text-[#4A3309] border border-[#EAD08E] hover:bg-[#F9DE9E]'
+                    : 'bg-amber-200/15 text-amber-200 border border-amber-200/30 hover:bg-amber-200/25'
+                }`}
               >
                 <span>🏆</span>
                 <span>Resultados</span>
@@ -1654,17 +1792,31 @@ export const App: React.FC = () => {
                   setModalPrevio('victoria');
                   setModalActivo('ranking');
                 }}
-                className="py-1.5 px-3 rounded-xl bg-[#4dabf7] text-white border-2 border-[#2b2140] font-black text-xs hover:bg-[#339af0] cursor-pointer flex items-center gap-1 shadow-sm"
+                className={`py-1.5 px-3 rounded-xl font-bold text-xs cursor-pointer flex items-center gap-1 shadow-xs ${
+                  estiloMuros === 'clasico'
+                    ? 'bg-[#4dabf7] text-white border-2 border-[#2b2140] hover:bg-[#339af0] font-black'
+                    : estiloMuros === 'pastel_claro'
+                    ? 'bg-[#CEE4FF] text-[#143254] border border-[#A4C6F4] hover:bg-[#BBD8FE]'
+                    : 'bg-sky-200/15 text-sky-200 border border-sky-200/30 hover:bg-sky-200/25'
+                }`}
               >
                 <span>📊</span>
                 <span>Ranking</span>
               </button>
               <button
                 onClick={handleRevancha}
-                className={`py-1.5 px-3 rounded-xl border-2 font-black text-xs cursor-pointer flex items-center gap-1 shadow-sm ${
+                className={`py-1.5 px-3 rounded-xl font-bold text-xs cursor-pointer flex items-center gap-1 shadow-xs ${
                   estado.modoOnline && estadoRevanchaOnline === 'no_disponible'
-                    ? 'bg-[#ffe3e3] text-[#c92a2a] border-[#c92a2a]'
-                    : 'bg-[#51cf66] text-[#134e20] border-[#2b2140] hover:bg-[#40c057]'
+                    ? estiloMuros === 'clasico'
+                      ? 'bg-[#ffe3e3] text-[#c92a2a] border-2 border-[#c92a2a]'
+                      : estiloMuros === 'pastel_claro'
+                      ? 'bg-[#FAD8DD] text-[#661924] border border-[#EEB1B9]'
+                      : 'bg-rose-400/15 text-rose-200 border border-rose-400/30'
+                    : estiloMuros === 'clasico'
+                    ? 'bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] hover:bg-[#40c057] font-black'
+                    : estiloMuros === 'pastel_claro'
+                    ? 'bg-[#B7EBD0] text-[#0F3D27] border border-[#8AD2AE] hover:bg-[#A4E3C2]'
+                    : 'bg-emerald-300/90 text-slate-950 border border-emerald-200/40 hover:bg-emerald-200'
                 }`}
               >
                 <span>
@@ -1680,7 +1832,13 @@ export const App: React.FC = () => {
               </button>
               <button
                 onClick={handleVolverAlMenu}
-                className="py-1.5 px-3 rounded-xl bg-white text-[#2b2140] border-2 border-[#2b2140] font-black text-xs hover:bg-[#f1f3f5] cursor-pointer flex items-center gap-1 shadow-sm"
+                className={`py-1.5 px-3 rounded-xl font-bold text-xs cursor-pointer flex items-center gap-1 shadow-xs ${
+                  estiloMuros === 'clasico'
+                    ? 'bg-white text-[#2b2140] border-2 border-[#2b2140] hover:bg-[#f1f3f5] font-black'
+                    : estiloMuros === 'pastel_claro'
+                    ? 'bg-[#FAF4E4] text-[#171923] border border-[#DFD6BF] hover:bg-[#F2EBD9]'
+                    : 'bg-slate-800/80 text-slate-200 border border-white/12 hover:bg-slate-700'
+                }`}
               >
                 <span>🏠</span>
                 <span>Menú</span>
@@ -1886,6 +2044,7 @@ export const App: React.FC = () => {
 
       <OfflineIndicator compact={screen !== 'menu' || Boolean(modalActivo)} />
     </div>
+    </MurosThemeProvider>
   );
 };
 

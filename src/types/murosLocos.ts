@@ -440,6 +440,8 @@ export interface DefLogro {
 
 export type TemaTablero = 'madera' | 'neon' | 'hielo' | 'lava';
 
+export type EstiloMuros = 'pastel_oscuro' | 'pastel_claro' | 'clasico';
+
 export interface AjustesDeApp {
   sonido: boolean;
   mostrarDistancia: boolean;

@@ -137,6 +137,10 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
   const errorTimerRef = useRef<number | null>(null);
   const secretoManualRef = useRef<string>('');
   secretoManualRef.current = usarSecretoManual ? secretoManual : '';
+  const subVistaRef = useRef(subVista);
+  subVistaRef.current = subVista;
+  const pendingCommitsRef = useRef<Record<string, string>>({});
+  const dispararErrorDueloRef = useRef<(msg: string) => void>(() => {});
 
   const miPerfilSala = useMemo(
     () => ({
@@ -206,17 +210,24 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
       const safeDigits = Math.min(cfgNorm.digitos, 10);
       const maxVal = 10 ** safeDigits - 1;
 
+      const rivalId: 0 | 1 = myId === 0 ? 1 : 0;
+      const pendingKey = `${matchId}:${rivalId}`;
+      const bufferedRivalHash = pendingCommitsRef.current[pendingKey] || '';
+      if (bufferedRivalHash) {
+        delete pendingCommitsRef.current[pendingKey];
+      }
+
       const nuevoDuelo: EstadoDueloP2P = {
         matchId,
         codigoSala: code,
         config: cfgNorm,
         miJugadorId: myId,
         turnoActual: 0,
-        fase: 'preparando_claves',
+        fase: bufferedRivalHash ? 'jugando' : 'preparando_claves',
         miSecreto,
         miSal,
         miCommitHash,
-        rivalCommitHash: '',
+        rivalCommitHash: bufferedRivalHash,
         rivalSecretoRevelado: null,
         rivalSalRevelada: null,
         verificacionRival: null,
@@ -278,6 +289,13 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
       onLobbyError: (err) => {
         setErrorLobby(err);
       },
+      onConnectionError: (err) => {
+        if (subVistaRef.current === 'duelo') {
+          dispararErrorDueloRef.current(err);
+        } else {
+          setErrorLobby(err);
+        }
+      },
       onDisconnectWarning: (secs) => {
         setAvisoDesconexionSeg(secs);
       },
@@ -318,7 +336,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
           dueloRef.current = terminado;
           setDuelo(terminado);
           candadoOnlineService.setInMatch(false);
-        } else if (subVista === 'espera') {
+        } else if (subVistaRef.current === 'espera') {
           setErrorLobby(`${nombreSaliente} salió de la sala.`);
         }
       },
@@ -361,11 +379,11 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
           return;
         }
 
-        if (!cur || ('matchId' in msg && msg.matchId !== cur.matchId)) {
-          return;
-        }
-
         if (msg.type === 'CANDADO_COMMIT') {
+          if (!cur || cur.matchId !== msg.matchId) {
+            pendingCommitsRef.current[`${msg.matchId}:${msg.jugadorId}`] = msg.commitHash;
+            return;
+          }
           if (msg.jugadorId === cur.miJugadorId) return;
           const actualizado: EstadoDueloP2P = {
             ...cur,
@@ -375,6 +393,10 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
           };
           dueloRef.current = actualizado;
           setDuelo(actualizado);
+          return;
+        }
+
+        if (!cur || ('matchId' in msg && msg.matchId !== cur.matchId)) {
           return;
         }
 
@@ -662,7 +684,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
         }
       },
     });
-  }, [prepararDueloLocalmente, subVista]);
+  }, [prepararDueloLocalmente]);
 
   // Temporizador por turno P2P
   useEffect(() => {
@@ -670,7 +692,24 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
       return;
     }
 
+    let zeroWaitTicks = 0;
     const id = window.setInterval(() => {
+      const snap = dueloRef.current;
+      if (
+        snap &&
+        snap.fase === 'jugando' &&
+        snap.config.tiempoTurnoSeg > 0 &&
+        snap.turnoActual !== snap.miJugadorId &&
+        snap.tiempoRestanteTurno <= 1
+      ) {
+        zeroWaitTicks += 1;
+        if (zeroWaitTicks % 3 === 1) {
+          candadoOnlineService.forceSyncPoll();
+        }
+      } else {
+        zeroWaitTicks = 0;
+      }
+
       setDuelo((prev) => {
         if (!prev || prev.fase !== 'jugando' || prev.config.tiempoTurnoSeg <= 0) return prev;
         const nextSeg = prev.tiempoRestanteTurno - 1;
@@ -817,6 +856,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
       setErrorDuelo(null);
     }, 2200);
   }, []);
+  dispararErrorDueloRef.current = dispararErrorDuelo;
 
   const confirmadosEnHistorial = useMemo<Set<string>>(() => {
     const set = new Set<string>();

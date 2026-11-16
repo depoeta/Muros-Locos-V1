@@ -13,6 +13,7 @@ import {
 } from '../game/murosLocosEngine';
 import { TemaTablero, Coordenada, EstadoDeJuego, OrientacionMuro } from '../types/murosLocos';
 import { CartoonCharacter } from './CartoonCharacter';
+import { useMurosTheme } from '../game/murosTheme';
 
 interface MurosBoardProps {
   estado: EstadoDeJuego;
@@ -108,6 +109,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
   onInvalidWallAttempt,
   bloqueadoPorAnimacion,
 }) => {
+  const { t } = useMurosTheme();
   const currentTheme = THEMES[temaTablero] || THEMES.madera;
   const boardRef = useRef<HTMLDivElement>(null);
   const [hoveredIntersection, setHoveredIntersection] = useState<Coordenada | null>(null);
@@ -398,10 +400,14 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
         <div className="w-full max-w-[580px] h-7 flex items-center justify-center mb-1.5 shrink-0">
           {!estado.terminada && (
             <div
-              className={`w-full h-7 px-3 rounded-xl border-2 border-[#2b2140] font-black text-xs text-center shadow-[0_2px_0_#2b2140] flex items-center justify-center gap-2 transition-colors ${
-                esMiTurnoOnline
-                  ? 'bg-[#51cf66] text-[#134e20]'
-                  : 'bg-[#fff3bf] text-[#8f4b00]'
+              className={`w-full h-7 px-3 rounded-xl font-bold text-xs text-center flex items-center justify-center gap-2 transition-colors ${
+                t.esClasico
+                  ? `border-2 border-[#2b2140] font-black shadow-[0_2px_0_#2b2140] ${
+                      esMiTurnoOnline ? 'bg-[#51cf66] text-[#134e20]' : 'bg-[#fff3bf] text-[#8f4b00]'
+                    }`
+                  : esMiTurnoOnline
+                  ? t.bannerSuccess
+                  : t.bannerWarn
               }`}
             >
               <span className="truncate">
@@ -420,22 +426,30 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
           estado.modoOnline
             ? 'w-[min(94vw,calc(100dvh-365px))] lg:w-[min(560px,calc(100vw-400px),calc(100dvh-172px))]'
             : 'w-[min(94vw,calc(100dvh-335px))] lg:w-[min(580px,calc(100vw-400px),calc(100dvh-140px))]'
-        } ${currentTheme.frameBg} border-4 border-[#2b2140] shadow-[0_6px_0_#2b2140,0_14px_20px_rgba(0,0,0,0.25)] select-none shrink-0`}
+        } ${currentTheme.frameBg} ${
+          t.esClasico
+            ? 'border-4 border-[#2b2140] shadow-[0_6px_0_#2b2140,0_14px_20px_rgba(0,0,0,0.25)]'
+            : t.esOscuro
+            ? 'border border-white/20 shadow-[0_18px_38px_rgba(0,0,0,0.45)]'
+            : 'border border-[#C9B99B] shadow-[0_14px_30px_rgba(38,41,59,0.16)]'
+        } select-none shrink-0`}
         style={{
           ...currentTheme.frameStyle,
           transform: `rotate(${anguloRotacion}deg)`,
-          transition: 'none', // Cambio instantáneo: aparece de inmediato sin animación de giro
+          transition: 'none',
         }}
       >
-        <div className={`absolute top-2 left-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} border-2 border-[#2b2140]`} />
-        <div className={`absolute top-2 right-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} border-2 border-[#2b2140]`} />
-        <div className={`absolute bottom-2 left-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} border-2 border-[#2b2140]`} />
-        <div className={`absolute bottom-2 right-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} border-2 border-[#2b2140]`} />
+        <div className={`absolute top-2 left-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} ${t.esClasico ? 'border-2 border-[#2b2140]' : 'border border-black/25'}`} />
+        <div className={`absolute top-2 right-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} ${t.esClasico ? 'border-2 border-[#2b2140]' : 'border border-black/25'}`} />
+        <div className={`absolute bottom-2 left-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} ${t.esClasico ? 'border-2 border-[#2b2140]' : 'border border-black/25'}`} />
+        <div className={`absolute bottom-2 right-2 w-3 h-3 rounded-full ${currentTheme.cornerDot} ${t.esClasico ? 'border-2 border-[#2b2140]' : 'border border-black/25'}`} />
 
         {/* Inner Playing Surface (5x5, 7x7 o 9x9 grid) */}
         <div
           ref={boardRef}
-          className={`relative w-full h-full rounded-2xl ${currentTheme.innerBg} border-3 border-[#2b2140] overflow-hidden grid ${gridTemplateClass} transition-colors duration-300`}
+          className={`relative w-full h-full rounded-2xl ${currentTheme.innerBg} ${
+            t.esClasico ? 'border-3 border-[#2b2140]' : 'border border-black/25'
+          } overflow-hidden grid ${gridTemplateClass} transition-colors duration-300`}
           style={{ touchAction: 'manipulation' }}
         >
           {Array.from({ length: boardSize }).map((_, vr) =>
@@ -751,16 +765,16 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
       {/* Barra inferior de estado/confirmación de altura fija (cero saltos al cambiar Mover ↔ Muro) */}
       <div className="h-10 mt-1.5 w-full max-w-[580px] flex items-center justify-center shrink-0">
         {estado.terminada ? (
-          <div className="h-9 px-3.5 rounded-xl bg-[#fff8e7] border-2 border-[#2b2140] text-xs font-extrabold text-[#593922] shadow-sm flex items-center gap-1.5">
+          <div className={`h-9 px-3.5 rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 ${t.esClasico ? 'bg-[#fff8e7] border-2 border-[#2b2140] text-[#593922] font-extrabold' : t.shell}`}>
             <span>🏁 Partida finalizada</span>
           </div>
         ) : !esTurnoHumano ? (
-          <div className="h-9 px-3.5 rounded-xl bg-[#fff8e7]/90 border-2 border-[#2b2140] text-xs font-bold text-[#593922] shadow-sm flex items-center gap-1.5 max-w-full">
+          <div className={`h-9 px-3.5 rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 max-w-full ${t.esClasico ? 'bg-[#fff8e7]/90 border-2 border-[#2b2140] text-[#593922]' : t.shell}`}>
             <span className="truncate">⏳ Turno de {jugadorActivo.nombre}...</span>
           </div>
         ) : estado.modoAccion === 'muro' && hoveredIntersection ? (
-          <div className="h-9 px-2.5 rounded-xl bg-[#fff8e7] border-2 border-[#2b2140] text-xs font-semibold text-[#593922] shadow-md flex items-center gap-1.5 max-w-full">
-            <span className="font-extrabold text-[#2b2140] whitespace-nowrap">
+          <div className={`h-9 px-2.5 rounded-xl text-xs font-semibold shadow-md flex items-center gap-1.5 max-w-full ${t.esClasico ? 'bg-[#fff8e7] border-2 border-[#2b2140] text-[#593922]' : t.shell}`}>
+            <span className={`font-bold whitespace-nowrap ${t.title}`}>
               {etiquetaOrientacionVisual}
             </span>
 
@@ -772,7 +786,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
                 const nuevaOrientacion = estado.orientacionMuro === 'H' ? 'V' : 'H';
                 updatePreview(hoveredIntersection.r, hoveredIntersection.c, nuevaOrientacion);
               }}
-              className="h-7 text-[11px] bg-[#ffd43b] hover:bg-[#fcc419] px-2 rounded-lg border-2 border-[#2b2140] font-black text-[#5c3c00] shadow-[0_1px_0_#2b2140] active:translate-y-0.5 cursor-pointer flex items-center gap-1 whitespace-nowrap"
+              className={`h-7 text-[11px] px-2 rounded-lg font-bold cursor-pointer flex items-center gap-1 whitespace-nowrap ${t.btnAmber}`}
             >
               🔄 Rotar
             </button>
@@ -781,10 +795,10 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
               type="button"
               onClick={() => confirmWallPlacement(hoveredIntersection.r, hoveredIntersection.c)}
               disabled={ghostValidity !== 'ok'}
-              className={`h-7 text-[11px] px-2.5 rounded-lg border-2 border-[#2b2140] font-black shadow-[0_1px_0_#2b2140] active:translate-y-0.5 cursor-pointer flex items-center gap-1 whitespace-nowrap transition-colors ${
+              className={`h-7 text-[11px] px-2.5 rounded-lg font-bold cursor-pointer flex items-center gap-1 whitespace-nowrap transition-colors ${
                 ghostValidity === 'ok'
-                  ? 'bg-[#51cf66] text-[#134e20] hover:bg-[#40c057]'
-                  : 'bg-[#ced4da] text-[#868e96] border-[#adb5bd] cursor-not-allowed shadow-none'
+                  ? t.btnPrimary
+                  : 'opacity-45 cursor-not-allowed shadow-none ' + t.btnNeutral
               }`}
             >
               ✓ Colocar
@@ -793,27 +807,27 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
             <button
               type="button"
               onClick={() => setHoveredIntersection(null)}
-              className="w-7 h-7 rounded-lg bg-white border-2 border-[#2b2140] font-bold text-[#c92a2a] hover:bg-[#ffe3e3] flex items-center justify-center cursor-pointer shrink-0"
+              className={`w-7 h-7 rounded-lg font-bold flex items-center justify-center cursor-pointer shrink-0 ${t.closeBtn}`}
               title="Cancelar selección"
             >
               ✕
             </button>
           </div>
         ) : estado.modoAccion === 'muro' ? (
-          <div className="h-9 px-3 rounded-xl bg-[#fff8e7] border-2 border-[#2b2140] text-xs font-semibold text-[#593922] shadow-sm flex items-center gap-2 max-w-full">
+          <div className={`h-9 px-3 rounded-xl text-xs font-semibold shadow-xs flex items-center gap-2 max-w-full ${t.esClasico ? 'bg-[#fff8e7] border-2 border-[#2b2140] text-[#593922]' : t.shell}`}>
             <span className="truncate">
               🧱 Toca una intersección ({etiquetaOrientacionVisual})
             </span>
             <button
               type="button"
               onClick={onRotarMuro}
-              className="h-6 text-[11px] bg-[#ffd43b] hover:bg-[#fcc419] px-2 rounded-md border border-[#2b2140] font-bold cursor-pointer whitespace-nowrap shrink-0"
+              className={`h-6 text-[11px] px-2 rounded-md font-bold cursor-pointer whitespace-nowrap shrink-0 ${t.btnAmber}`}
             >
               🔄 Rotar (R)
             </button>
           </div>
         ) : (
-          <div className="h-9 px-3.5 rounded-xl bg-[#fff8e7]/90 border-2 border-[#2b2140] text-xs font-semibold text-[#593922] shadow-sm flex items-center gap-1.5 max-w-full">
+          <div className={`h-9 px-3.5 rounded-xl text-xs font-semibold shadow-xs flex items-center gap-1.5 max-w-full ${t.esClasico ? 'bg-[#fff8e7]/90 border-2 border-[#2b2140] text-[#593922]' : t.shell}`}>
             <span className="truncate">
               👟 Toca una casilla marcada para moverte
             </span>

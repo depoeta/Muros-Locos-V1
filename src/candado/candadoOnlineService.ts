@@ -100,6 +100,7 @@ export interface CandadoOnlineCallbacks {
   onDisconnectTimeout?: () => void;
   onConnectionModeChange?: (mode: 'webrtc' | 'http' | 'connecting') => void;
   onLobbyError?: (error: string) => void;
+  onConnectionError?: (error: string) => void;
 }
 
 class CandadoOnlineManager {
@@ -128,6 +129,11 @@ class CandadoOnlineManager {
   private lastMsgSeq: number = 0;
   private lastRemoteSeenAt: number = Date.now();
   private inMatch: boolean = false;
+  private hadWebRtcOpenInMatch: boolean = false;
+  private lastRemoteActivityMarker: string = '';
+  private lastHttpKeepaliveAt: number = 0;
+  private consecutivePollErrors: number = 0;
+  private visibilityBound: boolean = false;
   private isExiting: boolean = false;
   private seenMessageKeys: Set<string> = new Set();
 
@@ -137,11 +143,34 @@ class CandadoOnlineManager {
 
   public setInMatch(active: boolean) {
     this.inMatch = active;
+    this.lastRemoteActivityMarker = '';
+    this.lastHttpKeepaliveAt = Date.now();
+    this.consecutivePollErrors = 0;
     if (active) {
+      const dc = this.role === 'host' ? this.hostDc : this.clientDc;
+      this.hadWebRtcOpenInMatch = Boolean(dc && dc.readyState === 'open');
       this.lastRemoteSeenAt = Date.now();
       this.stopGracePeriod();
+    } else {
+      this.hadWebRtcOpenInMatch = false;
     }
   }
+
+  public forceSyncPoll() {
+    this.pollOnce(true);
+  }
+
+  private handleVisibilityChange = () => {
+    if (
+      typeof document !== 'undefined' &&
+      document.visibilityState === 'visible' &&
+      this.role &&
+      this.roomCode &&
+      !this.isExiting
+    ) {
+      this.pollOnce(true);
+    }
+  };
 
   public getRoomInfo() {
     return {
@@ -401,10 +430,13 @@ class CandadoOnlineManager {
       } catch {}
     }
 
-    // Enviar por /msg si WebRTC no está abierto o si es evento crítico de inicio/cierre/rematch
+    // Enviar por /msg si WebRTC no está abierto o si es evento/movimiento crítico
     const esCritico =
       msg.type === 'CANDADO_START' ||
       msg.type === 'CANDADO_COMMIT' ||
+      msg.type === 'CANDADO_GUESS' ||
+      msg.type === 'CANDADO_CLUE' ||
+      msg.type === 'CANDADO_TIMEOUT_SKIP' ||
       msg.type === 'CANDADO_REVEAL' ||
       msg.type === 'CANDADO_SURRENDER' ||
       msg.type === 'CANDADO_REMATCH_REQUEST' ||
@@ -415,10 +447,10 @@ class CandadoOnlineManager {
     }
   }
 
-  private async postMsgFallback(msg: MensajeCandadoP2P) {
+  private async postMsgFallback(msg: MensajeCandadoP2P, intento: number = 0) {
     if (!this.roomCode || this.isExiting) return;
     try {
-      await fetch(
+      const res = await fetch(
         getApiBaseUrl(`/api/salas/${encodeURIComponent(this.roomCode)}/msg`),
         {
           method: 'POST',
@@ -430,11 +462,30 @@ class CandadoOnlineManager {
           }),
         }
       );
-    } catch {}
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+    } catch {
+      if (this.isExiting || !this.roomCode) return;
+      if (intento < 1) {
+        window.setTimeout(() => {
+          this.postMsgFallback(msg, intento + 1);
+        }, 650);
+        return;
+      }
+      if (msg.type !== 'HEARTBEAT') {
+        this.callbacks.onConnectionError?.(
+          '⚠️ No se pudo enviar tu jugada por la red. Verifica tu conexión.'
+        );
+      }
+    }
   }
 
   private bindDataChannel(dc: RTCDataChannel) {
     dc.onopen = () => {
+      if (this.inMatch) {
+        this.hadWebRtcOpenInMatch = true;
+      }
       this.lastRemoteSeenAt = Date.now();
       this.stopGracePeriod();
       this.callbacks.onConnectionModeChange?.('webrtc');
@@ -448,7 +499,8 @@ class CandadoOnlineManager {
     };
     dc.onclose = () => {
       this.callbacks.onConnectionModeChange?.('http');
-      if (this.inMatch && !this.isExiting) {
+      this.pollOnce(true);
+      if (this.inMatch && !this.isExiting && this.hadWebRtcOpenInMatch) {
         this.startGracePeriod();
       }
     };
@@ -503,15 +555,23 @@ class CandadoOnlineManager {
   private startLoops() {
     this.stopLoops();
     this.lastRemoteSeenAt = Date.now();
+    this.lastHttpKeepaliveAt = Date.now();
+
+    if (typeof document !== 'undefined' && !this.visibilityBound) {
+      document.addEventListener('visibilitychange', this.handleVisibilityChange);
+      this.visibilityBound = true;
+    }
 
     this.pollTimer = setInterval(() => {
-      this.pollOnce();
+      this.pollOnce(false);
     }, 1400);
 
     this.heartbeatTimer = setInterval(() => {
       if (this.isExiting || !this.role) return;
+      const now = Date.now();
       const dc = this.role === 'host' ? this.hostDc : this.clientDc;
-      if (dc && dc.readyState === 'open') {
+      const webrtcOpen = Boolean(dc && dc.readyState === 'open');
+      if (webrtcOpen && dc) {
         try {
           dc.send(
             JSON.stringify({
@@ -521,15 +581,31 @@ class CandadoOnlineManager {
             } satisfies MensajeCandadoP2P)
           );
         } catch {}
+      } else if (this.inMatch && now - this.lastHttpKeepaliveAt >= 8000) {
+        this.lastHttpKeepaliveAt = now;
+        this.postMsgFallback({
+          type: 'HEARTBEAT',
+          peerId: this.myPeerId,
+          jugadorId: this.myPlayerId,
+        });
       }
 
-      if (this.inMatch && Date.now() - this.lastRemoteSeenAt > 14000) {
+      if (this.inMatch && now - this.lastRemoteSeenAt > 7000) {
+        this.pollOnce(true);
+      }
+
+      const silenceLimitMs = this.hadWebRtcOpenInMatch ? 20000 : 40000;
+      if (this.inMatch && now - this.lastRemoteSeenAt > silenceLimitMs) {
         this.startGracePeriod();
       }
     }, 2500);
   }
 
   private stopLoops() {
+    if (typeof document !== 'undefined' && this.visibilityBound) {
+      document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+      this.visibilityBound = false;
+    }
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
@@ -562,12 +638,12 @@ class CandadoOnlineManager {
     }
   }
 
-  private async pollOnce() {
+  private async pollOnce(force: boolean = false) {
     if (this.isExiting || !this.role || !this.roomCode || this.pollInFlight) return;
 
     const dc = this.role === 'host' ? this.hostDc : this.clientDc;
     const webrtcOpen = Boolean(dc && dc.readyState === 'open');
-    if (this.inMatch && webrtcOpen && Date.now() - this.lastRemoteSeenAt < 10000) {
+    if (!force && this.inMatch && webrtcOpen && Date.now() - this.lastRemoteSeenAt < 10000) {
       return;
     }
 
@@ -581,16 +657,41 @@ class CandadoOnlineManager {
       if (this.isExiting || !this.role) return;
 
       if (res.status === 404) {
+        this.consecutivePollErrors = 0;
         this.callbacks.onPeerLeft?.(
           this.lobbyPlayers.find((p) => p.id !== this.myPlayerId)?.nombre || 'El rival'
         );
         return;
       }
-      if (!res.ok) return;
+      if (!res.ok) {
+        this.consecutivePollErrors += 1;
+        if (this.consecutivePollErrors === 3) {
+          this.callbacks.onConnectionError?.(`Error de red sincronizando sala (HTTP ${res.status}).`);
+        }
+        return;
+      }
 
       const data = await res.json().catch(() => null);
       if (!data?.ok || !data?.sala) return;
+      this.consecutivePollErrors = 0;
       const sala = data.sala;
+
+      const jugadoresSalaArr = Array.isArray(sala.jugadores) ? sala.jugadores : [];
+      const rivalEnSala = jugadoresSalaArr.find(
+        (j: any) => j?.peerId && j.peerId !== this.myPeerId
+      );
+      const marker = `${sala.seq ?? 0}:${sala.ultimoCambio ?? 0}:${jugadoresSalaArr.length}`;
+      if (
+        this.inMatch &&
+        marker !== this.lastRemoteActivityMarker &&
+        rivalEnSala &&
+        rivalEnSala.conectado !== false
+      ) {
+        this.lastRemoteActivityMarker = marker;
+        this.lastRemoteSeenAt = Date.now();
+        this.stopGracePeriod();
+        this.callbacks.onReconnected?.();
+      }
 
       if (sala.juego === 'candado') {
         const cfg: ConfigDueloCandadoP2P = {
@@ -651,6 +752,10 @@ class CandadoOnlineManager {
         this.lastMsgSeq = sala.seq;
       }
     } catch {
+      this.consecutivePollErrors += 1;
+      if (this.consecutivePollErrors === 3) {
+        this.callbacks.onConnectionError?.('Sin respuesta de la sala online. Reintentando conexión...');
+      }
     } finally {
       this.pollInFlight = false;
     }
@@ -704,12 +809,13 @@ class CandadoOnlineManager {
     const peerId = this.myPeerId;
     const nombre = this.myName;
     const jugadorId = this.myPlayerId;
+    const wasInMatch = this.inMatch;
     this.isExiting = true;
     this.cleanUp();
 
     if (!code) return;
     try {
-      if (role === 'host' && !this.inMatch) {
+      if (role === 'host' && !wasInMatch) {
         await fetch(getApiBaseUrl(`/api/salas/${encodeURIComponent(code)}`), {
           method: 'DELETE',
           cache: 'no-store',
@@ -742,6 +848,9 @@ class CandadoOnlineManager {
     this.role = null;
     this.roomCode = '';
     this.inMatch = false;
+    this.hadWebRtcOpenInMatch = false;
+    this.lastRemoteActivityMarker = '';
+    this.consecutivePollErrors = 0;
     this.seenMessageKeys.clear();
   }
 }

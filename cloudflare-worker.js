@@ -198,7 +198,7 @@ async function d1LeerConfig(d1, clave, respaldo = null) {
 }
 
 async function d1GuardarConfig(d1, clave, valor) {
-  if (!d1) return;
+  if (!d1) return { ok: false, error: 'Database D1 no vinculada en el Worker.' };
   try {
     await asegurarTablasD1(d1);
     const str = typeof valor === 'string' ? valor : JSON.stringify(valor);
@@ -206,8 +206,10 @@ async function d1GuardarConfig(d1, clave, valor) {
       .prepare('INSERT OR REPLACE INTO config (clave, valor, actualizado_en) VALUES (?, ?, ?)')
       .bind(clave, str, Date.now())
       .run();
+    return { ok: true };
   } catch (err) {
     console.error(`Error guardando config (${clave}):`, err);
+    return { ok: false, error: err?.message || `Error guardando configuración (${clave}) en D1.` };
   }
 }
 
@@ -281,9 +283,9 @@ async function verificarClaveCuenta(cuenta, claveCandidata) {
 }
 
 /**
- * Política estricta de sesiones en D1:
- * - Máximo 2 sesiones activas por cuenta (id).
- * - Si el user inicia una 3ª sesión, se eliminan TODAS las sesiones anteriores de ese id.
+ * Política de sesiones en D1:
+ * - Máximo 3 sesiones activas por cuenta (id) para soportar móvil + PC + tablet sin desconectar todo.
+ * - Si se alcanza el límite, se elimina únicamente la(s) sesión(es) más antigua(s) (FIFO).
  */
 async function crearSesion(d1, userId, rol, duracionHoras = 720) {
   const ahora = Date.now();
@@ -293,9 +295,18 @@ async function crearSesion(d1, userId, rol, duracionHoras = 720) {
     await asegurarTablasD1(d1);
     try {
       await d1.prepare('DELETE FROM sesiones WHERE expira_en <= ?').bind(ahora).run();
-      const activas = await d1.prepare('SELECT token_hash FROM sesiones WHERE id = ? AND expira_en > ?').bind(userId, ahora).all();
-      if (activas && activas.results && activas.results.length >= 2) {
-        await d1.prepare('DELETE FROM sesiones WHERE id = ?').bind(userId).run();
+      const activas = await d1
+        .prepare('SELECT token_hash, creado_en FROM sesiones WHERE id = ? AND expira_en > ? ORDER BY creado_en ASC')
+        .bind(userId, ahora)
+        .all();
+      const lista = activas?.results || [];
+      if (lista.length >= 3) {
+        const aEliminar = lista.slice(0, lista.length - 2);
+        for (const row of aEliminar) {
+          if (row?.token_hash) {
+            await d1.prepare('DELETE FROM sesiones WHERE token_hash = ?').bind(row.token_hash).run();
+          }
+        }
       }
     } catch (err) {
       console.error('Error limpiando sesiones previas en D1:', err);
@@ -397,6 +408,8 @@ function sanitizarCuentaPublica(acc, incluirPrivados = true) {
   delete copia.claveHash;
   delete copia.claveSalt;
   delete copia.claveIter;
+  delete copia._inventarioCorrupto;
+  delete copia._inventarioError;
   if (copia.id === 'admin') {
     copia.rol = 'dev';
     copia.esSupremo = true;
@@ -439,12 +452,16 @@ async function d1ObtenerTodasCuentas(d1) {
 
     const histMap = {};
     for (const h of resHistorial?.results || []) {
+      const hId = String(h.id || '').trim().toLowerCase();
+      if (!hId) continue;
       let arr = [];
       try {
         arr = JSON.parse(h.historial_partida || '[]');
         if (!Array.isArray(arr)) arr = [];
-      } catch {}
-      histMap[h.id] = {
+      } catch (err) {
+        console.error(`Error parseando historial_partida para ${hId}:`, err);
+      }
+      histMap[hId] = {
         puntos: Number(h.puntos) || 0,
         partidas: Number(h.total_partida) || 0,
         victorias: Number(h.victorias) || 0,
@@ -456,18 +473,34 @@ async function d1ObtenerTodasCuentas(d1) {
 
     const invMap = {};
     for (const inv of resInventario?.results || []) {
+      const invId = String(inv.id || '').trim().toLowerCase();
+      if (!invId) continue;
       let personajes = [];
+      let inventarioCorrupto = false;
+      let inventarioError = '';
       try {
-        personajes = JSON.parse(inv.personajes_json || '[]');
-        if (!Array.isArray(personajes)) personajes = [];
-      } catch {}
-      invMap[inv.id] = {
+        const parsed = JSON.parse(inv.personajes_json || '[]');
+        if (Array.isArray(parsed)) {
+          personajes = parsed;
+        } else {
+          inventarioCorrupto = true;
+          inventarioError = 'personajes_json no es un arreglo JSON válido';
+          console.error(`Inventario no es arreglo para ${invId}:`, inv.personajes_json);
+        }
+      } catch (err) {
+        inventarioCorrupto = true;
+        inventarioError = err?.message || 'JSON inválido en personajes_json';
+        console.error(`Error parseando personajes_json para ${invId}:`, err);
+      }
+      invMap[invId] = {
         avatarColor: inv.avatar_color || '#ff6b6b',
         avatarHat: inv.avatar_hat || 'corona',
         avatarRopa: inv.avatar_ropa || 'ninguna',
         avatarRopaColor: inv.avatar_ropa_color || undefined,
         avatarAura: inv.avatar_aura || 'ninguna',
         temaTablero: inv.tema_tablero || 'madera',
+        inventarioCorrupto,
+        inventarioError,
         inventario: {
           personajes,
           activoId: inv.activo_id || undefined,
@@ -477,7 +510,9 @@ async function d1ObtenerTodasCuentas(d1) {
 
     const salida = {};
     for (const c of resCuentas?.results || []) {
-      const h = histMap[c.id] || {
+      const cId = String(c.id || '').trim().toLowerCase();
+      if (!cId) continue;
+      const h = histMap[cId] || {
         puntos: 0,
         partidas: 0,
         victorias: 0,
@@ -485,20 +520,22 @@ async function d1ObtenerTodasCuentas(d1) {
         empates: 0,
         historialPartidas: [],
       };
-      const inv = invMap[c.id] || {
-        avatarColor: c.id === 'admin' ? '#ffd43b' : '#ff6b6b',
+      const inv = invMap[cId] || {
+        avatarColor: cId === 'admin' ? '#ffd43b' : '#ff6b6b',
         avatarHat: 'corona',
-        avatarRopa: c.id === 'admin' ? 'capa' : 'ninguna',
-        avatarRopaColor: c.id === 'admin' ? '#c92a2a' : undefined,
-        avatarAura: c.id === 'admin' ? 'dorada' : 'ninguna',
+        avatarRopa: cId === 'admin' ? 'capa' : 'ninguna',
+        avatarRopaColor: cId === 'admin' ? '#c92a2a' : undefined,
+        avatarAura: cId === 'admin' ? 'dorada' : 'ninguna',
         temaTablero: 'madera',
+        inventarioCorrupto: false,
+        inventarioError: '',
         inventario: { personajes: [] },
       };
 
-      const esSup = c.id === 'admin';
-      salida[c.id] = {
-        id: c.id,
-        nombre: c.nombre || c.id,
+      const esSup = cId === 'admin';
+      salida[cId] = {
+        id: cId,
+        nombre: c.nombre || cId,
         claveHash: c.clave_hash || undefined,
         claveSalt: c.clave_salt || undefined,
         claveIter: Number(c.clave_iter) || 100000,
@@ -519,6 +556,9 @@ async function d1ObtenerTodasCuentas(d1) {
         avatarAura: inv.avatarAura,
         temaTablero: inv.temaTablero,
         inventario: inv.inventario,
+        ...(inv.inventarioCorrupto
+          ? { _inventarioCorrupto: true, _inventarioError: inv.inventarioError }
+          : {}),
       };
     }
     return salida;
@@ -529,10 +569,12 @@ async function d1ObtenerTodasCuentas(d1) {
 }
 
 async function d1GuardarCuentaCompleta(d1, acc, tocarUpdate = true) {
-  if (!d1 || !acc || !acc.id) return;
+  if (!d1) return { ok: false, error: 'Database D1 no vinculada al Worker.' };
+  if (!acc || !acc.id) return { ok: false, error: 'Datos de cuenta inválidos.' };
   await asegurarTablasD1(d1);
+  const accId = String(acc.id).trim().toLowerCase();
   const ahora = Date.now();
-  const esSup = acc.id === 'admin';
+  const esSup = accId === 'admin';
   const rolFinal = esSup ? 'dev' : (acc.rol || 'jugador');
 
   try {
@@ -540,7 +582,7 @@ async function d1GuardarCuentaCompleta(d1, acc, tocarUpdate = true) {
     try {
       prevCuenta = await d1
         .prepare('SELECT clave_hash, clave_salt, clave_iter, creacion FROM cuentas WHERE id = ?')
-        .bind(acc.id)
+        .bind(accId)
         .first();
     } catch {}
 
@@ -551,8 +593,8 @@ async function d1GuardarCuentaCompleta(d1, acc, tocarUpdate = true) {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .bind(
-        acc.id,
-        acc.nombre || acc.id,
+        accId,
+        acc.nombre || accId,
         acc.claveHash || prevCuenta?.clave_hash || null,
         acc.claveSalt || prevCuenta?.clave_salt || null,
         Number(acc.claveIter) || Number(prevCuenta?.clave_iter) || 100000,
@@ -569,7 +611,7 @@ async function d1GuardarCuentaCompleta(d1, acc, tocarUpdate = true) {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .bind(
-        acc.id,
+        accId,
         Math.max(0, Number(acc.puntos) || 0),
         Math.max(0, Number(acc.partidas) || 0),
         Math.max(0, Number(acc.victorias) || 0),
@@ -581,6 +623,17 @@ async function d1GuardarCuentaCompleta(d1, acc, tocarUpdate = true) {
       .run();
 
     const inv = acc.inventario || { personajes: [] };
+    let personajesJsonStr = JSON.stringify(Array.isArray(inv.personajes) ? inv.personajes : []);
+    // Protección anti-sobrescritura: si personajes_json estaba corrupto en D1, no borrar el string original al guardar puntos/aspecto
+    if (acc._inventarioCorrupto && !acc._repararInventario && (!Array.isArray(inv.personajes) || inv.personajes.length === 0)) {
+      try {
+        const prevInv = await d1.prepare('SELECT personajes_json FROM inventario WHERE id = ?').bind(accId).first();
+        if (prevInv && typeof prevInv.personajes_json === 'string' && prevInv.personajes_json.trim()) {
+          personajesJsonStr = prevInv.personajes_json;
+        }
+      } catch {}
+    }
+
     await d1
       .prepare(`
         INSERT OR REPLACE INTO inventario (
@@ -588,7 +641,7 @@ async function d1GuardarCuentaCompleta(d1, acc, tocarUpdate = true) {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .bind(
-        acc.id,
+        accId,
         acc.avatarColor || '#ff6b6b',
         acc.avatarHat || 'corona',
         acc.avatarRopa || 'ninguna',
@@ -596,7 +649,7 @@ async function d1GuardarCuentaCompleta(d1, acc, tocarUpdate = true) {
         acc.avatarAura || 'ninguna',
         acc.temaTablero || 'madera',
         inv.activoId || null,
-        JSON.stringify(Array.isArray(inv.personajes) ? inv.personajes : [])
+        personajesJsonStr
       )
       .run();
 
@@ -604,7 +657,7 @@ async function d1GuardarCuentaCompleta(d1, acc, tocarUpdate = true) {
     if (!esSup || (Number(acc.partidas) || 0) > 0 || (Number(acc.puntos) || 0) > 0) {
       let prevRank = null;
       try {
-        prevRank = await d1.prepare('SELECT * FROM ranking WHERE id = ?').bind(acc.id).first();
+        prevRank = await d1.prepare('SELECT * FROM ranking WHERE id = ?').bind(accId).first();
       } catch {}
 
       await d1
@@ -617,8 +670,8 @@ async function d1GuardarCuentaCompleta(d1, acc, tocarUpdate = true) {
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .bind(
-          acc.id,
-          acc.nombre || acc.id,
+          accId,
+          acc.nombre || accId,
           Math.max(0, Number(acc.puntos) || 0),
           Math.max(0, Number(acc.partidas) || 0),
           Math.max(0, Number(acc.victorias) || 0),
@@ -644,13 +697,16 @@ async function d1GuardarCuentaCompleta(d1, acc, tocarUpdate = true) {
     if (tocarUpdate) {
       await tocarUltimaActualizacion(d1);
     }
+    return { ok: true };
   } catch (err) {
-    console.error(`Error guardando cuenta completa (${acc.id}) en D1:`, err);
+    console.error(`Error guardando cuenta completa (${accId}) en D1:`, err);
+    return { ok: false, error: err?.message || `Error guardando cuenta (${accId}) en D1.` };
   }
 }
 
 async function d1EliminarCuentaCompleta(d1, targetId) {
-  if (!d1 || !targetId || targetId === 'admin') return;
+  if (!d1) return { ok: false, error: 'Database D1 no vinculada.' };
+  if (!targetId || targetId === 'admin') return { ok: false, error: 'ID inválido.' };
   await asegurarTablasD1(d1);
   try {
     await d1.prepare('DELETE FROM cuentas WHERE id = ?').bind(targetId).run();
@@ -660,8 +716,10 @@ async function d1EliminarCuentaCompleta(d1, targetId) {
     await d1.prepare('DELETE FROM sesiones WHERE id = ?').bind(targetId).run();
     await d1.prepare('DELETE FROM salas_personalizadas WHERE creador_id = ?').bind(targetId).run();
     await tocarUltimaActualizacion(d1);
+    return { ok: true };
   } catch (err) {
     console.error(`Error eliminando cuenta (${targetId}) de D1:`, err);
+    return { ok: false, error: err?.message || `Error eliminando cuenta (${targetId}) de D1.` };
   }
 }
 
@@ -869,7 +927,7 @@ async function d1LeerSalasPersonalizadas(d1) {
 }
 
 async function d1GuardarSalaPersonalizada(d1, sala) {
-  if (!d1 || !sala) return;
+  if (!d1 || !sala) return { ok: false, error: 'Database D1 no vinculada o sala inválida.' };
   await asegurarTablasD1(d1);
   try {
     await d1
@@ -893,19 +951,23 @@ async function d1GuardarSalaPersonalizada(d1, sala) {
         sala.creadoEn || Date.now()
       )
       .run();
+    return { ok: true };
   } catch (err) {
     console.error('Error guardando sala_personalizada en D1:', err);
+    return { ok: false, error: err?.message || 'Error guardando sala oficial en D1.' };
   }
 }
 
 async function d1EliminarSalaPersonalizada(d1, codigo) {
-  if (!d1 || !codigo) return;
+  if (!d1 || !codigo) return { ok: false, error: 'Database D1 no vinculada o código inválido.' };
   await asegurarTablasD1(d1);
   try {
     await d1.prepare('DELETE FROM salas_personalizadas WHERE codigo = ?').bind(codigo).run();
     await d1.prepare('DELETE FROM salas_online WHERE codigo = ?').bind(codigo).run();
+    return { ok: true };
   } catch (err) {
     console.error('Error eliminando sala_personalizada de D1:', err);
+    return { ok: false, error: err?.message || 'Error eliminando sala oficial en D1.' };
   }
 }
 
@@ -1011,7 +1073,7 @@ async function d1LeerSalaOnline(d1, codigo) {
 
 async function d1GuardarSalaOnline(d1, codigo, salaObj) {
   const limpio = normalizarCodigoSala(codigo);
-  if (!d1 || !limpio || !salaObj) return;
+  if (!d1 || !limpio || !salaObj) return { ok: false, error: 'Database D1 no vinculada o código inválido.' };
   await asegurarTablasD1(d1);
   const ahora = Date.now();
   salaObj.ultimoCambio = ahora;
@@ -1020,8 +1082,10 @@ async function d1GuardarSalaOnline(d1, codigo, salaObj) {
       .prepare('INSERT OR REPLACE INTO salas_online (codigo, data_json, ultimo_cambio) VALUES (?, ?, ?)')
       .bind(limpio, JSON.stringify(salaObj), ahora)
       .run();
+    return { ok: true };
   } catch (err) {
     console.error(`Error guardando sala_online (${limpio}):`, err);
+    return { ok: false, error: err?.message || `Error guardando sala online (${limpio}) en D1.` };
   }
 }
 
@@ -1251,7 +1315,11 @@ async function manejarPeticionApi(request, env) {
     const cuentas = await d1ObtenerTodasCuentas(d1);
     const lastUpdate = d1 ? await d1LeerConfig(d1, 'last_update', Date.now()) : Date.now();
     const sesion = await resolverSesion(request, env, d1);
+    const perm = await verificarPermisosLlamante(cuentas, sesion);
+    const esStaff = Boolean(perm.esDev || perm.esAdmin || perm.esMod);
     const tieneAuthHeader = Boolean(request.headers.get('Authorization'));
+    const sesionUserId = sesion && !sesion.revocada ? (sesion.userId || null) : null;
+    const cuentasCorruptas = Object.values(cuentas).filter((c) => c && c._inventarioCorrupto);
 
     let salasCount = 0;
     if (d1) {
@@ -1275,8 +1343,19 @@ async function manejarPeticionApi(request, env) {
         lastUpdate,
         salasCount,
         cuentasCount: Object.keys(cuentas).length,
+        sesionUserId,
         sesionValida: tieneAuthHeader ? Boolean(sesion && sesion.userId && !sesion.revocada) : true,
         sesionRevocada: tieneAuthHeader && Boolean(sesion?.revocada),
+        miInventarioCorrupto: Boolean(sesionUserId && cuentas[sesionUserId]?._inventarioCorrupto),
+        ...(esStaff && cuentasCorruptas.length > 0
+          ? {
+              advertenciasInventario: cuentasCorruptas.map((c) => ({
+                id: c.id,
+                nombre: c.nombre || c.id,
+                error: c._inventarioError || 'JSON inválido en personajes_json',
+              })),
+            }
+          : {}),
       }),
       { headers: cabecerasJson }
     );
@@ -1527,7 +1606,13 @@ async function manejarPeticionApi(request, env) {
     }
 
     actual.ultimaConexion = new Date().toISOString();
-    await d1GuardarCuentaCompleta(d1, actual, true);
+    const saveRes = await d1GuardarCuentaCompleta(d1, actual, true);
+    if (!saveRes.ok) {
+      return new Response(
+        JSON.stringify({ ok: false, error: saveRes.error || 'Error guardando cambios del perfil en D1.' }),
+        { status: 500, headers: cabecerasJson }
+      );
+    }
 
     return new Response(
       JSON.stringify({
@@ -1681,7 +1766,13 @@ async function manejarPeticionApi(request, env) {
                 : prev.inventario,
               ultimaConexion: new Date().toISOString(),
             };
-            await d1GuardarCuentaCompleta(d1, actualizada, true);
+            const saveRes = await d1GuardarCuentaCompleta(d1, actualizada, true);
+            if (!saveRes.ok) {
+              return new Response(
+                JSON.stringify({ ok: false, error: saveRes.error || 'Error guardando datos en D1.' }),
+                { status: 500, headers: cabecerasJson }
+              );
+            }
             return new Response(JSON.stringify({ ok: true, dbBound }), { headers: cabecerasJson });
           }
         }
@@ -1733,7 +1824,13 @@ async function manejarPeticionApi(request, env) {
           claveSalt: prev.claveSalt,
           claveIter: prev.claveIter,
         };
-        await d1GuardarCuentaCompleta(d1, fusionada, false);
+        const saveRes = await d1GuardarCuentaCompleta(d1, fusionada, false);
+        if (!saveRes.ok) {
+          return new Response(
+            JSON.stringify({ ok: false, error: saveRes.error || `Error guardando cuenta ${id} en D1.` }),
+            { status: 500, headers: cabecerasJson }
+          );
+        }
       }
 
       await tocarUltimaActualizacion(d1);
@@ -1856,7 +1953,13 @@ async function manejarPeticionApi(request, env) {
       target.claveIter = hashData.claveIter;
     }
 
-    await d1GuardarCuentaCompleta(d1, target, true);
+    const saveRes = await d1GuardarCuentaCompleta(d1, target, true);
+    if (!saveRes.ok) {
+      return new Response(
+        JSON.stringify({ ok: false, error: saveRes.error || 'No se pudo guardar el usuario en D1.' }),
+        { status: 500, headers: cabecerasJson }
+      );
+    }
 
     return new Response(
       JSON.stringify({
@@ -1959,7 +2062,13 @@ async function manejarPeticionApi(request, env) {
       });
     }
 
-    await d1EliminarCuentaCompleta(d1, targetId);
+    const delRes = await d1EliminarCuentaCompleta(d1, targetId);
+    if (!delRes.ok) {
+      return new Response(
+        JSON.stringify({ ok: false, error: delRes.error || 'No se pudo eliminar el usuario de D1.' }),
+        { status: 500, headers: cabecerasJson }
+      );
+    }
     return new Response(JSON.stringify({ ok: true, mensaje: `User ${targetId} eliminado definitivamente.` }), {
       headers: cabecerasJson,
     });
@@ -2120,6 +2229,15 @@ async function manejarPeticionApi(request, env) {
         headers: cabecerasJson,
       });
     }
+    if (targetAcc._inventarioCorrupto) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: `El inventario en D1 de "${targetAcc.nombre}" tiene JSON corrupto (${targetAcc._inventarioError || 'sintaxis inválida'}). Repáralo en D1 antes de regalar para no sobrescribir sus ítems.`,
+        }),
+        { status: 409, headers: cabecerasJson }
+      );
+    }
 
     if (!targetAcc.inventario || typeof targetAcc.inventario !== 'object') {
       targetAcc.inventario = { personajes: [] };
@@ -2148,7 +2266,13 @@ async function manejarPeticionApi(request, env) {
 
     // IMPORTANTE: SOLO se agrega al inventario de targetId. Nunca modifica el aspecto equipado ni al actor.
     targetAcc.inventario.personajes.push(nuevoPersonaje);
-    await d1GuardarCuentaCompleta(d1, targetAcc, true);
+    const saveRes = await d1GuardarCuentaCompleta(d1, targetAcc, true);
+    if (!saveRes.ok) {
+      return new Response(
+        JSON.stringify({ ok: false, error: saveRes.error || 'Error guardando el avatar en D1.' }),
+        { status: 500, headers: cabecerasJson }
+      );
+    }
 
     return new Response(
       JSON.stringify({
@@ -2185,6 +2309,15 @@ async function manejarPeticionApi(request, env) {
         headers: cabecerasJson,
       });
     }
+    if (targetAcc._inventarioCorrupto) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: `El inventario en D1 de "${targetAcc.nombre}" tiene JSON corrupto (${targetAcc._inventarioError || 'sintaxis inválida'}).`,
+        }),
+        { status: 409, headers: cabecerasJson }
+      );
+    }
 
     if (targetAcc.inventario && Array.isArray(targetAcc.inventario.personajes)) {
       targetAcc.inventario.personajes = targetAcc.inventario.personajes.filter((p) => p.id !== personajeId);
@@ -2194,7 +2327,13 @@ async function manejarPeticionApi(request, env) {
         targetAcc.avatarRopaColor = undefined;
         targetAcc.avatarAura = 'ninguna';
       }
-      await d1GuardarCuentaCompleta(d1, targetAcc, true);
+      const saveRes = await d1GuardarCuentaCompleta(d1, targetAcc, true);
+      if (!saveRes.ok) {
+        return new Response(
+          JSON.stringify({ ok: false, error: saveRes.error || 'No se pudo retirar el avatar en D1.' }),
+          { status: 500, headers: cabecerasJson }
+        );
+      }
     }
 
     return new Response(
@@ -2236,6 +2375,16 @@ async function manejarPeticionApi(request, env) {
         headers: cabecerasJson,
       });
     }
+    if (origenAcc._inventarioCorrupto || destinoAcc._inventarioCorrupto) {
+      const rota = origenAcc._inventarioCorrupto ? origenAcc : destinoAcc;
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: `El inventario en D1 de "${rota.nombre}" tiene JSON corrupto (${rota._inventarioError || 'sintaxis inválida'}). Repáralo antes de mover ítems.`,
+        }),
+        { status: 409, headers: cabecerasJson }
+      );
+    }
 
     const listaOrigen = Array.isArray(origenAcc.inventario?.personajes) ? origenAcc.inventario.personajes : [];
     const charMovido = listaOrigen.find((p) => p.id === personajeId);
@@ -2265,8 +2414,17 @@ async function manejarPeticionApi(request, env) {
       fechaAdquisicion: new Date().toISOString(),
     });
 
-    await d1GuardarCuentaCompleta(d1, origenAcc, false);
-    await d1GuardarCuentaCompleta(d1, destinoAcc, true);
+    const resOrigen = await d1GuardarCuentaCompleta(d1, origenAcc, false);
+    const resDestino = await d1GuardarCuentaCompleta(d1, destinoAcc, true);
+    if (!resOrigen.ok || !resDestino.ok) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          error: resOrigen.error || resDestino.error || 'Error guardando la transferencia en D1.',
+        }),
+        { status: 500, headers: cabecerasJson }
+      );
+    }
 
     return new Response(
       JSON.stringify({
@@ -2340,7 +2498,13 @@ async function manejarPeticionApi(request, env) {
         },
       };
 
-      await d1GuardarConfig(d1, 'premio_semanal_global', premio);
+      const cfgRes = await d1GuardarConfig(d1, 'premio_semanal_global', premio);
+      if (!cfgRes.ok) {
+        return new Response(JSON.stringify({ ok: false, error: cfgRes.error || 'Error guardando premio semanal en D1.' }), {
+          status: 500,
+          headers: cabecerasJson,
+        });
+      }
       await tocarUltimaActualizacion(d1);
 
       return new Response(
@@ -2379,7 +2543,13 @@ async function manejarPeticionApi(request, env) {
         participacion: typeof body.participacion === 'number' ? Math.max(0, body.participacion) : 5,
       };
 
-      await d1GuardarConfig(d1, 'config_semanal_puntos', cfg);
+      const cfgRes = await d1GuardarConfig(d1, 'config_semanal_puntos', cfg);
+      if (!cfgRes.ok) {
+        return new Response(JSON.stringify({ ok: false, error: cfgRes.error || 'Error guardando puntos semanales en D1.' }), {
+          status: 500,
+          headers: cabecerasJson,
+        });
+      }
       await tocarUltimaActualizacion(d1);
       return new Response(JSON.stringify({ ok: true, config: cfg, mensaje: 'Puntos semanales guardados.' }), {
         headers: cabecerasJson,
@@ -2414,7 +2584,13 @@ async function manejarPeticionApi(request, env) {
           limpio[k] = Math.max(0, Math.round(entrante[k]));
         }
       }
-      await d1GuardarConfig(d1, 'config_desbloqueos_personajes', limpio);
+      const cfgRes = await d1GuardarConfig(d1, 'config_desbloqueos_personajes', limpio);
+      if (!cfgRes.ok) {
+        return new Response(JSON.stringify({ ok: false, error: cfgRes.error || 'Error guardando desbloqueos en D1.' }), {
+          status: 500,
+          headers: cabecerasJson,
+        });
+      }
       await tocarUltimaActualizacion(d1);
 
       return new Response(
@@ -2473,10 +2649,16 @@ async function manejarPeticionApi(request, env) {
         mensajeEspecial: String(body.mensajeEspecial || '').trim().slice(0, 80),
       };
 
-      await d1GuardarSalaPersonalizada(d1, nuevaSala);
+      const spRes = await d1GuardarSalaPersonalizada(d1, nuevaSala);
+      if (!spRes.ok) {
+        return new Response(
+          JSON.stringify({ ok: false, error: spRes.error || 'No se pudo guardar la sala oficial en D1.' }),
+          { status: 500, headers: cabecerasJson }
+        );
+      }
 
       // Persistir inmediatamente en D1 `salas_online` para disponibilidad multi-aislamiento
-      await d1GuardarSalaOnline(d1, codigo, {
+      const onlineRes = await d1GuardarSalaOnline(d1, codigo, {
         codigo,
         nombre: nuevaSala.nombre,
         anfitrion: nuevaSala.creador,
@@ -2500,6 +2682,12 @@ async function manejarPeticionApi(request, env) {
         tamanoTablero: nuevaSala.tamanoTablero,
         esOficialStaff: true,
       });
+      if (!onlineRes.ok) {
+        return new Response(
+          JSON.stringify({ ok: false, error: onlineRes.error || 'No se pudo publicar la sala en D1.' }),
+          { status: 500, headers: cabecerasJson }
+        );
+      }
 
       const lista = await d1LeerSalasPersonalizadas(d1);
       await tocarUltimaActualizacion(d1);
@@ -2532,7 +2720,13 @@ async function manejarPeticionApi(request, env) {
       }
 
       if (codigo) {
-        await d1EliminarSalaPersonalizada(d1, codigo);
+        const delRes = await d1EliminarSalaPersonalizada(d1, codigo);
+        if (!delRes.ok) {
+          return new Response(
+            JSON.stringify({ ok: false, error: delRes.error || 'No se pudo eliminar la sala de D1.' }),
+            { status: 500, headers: cabecerasJson }
+          );
+        }
         await tocarUltimaActualizacion(d1);
       }
 
@@ -2576,7 +2770,13 @@ async function manejarPeticionApi(request, env) {
         motivo: String(body.motivo || 'Reinicio periódico del ranking').trim().slice(0, 140),
         fecha: new Date().toISOString(),
       };
-      await d1GuardarConfig(d1, 'solicitud_reset_ranking', solicitud);
+      const solRes = await d1GuardarConfig(d1, 'solicitud_reset_ranking', solicitud);
+      if (!solRes.ok) {
+        return new Response(JSON.stringify({ ok: false, error: solRes.error || 'Error guardando solicitud en D1.' }), {
+          status: 500,
+          headers: cabecerasJson,
+        });
+      }
       await tocarUltimaActualizacion(d1);
 
       return new Response(JSON.stringify({ ok: true, mensaje: 'Solicitud enviada al Dev.', solicitud }), {
@@ -3249,7 +3449,13 @@ async function manejarPeticionApi(request, env) {
           : {}),
       };
 
-      await d1GuardarSalaOnline(d1, codigo, salaCompleta);
+      const saveRes = await d1GuardarSalaOnline(d1, codigo, salaCompleta);
+      if (!saveRes.ok) {
+        return new Response(
+          JSON.stringify({ ok: false, error: saveRes.error || 'No se pudo guardar la sala en D1.' }),
+          { status: 500, headers: cabecerasJson }
+        );
+      }
       return new Response(JSON.stringify({ ok: true, dbBound, sala: salaCompleta, timestamp: ahora }), {
         headers: cabecerasJson,
       });
