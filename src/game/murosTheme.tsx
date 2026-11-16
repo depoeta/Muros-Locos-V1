@@ -231,7 +231,7 @@ const defaultCtx: MurosThemeContextValue = {
   estilo: 'clasico',
   setEstilo: () => {},
   ciclarEstilo: () => {},
-  t: TOKENS.pastel_oscuro,
+  t: TOKENS.clasico,
 };
 
 const MurosThemeContext = createContext<MurosThemeContextValue>(defaultCtx);
