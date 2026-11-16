@@ -7,10 +7,10 @@
 
 export type ModoCandado = 'logico' | 'mayor_menor';
 
-export type DigitosCandado = 4 | 5 | 6 | 8 | 10 | 14 | 16;
+export type DigitosCandado = 2 | 3 | 4 | 5 | 6 | 8 | 10;
 
 /** 0 representa intentos ilimitados (opción por defecto en local) */
-export type LimiteIntentosCandado = 0 | 10 | 12 | 15 | 20;
+export type LimiteIntentosCandado = 0 | 20 | 30 | 40 | 50;
 
 export type EstadoDigitoLogico = 'exacto' | 'desubicado' | 'ausente';
 
@@ -53,7 +53,7 @@ export type IntentoCandado = IntentoLogico | IntentoMayorMenor;
 export interface CandadoConfig {
   modo: ModoCandado;
   digitos: DigitosCandado;
-  /** 0 = ilimitado (default), >= 10 = límite de intentos */
+  /** 0 = ilimitado (default), >= 20 = límite de intentos */
   maxIntentos: LimiteIntentosCandado;
   /** Solo aplica en Mecánica A ('logico') */
   permitirRepetidos: boolean;

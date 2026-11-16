@@ -44,7 +44,29 @@ export const CandadoVault: React.FC<CandadoVaultProps> = ({
   animacionesReducidas,
 }) => {
   const temaMaterial =
-    digitos === 4
+    digitos === 2
+      ? {
+          titulo: 'Serie Perla',
+          cuerpoGrad: esMinimalista
+            ? 'from-rose-950/85 to-slate-900'
+            : 'from-[#FAE2E8] to-[#F2CDD7]',
+          borde: esMinimalista ? 'border-rose-200/25' : 'border-[#E2B4C0]',
+          textoTitulo: esMinimalista ? 'text-rose-100' : 'text-[#471622]',
+          arcoColor: esMinimalista ? '#EDB2C0' : '#D99BA9',
+          insignia: '2 Díg.',
+        }
+      : digitos === 3
+      ? {
+          titulo: 'Serie Íris',
+          cuerpoGrad: esMinimalista
+            ? 'from-slate-800/95 to-indigo-950/90'
+            : 'from-[#E4E7FD] to-[#D2D8FA]',
+          borde: esMinimalista ? 'border-indigo-200/25' : 'border-[#B8C1F0]',
+          textoTitulo: esMinimalista ? 'text-indigo-100' : 'text-[#1A2047]',
+          arcoColor: esMinimalista ? '#B3BDF5' : '#9AA6E6',
+          insignia: '3 Díg.',
+        }
+      : digitos === 4
       ? {
           titulo: 'Serie Arena',
           cuerpoGrad: esMinimalista
@@ -88,8 +110,7 @@ export const CandadoVault: React.FC<CandadoVaultProps> = ({
           arcoColor: esMinimalista ? '#9ED6DC' : '#85C4CA',
           insignia: '8 Díg.',
         }
-      : digitos === 10
-      ? {
+      : {
           titulo: 'Serie Salvia',
           cuerpoGrad: esMinimalista
             ? 'from-emerald-950/85 to-slate-900'
@@ -98,46 +119,16 @@ export const CandadoVault: React.FC<CandadoVaultProps> = ({
           textoTitulo: esMinimalista ? 'text-emerald-100' : 'text-[#0D3623]',
           arcoColor: esMinimalista ? '#9CD9BA' : '#83C7A3',
           insignia: '10 Díg.',
-        }
-      : digitos === 14
-      ? {
-          titulo: 'Serie Coralina',
-          cuerpoGrad: esMinimalista
-            ? 'from-rose-950/85 to-slate-900'
-            : 'from-[#FAE2E8] to-[#F2CDD7]',
-          borde: esMinimalista ? 'border-rose-200/25' : 'border-[#E2B4C0]',
-          textoTitulo: esMinimalista ? 'text-rose-100' : 'text-[#471622]',
-          arcoColor: esMinimalista ? '#EDB2C0' : '#D99BA9',
-          insignia: '14 Díg.',
-        }
-      : {
-          titulo: 'Serie Íris',
-          cuerpoGrad: esMinimalista
-            ? 'from-slate-800/95 to-indigo-950/90'
-            : 'from-[#E4E7FD] to-[#D2D8FA]',
-          borde: esMinimalista ? 'border-indigo-200/25' : 'border-[#B8C1F0]',
-          textoTitulo: esMinimalista ? 'text-indigo-100' : 'text-[#1A2047]',
-          arcoColor: esMinimalista ? '#B3BDF5' : '#9AA6E6',
-          insignia: '16 Díg.',
         };
 
   const abierta = fase === 'ganada';
   const bloqueada = fase === 'perdida';
 
-  const gridCols =
-    digitos <= 6
-      ? digitos
-      : digitos === 8
-      ? 4
-      : digitos === 10
-      ? 5
-      : digitos === 14
-      ? 7
-      : 8;
+  const gridCols = digitos <= 6 ? digitos : digitos === 8 ? 4 : 5;
 
   const slotHeightClass =
     digitos >= 8 ? 'h-9 sm:h-10 text-base sm:text-lg' : 'h-11 sm:h-12 text-xl sm:text-2xl';
-  const gridGapClass = digitos >= 14 ? 'gap-1' : 'gap-1.5 sm:gap-2';
+  const gridGapClass = 'gap-1.5 sm:gap-2';
 
   return (
     <div

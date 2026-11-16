@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFF5E6" />
+      <stop offset="52%" stop-color="#E7F6FF" />
+      <stop offset="100%" stop-color="#D7F7E8" />
+    </linearGradient>
+    <radialGradient id="pawnGrad" cx="38%" cy="32%" r="68%">
+      <stop offset="0%" stop-color="#A5D8FF" />
+      <stop offset="65%" stop-color="#60B6F7" />
+      <stop offset="100%" stop-color="#3B93DF" />
+    </radialGradient>
+    <linearGradient id="crownGrad" x1="44" y1="18" x2="84" y2="44" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFE484" />
+      <stop offset="100%" stop-color="#F2B84B" />
+    </linearGradient>
+    <linearGradient id="wallCoral" x1="18" y1="68" x2="82" y2="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFAE98" />
+      <stop offset="100%" stop-color="#F08A73" />
+    </linearGradient>
+    <linearGradient id="wallOak" x1="58" y1="68" x2="112" y2="108" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#E7B882" />
+      <stop offset="100%" stop-color="#C99259" />
+    </linearGradient>
+  </defs>
+
+  <rect width="128" height="128" rx="30" fill="url(#bgGrad)" />
+
+  <!-- Decorative pastel tiles & sparkles -->
+  <rect x="20" y="34" width="14" height="14" rx="4" transform="rotate(-14 27 41)" fill="#C0AAF7" />
+  <rect x="94" y="34" width="14" height="14" rx="4" transform="rotate(14 101 41)" fill="#96E4BF" />
+  <path d="M27 20L29 24.5L33.5 26.5L29 28.5L27 33L25 28.5L20.5 26.5L25 24.5Z" fill="#C9B7F8" />
+  <path d="M101 55L102.5 58.5L106 60L102.5 61.5L101 65L99.5 61.5L96 60L99.5 58.5Z" fill="#FFFFFF" opacity="0.9" />
+
+  <!-- Back wooden wall -->
+  <rect x="64" y="68" width="44" height="15" rx="6" fill="url(#wallOak)" />
+
+  <!-- Sky-blue pawn character -->
+  <circle cx="64" cy="66" r="24" fill="url(#pawnGrad)" />
+  <ellipse cx="55" cy="54" rx="6.5" ry="4" transform="rotate(-24 55 54)" fill="#FFFFFF" opacity="0.55" />
+
+  <!-- Crown -->
+  <path d="M47 44L44 26L56 34L64 21L72 34L84 26L81 44Z" fill="url(#crownGrad)" stroke="#D99B30" stroke-width="1.8" stroke-linejoin="round" />
+  <circle cx="44" cy="25" r="2.6" fill="#FFE898" />
+  <circle cx="64" cy="20" r="3" fill="#FFE898" />
+  <circle cx="84" cy="25" r="2.6" fill="#FFE898" />
+
+  <!-- Eyes & smile -->
+  <circle cx="55.5" cy="67" r="4.2" fill="#1C2333" />
+  <circle cx="72.5" cy="67" r="4.2" fill="#1C2333" />
+  <circle cx="56.8" cy="65.6" r="1.5" fill="#FFFFFF" />
+  <circle cx="73.8" cy="65.6" r="1.5" fill="#FFFFFF" />
+  <path d="M59.5 74C61.5 76.5 66.5 76.5 68.5 74" stroke="#1C2333" stroke-width="2.4" stroke-linecap="round" />
+
+  <!-- Front coral maze wall & hands -->
+  <rect x="20" y="81" width="60" height="17" rx="7" fill="url(#wallCoral)" />
+  <rect x="26" y="96" width="52" height="13" rx="6" fill="url(#wallOak)" />
+  <circle cx="46" cy="79" r="5" fill="#7AC3FA" />
+  <circle cx="76" cy="80" r="5" fill="#7AC3FA" />
+</svg>

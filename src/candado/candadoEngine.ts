@@ -12,26 +12,37 @@ import {
   EvaluacionDigitoLogico,
   IntentoLogico,
   IntentoMayorMenor,
+  LimiteIntentosCandado,
   ModoCandado,
   NivelProximidad,
 } from './types';
 
-export const DIGITOS_LOGICO: DigitosCandado[] = [4, 5, 6, 8, 10, 14, 16];
-export const DIGITOS_MAYOR_MENOR: DigitosCandado[] = [4, 5, 6, 8, 10];
+export const DIGITOS_LOGICO: DigitosCandado[] = [2, 3, 4, 5, 6, 8, 10];
+export const DIGITOS_MAYOR_MENOR: DigitosCandado[] = [2, 3, 4, 5, 6, 8, 10];
+const OPCIONES_INTENTOS_VALIDAS: LimiteIntentosCandado[] = [0, 20, 30, 40, 50];
 
 export function normalizarConfigCandado(config: CandadoConfig): CandadoConfig {
-  let digitos = config.digitos;
-  if (config.modo === 'mayor_menor' && digitos > 10) {
+  const rawDigitos = Number(config.digitos);
+  let digitos: DigitosCandado = 4;
+  if (DIGITOS_LOGICO.includes(rawDigitos as DigitosCandado)) {
+    digitos = rawDigitos as DigitosCandado;
+  } else if (rawDigitos > 10) {
     digitos = 10;
   }
-  // Con 14 o 16 dígitos es matemáticamente obligatorio permitir repetidos (solo hay 10 cifras 0–9)
-  const permitirRepetidos =
-    config.modo === 'logico' && digitos > 10 ? true : Boolean(config.permitirRepetidos);
+
+  const rawIntentos = Number(config.maxIntentos);
+  let maxIntentos: LimiteIntentosCandado = 0;
+  if (OPCIONES_INTENTOS_VALIDAS.includes(rawIntentos as LimiteIntentosCandado)) {
+    maxIntentos = rawIntentos as LimiteIntentosCandado;
+  } else if (rawIntentos > 0 && rawIntentos < 20) {
+    maxIntentos = 20;
+  }
 
   return {
     ...config,
     digitos,
-    permitirRepetidos,
+    maxIntentos,
+    permitirRepetidos: Boolean(config.permitirRepetidos),
   };
 }
 

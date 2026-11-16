@@ -15,6 +15,7 @@ coverage/
 
 # Archivos internos del entorno (no necesarios en GitHub / Cloudflare)
 .aistudio/
+public/assets/aistudio/
 metadata.json
 bun.lock
 

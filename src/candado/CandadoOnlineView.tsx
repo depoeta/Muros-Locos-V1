@@ -51,13 +51,13 @@ interface CandadoOnlineViewProps {
 }
 
 const ETIQUETAS_DIGITOS: Record<DigitosCandado, { metal: string; dotColor: string }> = {
+  2: { metal: 'Perla', dotColor: '#EEB4C2' },
+  3: { metal: 'Íris', dotColor: '#B2BDF5' },
   4: { metal: 'Arena', dotColor: '#E6C29F' },
   5: { metal: 'Bruma', dotColor: '#A6C8F0' },
   6: { metal: 'Lavanda', dotColor: '#C2B3F2' },
   8: { metal: 'Glacial', dotColor: '#9ED6DC' },
   10: { metal: 'Salvia', dotColor: '#99D8B8' },
-  14: { metal: 'Coral', dotColor: '#EEB4C2' },
-  16: { metal: 'Íris', dotColor: '#B2BDF5' },
 };
 
 const TIEMPOS_TURNO: { valor: TiempoTurnoCandado; texto: string }[] = [
@@ -1471,7 +1471,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
               </div>
             </div>
 
-            {configSala.modo === 'logico' && configSala.digitos <= 10 && (
+            {configSala.modo === 'logico' && (
               <button
                 type="button"
                 onClick={() =>
@@ -1586,7 +1586,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
 
             {/* Filtro por dígitos */}
             <div className="flex flex-wrap gap-1 mb-2">
-              {([0, 4, 5, 6, 8, 10, 14, 16] as const).map((d) => (
+              {([0, 2, 3, 4, 5, 6, 8, 10] as const).map((d) => (
                 <button
                   key={d}
                   type="button"
@@ -1738,7 +1738,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
           >
             <span>
               {configSala.modo === 'logico' ? 'Candado Lógico' : 'Mayor / Menor'} · Serie{' '}
-              {infoMetal.metal} ({configSala.digitos}D)
+              {infoMetal?.metal || 'Arena'} ({configSala.digitos}D)
             </span>
             <span className={esMinimalista ? 'text-slate-300' : 'text-[#3A3F54]'}>
               {configSala.tiempoTurnoSeg > 0 ? `${configSala.tiempoTurnoSeg}s/turno` : 'Sin límite'}

@@ -86,8 +86,14 @@ function cargarSesionCandado(): PersistedCandadoSession | null {
     );
     let pantallaValidada: 'menu' | 'config' | 'juego' =
       parsed.pantalla === 'config' || parsed.pantalla === 'juego' ? parsed.pantalla : 'menu';
-    const estadoValidado: EstadoCandado | null =
+    const estadoCandidato: EstadoCandado | null =
       parsed.estado && typeof parsed.estado.secreto === 'string' ? parsed.estado : null;
+    const estadoValidado: EstadoCandado | null =
+      estadoCandidato &&
+      DIGITOS_LOGICO.includes(estadoCandidato.config?.digitos) &&
+      estadoCandidato.secreto.length === estadoCandidato.config.digitos
+        ? estadoCandidato
+        : null;
     if (pantallaValidada === 'juego' && !estadoValidado) {
       pantallaValidada = 'config';
     }
@@ -126,22 +132,60 @@ export function limpiarSesionCandadoPersistida(): void {
   }
 }
 
-const ETIQUETAS_DIGITOS: Record<DigitosCandado, { metal: string; dotColor: string }> = {
-  4: { metal: 'Arena', dotColor: '#E6C29F' },
-  5: { metal: 'Bruma', dotColor: '#A6C8F0' },
-  6: { metal: 'Lavanda', dotColor: '#C2B3F2' },
-  8: { metal: 'Glacial', dotColor: '#9ED6DC' },
-  10: { metal: 'Salvia', dotColor: '#99D8B8' },
-  14: { metal: 'Coral', dotColor: '#EEB4C2' },
-  16: { metal: 'Íris', dotColor: '#B2BDF5' },
+const ETIQUETAS_DIGITOS: Record<
+  DigitosCandado,
+  { metal: string; dotColor: string; activeLight: string; activeDark: string }
+> = {
+  2: {
+    metal: 'Perla',
+    dotColor: '#EEB4C2',
+    activeLight: 'bg-[#FAE2E8] text-[#471622] border border-[#E2B4C0] shadow-xs',
+    activeDark: 'bg-rose-400/20 text-rose-100 border border-rose-300/40',
+  },
+  3: {
+    metal: 'Íris',
+    dotColor: '#B2BDF5',
+    activeLight: 'bg-[#E4E7FD] text-[#1A2047] border border-[#B8C1F0] shadow-xs',
+    activeDark: 'bg-indigo-400/25 text-indigo-100 border border-indigo-300/45',
+  },
+  4: {
+    metal: 'Arena',
+    dotColor: '#E6C29F',
+    activeLight: 'bg-[#F7E8D8] text-[#3B2613] border border-[#DFC2A4] shadow-xs',
+    activeDark: 'bg-amber-300/20 text-amber-100 border border-amber-200/40',
+  },
+  5: {
+    metal: 'Bruma',
+    dotColor: '#A6C8F0',
+    activeLight: 'bg-[#DFECFA] text-[#162B45] border border-[#B2CCE8] shadow-xs',
+    activeDark: 'bg-sky-400/20 text-sky-100 border border-sky-300/40',
+  },
+  6: {
+    metal: 'Lavanda',
+    dotColor: '#C2B3F2',
+    activeLight: 'bg-[#EAE2FC] text-[#251A47] border border-[#C4B5EE] shadow-xs',
+    activeDark: 'bg-violet-400/25 text-violet-100 border border-violet-300/45',
+  },
+  8: {
+    metal: 'Glacial',
+    dotColor: '#9ED6DC',
+    activeLight: 'bg-[#D6F0F2] text-[#0E3238] border border-[#A6D4D9] shadow-xs',
+    activeDark: 'bg-cyan-400/20 text-cyan-100 border border-cyan-300/40',
+  },
+  10: {
+    metal: 'Salvia',
+    dotColor: '#99D8B8',
+    activeLight: 'bg-[#D6F2E3] text-[#0D3623] border border-[#A3D6BC] shadow-xs',
+    activeDark: 'bg-emerald-400/20 text-emerald-100 border border-emerald-300/40',
+  },
 };
 
 const OPCIONES_INTENTOS: { valor: LimiteIntentosCandado; etiqueta: string; desc: string }[] = [
   { valor: 0, etiqueta: '∞', desc: 'Libre' },
-  { valor: 10, etiqueta: '10', desc: 'Reto' },
-  { valor: 12, etiqueta: '12', desc: 'Normal' },
-  { valor: 15, etiqueta: '15', desc: 'Cómodo' },
-  { valor: 20, etiqueta: '20', desc: 'Amplio' },
+  { valor: 20, etiqueta: '20', desc: 'Reto' },
+  { valor: 30, etiqueta: '30', desc: 'Normal' },
+  { valor: 40, etiqueta: '40', desc: 'Cómodo' },
+  { valor: 50, etiqueta: '50', desc: 'Amplio' },
 ];
 
 const INFO_PROXIMIDAD: Record<
@@ -317,13 +361,12 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
   const iniciarRetoAleatorio = useCallback(() => {
     candadoAudio.playDigitInput();
     const modoAzar: ModoCandado = Math.random() < 0.65 ? 'logico' : 'mayor_menor';
-    const opcionesDigitos: DigitosCandado[] =
-      modoAzar === 'logico' ? [4, 5, 6, 8] : [4, 5, 6];
+    const opcionesDigitos: DigitosCandado[] = [3, 4, 5, 6, 8];
     const digitosAzar = opcionesDigitos[Math.floor(Math.random() * opcionesDigitos.length)];
     iniciarNuevaPartida({
       modo: modoAzar,
       digitos: digitosAzar,
-      maxIntentos: 12,
+      maxIntentos: digitosAzar >= 6 ? 30 : 20,
       permitirRepetidos: modoAzar === 'logico' && Math.random() < 0.35,
     });
   }, [iniciarNuevaPartida]);
@@ -1076,15 +1119,18 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
 
             <button
               type="button"
-              onClick={abrirModalModo}
+              onClick={() => {
+                candadoAudio.playDialTick();
+                setMostrarReglas(true);
+              }}
               className={
                 esMinimalista
                   ? 'py-1.5 px-3 rounded-xl bg-violet-300/15 border border-violet-300/30 text-xs font-semibold text-violet-200 hover:bg-violet-300/25 cursor-pointer shrink-0 whitespace-nowrap'
-                  : 'py-1.5 px-3 rounded-xl bg-[#EAE4FC] border border-[#CCC1F2] text-xs font-semibold text-[#2E2054] hover:bg-[#DFD6FA] cursor-pointer shrink-0 whitespace-nowrap'
+                  : 'py-1.5 px-3 rounded-xl bg-[#EAE4FC] border border-[#CCC1F2] shadow-2xs text-xs font-semibold text-[#2E2054] hover:bg-[#DFD6FA] cursor-pointer shrink-0 whitespace-nowrap'
               }
-              title="Elegir mecánica y dígitos"
+              title="Cómo jugar Candado"
             >
-              Dígitos
+              Reglas
             </button>
           </div>
 
@@ -1110,8 +1156,20 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               >
                 {(
                   [
-                    { id: 'logico' as ModoCandado, titulo: 'Candado Lógico' },
-                    { id: 'mayor_menor' as ModoCandado, titulo: 'Mayor / Menor' },
+                    {
+                      id: 'logico' as ModoCandado,
+                      titulo: 'Candado Lógico',
+                      desc: '✓ Exacto · ↔ Lugar · ✕ Ausente',
+                      activeLight: 'bg-[#DDF5E8] text-[#0F3D27] border border-[#8AD2AE] shadow-xs',
+                      activeDark: 'bg-emerald-400/20 text-emerald-100 border border-emerald-300/45',
+                    },
+                    {
+                      id: 'mayor_menor' as ModoCandado,
+                      titulo: 'Mayor / Menor',
+                      desc: '↑ Alto / ↓ Bajo y cercanía',
+                      activeLight: 'bg-[#DCEBFF] text-[#143254] border border-[#9EC2F0] shadow-xs',
+                      activeDark: 'bg-sky-400/20 text-sky-100 border border-sky-300/45',
+                    },
                   ]
                 ).map((m) => {
                   const activo = config.modo === m.id;
@@ -1123,17 +1181,22 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                         candadoAudio.playDialTick();
                         setConfig((prev) => normalizarConfigCandado({ ...prev, modo: m.id }));
                       }}
-                      className={`flex-1 py-2 rounded-lg font-semibold text-xs sm:text-sm transition-all cursor-pointer whitespace-nowrap ${
+                      className={`flex-1 py-2 px-2 rounded-lg transition-all cursor-pointer flex flex-col items-center leading-tight ${
                         activo
                           ? esMinimalista
-                            ? 'bg-emerald-400/20 text-emerald-100 border border-emerald-400/35'
-                            : 'bg-[#FFFDF6] text-[#171923] border border-[#D4C9AE] shadow-xs'
+                            ? m.activeDark
+                            : m.activeLight
                           : esMinimalista
-                          ? 'text-slate-400 hover:text-slate-200'
-                          : 'text-[#3E4359] hover:text-[#171923]'
+                          ? 'text-slate-400 hover:text-slate-200 border border-transparent'
+                          : 'text-[#3E4359] hover:text-[#171923] border border-transparent'
                       }`}
                     >
-                      {m.titulo}
+                      <span className="font-semibold text-xs sm:text-sm whitespace-nowrap">
+                        {m.titulo}
+                      </span>
+                      <span className="text-[10px] opacity-85 mt-0.5 whitespace-nowrap">
+                        {m.desc}
+                      </span>
                     </button>
                   );
                 })}
@@ -1152,17 +1215,19 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                 >
                   Longitud de la Clave
                 </span>
-                <button
-                  type="button"
-                  onClick={abrirModalModo}
-                  className={
+                <span
+                  className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[11px] font-semibold ${
                     esMinimalista
-                      ? 'text-[11px] font-semibold text-indigo-300 hover:underline cursor-pointer'
-                      : 'text-[11px] font-semibold text-[#2B3E78] hover:underline cursor-pointer'
-                  }
+                      ? ETIQUETAS_DIGITOS[config.digitos]?.activeDark || 'text-indigo-200'
+                      : ETIQUETAS_DIGITOS[config.digitos]?.activeLight || 'text-[#2B3E78]'
+                  }`}
                 >
-                  Serie {ETIQUETAS_DIGITOS[config.digitos].metal} · Detalles
-                </button>
+                  <span
+                    className="inline-block w-2 h-2 rounded-full"
+                    style={{ backgroundColor: ETIQUETAS_DIGITOS[config.digitos]?.dotColor || '#E6C29F' }}
+                  />
+                  <span>Serie {ETIQUETAS_DIGITOS[config.digitos]?.metal || 'Arena'}</span>
+                </span>
               </div>
               <div
                 className={
@@ -1185,15 +1250,21 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                       className={`py-1.5 px-1 rounded-lg font-semibold text-xs transition-all cursor-pointer flex flex-col items-center leading-tight ${
                         activo
                           ? esMinimalista
-                            ? 'bg-indigo-400/25 text-white border border-indigo-300/40'
-                            : 'bg-[#FFFDF6] text-[#171923] border border-[#D4C9AE] shadow-xs'
+                            ? info.activeDark
+                            : info.activeLight
                           : esMinimalista
-                          ? 'text-slate-400 hover:text-slate-200'
-                          : 'text-[#3E4359] hover:text-[#171923]'
+                          ? 'text-slate-400 hover:text-slate-200 border border-transparent'
+                          : 'text-[#3E4359] hover:text-[#171923] hover:bg-[#FFFDF6]/60 border border-transparent'
                       }`}
                     >
                       <span className="tabular-nums font-bold">{num}D</span>
-                      <span className="text-[9px] opacity-85">{info.metal}</span>
+                      <span className="text-[9px] opacity-90 flex items-center gap-1 mt-0.5">
+                        <span
+                          className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+                          style={{ backgroundColor: info.dotColor }}
+                        />
+                        <span>{info.metal}</span>
+                      </span>
                     </button>
                   );
                 })}
@@ -1204,7 +1275,6 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
             {config.modo === 'logico' && (
               <div
                 onClick={() => {
-                  if (config.digitos > 10) return;
                   candadoAudio.playDialTick();
                   setConfig((prev) =>
                     normalizarConfigCandado({
@@ -1213,41 +1283,52 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                     })
                   );
                 }}
-                className={`p-3 rounded-xl flex items-center justify-between select-none transition-colors ${
-                  config.digitos > 10 ? 'opacity-80 cursor-not-allowed' : 'cursor-pointer'
-                } ${
+                className={`p-3 rounded-xl flex items-center justify-between select-none transition-colors cursor-pointer ${
                   esMinimalista
-                    ? 'bg-slate-900/80 border border-white/10'
-                    : 'bg-[#FFFDF6]/95 border border-[#DFD6BF] shadow-2xs'
+                    ? 'bg-slate-900/80 border border-white/10 hover:bg-slate-900'
+                    : config.permitirRepetidos
+                    ? 'bg-[#FFF9EB] border border-[#E5CFA0] shadow-2xs'
+                    : 'bg-[#F4FBF7] border border-[#BFE6CE] shadow-2xs'
                 }`}
               >
                 <div className="text-left pr-3">
-                  <span className="text-xs font-semibold block">
-                    {config.digitos > 10
-                      ? 'Dígitos repetidos obligatorios (14–16 dígitos)'
-                      : config.permitirRepetidos
-                      ? 'Dígitos repetidos permitidos'
-                      : 'Dígitos únicos sin repetir'}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold">
+                      {config.permitirRepetidos
+                        ? 'Dígitos repetidos permitidos'
+                        : 'Dígitos únicos sin repetir'}
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold shrink-0 ${
+                        config.permitirRepetidos
+                          ? esMinimalista
+                            ? 'bg-amber-300/20 text-amber-200'
+                            : 'bg-[#FCE8B8] text-[#4A3309]'
+                          : esMinimalista
+                          ? 'bg-emerald-400/20 text-emerald-200'
+                          : 'bg-[#C4EED7] text-[#0F3D27]'
+                      }`}
+                    >
+                      {config.permitirRepetidos ? 'Repetidos ON' : 'Únicos'}
+                    </span>
+                  </div>
                   <span
-                    className={`text-[11px] ${
+                    className={`text-[11px] block mt-0.5 ${
                       esMinimalista ? 'opacity-70' : 'text-[#3E4359]'
                     }`}
                   >
-                    {config.digitos > 10
-                      ? 'Con más de 10 posiciones la clave repite números automáticamente.'
-                      : 'Actívalo para aumentar la dificultad combinatoria.'}
+                    Actívalo para aumentar la dificultad combinatoria.
                   </span>
                 </div>
                 <div
                   className={`w-10 h-5.5 rounded-full p-0.5 border transition-colors shrink-0 ${
                     config.permitirRepetidos
                       ? esMinimalista
-                        ? 'bg-emerald-400/70 border-emerald-300/40'
-                        : 'bg-[#97DAB6] border-[#78C29B]'
+                        ? 'bg-amber-300/75 border-amber-200/40'
+                        : 'bg-[#F3C96B] border-[#D9AA46]'
                       : esMinimalista
-                      ? 'bg-slate-700 border-white/15'
-                      : 'bg-[#E2D9C2] border-[#C9BEA2]'
+                      ? 'bg-emerald-400/70 border-emerald-300/40'
+                      : 'bg-[#97DAB6] border-[#78C29B]'
                   }`}
                 >
                   <div
@@ -1290,11 +1371,11 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                       className={`py-1.5 px-1 rounded-lg flex flex-col items-center justify-center transition-all cursor-pointer leading-tight ${
                         activo
                           ? esMinimalista
-                            ? 'bg-sky-400/20 text-white border border-sky-300/40'
-                            : 'bg-[#FFFDF6] text-[#171923] border border-[#D4C9AE] shadow-xs'
+                            ? 'bg-amber-300/20 text-amber-100 border border-amber-200/40'
+                            : 'bg-[#FDF0CC] text-[#4A3309] border border-[#E5C97B] shadow-xs'
                           : esMinimalista
-                          ? 'text-slate-400 hover:text-slate-200'
-                          : 'text-[#3E4359] hover:text-[#171923]'
+                          ? 'text-slate-400 hover:text-slate-200 border border-transparent'
+                          : 'text-[#3E4359] hover:text-[#171923] hover:bg-[#FFFDF6]/60 border border-transparent'
                       }`}
                     >
                       <span className="font-bold text-xs sm:text-sm tabular-nums">
@@ -1751,12 +1832,12 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                       {
                         id: 'logico' as ModoCandado,
                         titulo: 'Candado Lógico',
-                        sub: '4 a 16 dígitos · ✓ Exacto · ↔ Lugar · ✕ Ausente',
+                        sub: '2 a 10 dígitos · ✓ Exacto · ↔ Lugar · ✕ Ausente',
                       },
                       {
                         id: 'mayor_menor' as ModoCandado,
                         titulo: 'Mayor / Menor',
-                        sub: '4 a 10 dígitos · ↑ Alto / ↓ Bajo y cercanía',
+                        sub: '2 a 10 dígitos · ↑ Alto / ↓ Bajo y cercanía',
                       },
                     ]
                   ).map((m) => {
@@ -1817,9 +1898,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                       esMinimalista ? 'opacity-65' : 'text-[#3E4359] font-medium'
                     }`}
                   >
-                    {draftConfig.modo === 'logico'
-                      ? '4 a 16 dígitos'
-                      : 'Hasta 10 dígitos'}
+                    2 a 10 dígitos
                   </span>
                 </div>
 
@@ -1881,7 +1960,6 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                   </label>
                   <button
                     type="button"
-                    disabled={draftConfig.digitos > 10}
                     onClick={() => {
                       candadoAudio.playDialTick();
                       setDraftConfig((prev) =>
@@ -1891,18 +1969,14 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                         })
                       );
                     }}
-                    className={`w-full px-3 py-2.5 rounded-xl flex items-center justify-between text-xs font-semibold transition-all border ${
-                      draftConfig.digitos > 10 ? 'opacity-75 cursor-not-allowed' : 'cursor-pointer'
-                    } ${
+                    className={`w-full px-3 py-2.5 rounded-xl flex items-center justify-between text-xs font-semibold transition-all border cursor-pointer ${
                       esMinimalista
                         ? 'bg-slate-800/80 border-white/10'
                         : 'bg-[#FAF4E4] border-[#DFD6BF] text-[#171923]'
                     }`}
                   >
                     <span className="text-left">
-                      {draftConfig.digitos > 10
-                        ? 'Repetidos obligatorios (14–16 dígitos)'
-                        : draftConfig.permitirRepetidos
+                      {draftConfig.permitirRepetidos
                         ? 'Dígitos repetidos permitidos'
                         : 'Dígitos únicos sin repetir'}
                     </span>
@@ -2046,7 +2120,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                 <strong className="block text-sm font-bold mb-1">
                   Mecánica A — Candado Lógico
                 </strong>
-                Adivina la combinación de 4 a 16 dígitos. Cada casilla indica:
+                Adivina la combinación de 2 a 10 dígitos. Cada casilla indica:
                 <ul className="mt-1 space-y-0.5 list-disc list-inside opacity-95">
                   <li>
                     <strong>✓ Verde pastel:</strong> Dígito correcto en su posición exacta (queda
@@ -2071,7 +2145,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                 <strong className="block text-sm font-bold mb-1">
                   Mecánica B — Mayor / Menor
                 </strong>
-                El candado oculta un número de 4 a 10 dígitos (incluye ceros al inicio). Recibes
+                El candado oculta un número de 2 a 10 dígitos (incluye ceros al inicio). Recibes
                 dirección (<strong>↑ Más alto</strong> / <strong>↓ Más bajo</strong>), rango
                 reducido y cercanía.
               </div>

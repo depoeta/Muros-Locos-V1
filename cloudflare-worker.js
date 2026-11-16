@@ -1020,8 +1020,8 @@ function normalizarTamanoTablero(raw) {
   return 9;
 }
 
-const DIGITOS_CANDADO_LOGICO = [4, 5, 6, 8, 10, 14, 16];
-const DIGITOS_CANDADO_MAYOR_MENOR = [4, 5, 6, 8, 10];
+const DIGITOS_CANDADO_LOGICO = [2, 3, 4, 5, 6, 8, 10];
+const DIGITOS_CANDADO_MAYOR_MENOR = [2, 3, 4, 5, 6, 8, 10];
 
 function normalizarJuegoSala(raw) {
   return String(raw || '').trim().toLowerCase() === 'candado' ? 'candado' : 'muros';
@@ -1039,7 +1039,7 @@ function normalizarDigitosCandado(raw, modo) {
 
 function normalizarMaxIntentosCandado(raw) {
   const num = Number(raw);
-  return [0, 10, 12, 15, 20].includes(num) ? num : 0;
+  return [0, 20, 30, 40, 50].includes(num) ? num : 0;
 }
 
 function normalizarTiempoTurnoCandado(raw) {
@@ -3471,10 +3471,7 @@ async function manejarPeticionApi(request, env) {
 
       const modoCandado = normalizarModoCandado(room.modoCandado ?? existente?.modoCandado);
       const digitosCandado = normalizarDigitosCandado(room.digitosCandado ?? existente?.digitosCandado, modoCandado);
-      const permitirRepetidosCandado =
-        modoCandado === 'logico' && digitosCandado > 10
-          ? true
-          : Boolean(room.permitirRepetidos ?? existente?.permitirRepetidos ?? false);
+      const permitirRepetidosCandado = Boolean(room.permitirRepetidos ?? existente?.permitirRepetidos ?? false);
 
       const salaCompleta = {
         codigo,
