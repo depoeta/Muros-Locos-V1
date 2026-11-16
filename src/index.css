@@ -96,3 +96,39 @@
     transform: translate(-50%, 0);
   }
 }
+
+@keyframes fireSwayA {
+  0%, 100% {
+    transform: translateY(0px) scaleY(1) scaleX(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: translateY(-2.5px) scaleY(1.08) scaleX(0.96);
+    opacity: 1;
+  }
+}
+
+@keyframes fireSwayB {
+  0%, 100% {
+    transform: translateY(-1.5px) scaleY(1.05) scaleX(0.97);
+    opacity: 0.92;
+  }
+  50% {
+    transform: translateY(1px) scaleY(0.95) scaleX(1.04);
+    opacity: 0.78;
+  }
+}
+
+@keyframes fireEmberRise {
+  0% {
+    transform: translateY(4px) scale(0.65);
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.95;
+  }
+  100% {
+    transform: translateY(-10px) scale(0.35);
+    opacity: 0;
+  }
+}

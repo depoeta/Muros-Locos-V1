@@ -3418,12 +3418,21 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
   const ropasDisponibles: { id: AvatarTipoDeRopa; label: string; icon: string }[] = [
     { id: 'ninguna', label: 'Sin Ropa', icon: '👕' },
-    { id: 'capa', label: 'Capa Real', icon: '🧣' },
+    { id: 'capa', label: 'Capa Real', icon: '🦸' },
     { id: 'armadura', label: 'Armadura', icon: '🛡️' },
     { id: 'tunica', label: 'Túnica', icon: '🥋' },
     { id: 'tuxedo', label: 'Tuxedo', icon: '🤵' },
-    { id: 'cinturon', label: 'Cinturón Oro', icon: '🥋' },
+    { id: 'cinturon', label: 'Cinturón Oro', icon: '🏅' },
     { id: 'alas', label: 'Alas Cósmicas', icon: '🪽' },
+    { id: 'alas_dragon', label: 'Alas Dragón', icon: '🐉' },
+    { id: 'bufanda', label: 'Bufanda', icon: '🧣' },
+    { id: 'sudadera', label: 'Sudadera', icon: '🧥' },
+    { id: 'overol', label: 'Overol', icon: '👖' },
+    { id: 'kimono', label: 'Kimono', icon: '👘' },
+    { id: 'pirata', label: 'Pirata', icon: '🏴‍☠️' },
+    { id: 'cyber', label: 'Traje Cíber', icon: '💠' },
+    { id: 'astronauta', label: 'Astronauta', icon: '🚀' },
+    { id: 'explorador', label: 'Explorador', icon: '🧭' },
   ];
 
   const aurasDisponibles: { id: AvatarTipoDeAura; label: string; icon: string }[] = [

@@ -67,6 +67,8 @@ export const PlayerCards: React.FC<PlayerCardsProps> = ({
                   aura={jugador.aura}
                   size={30}
                   showShadow={false}
+                  inGame={true}
+                  isActive={isActive}
                 />
                 {isWinner && (
                   <span

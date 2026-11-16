@@ -33,13 +33,20 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
   const isNinja = hat === 'ninja';
   const isDragon = hat === 'dragon';
 
-  // Si lleva ropa frontal (tuxedo, armadura, túnica, cinturón), desplazamos la cara
-  // ligeramente hacia arriba para abrir un torso proporcionado sin choques con la boca/mejillas.
+  // Si lleva vestimenta frontal, elevamos ojos y boca para mantener buenas proporciones
   const usaRopaFrontal =
     ropa === 'armadura' ||
     ropa === 'tuxedo' ||
     ropa === 'tunica' ||
-    ropa === 'cinturon';
+    ropa === 'cinturon' ||
+    ropa === 'bufanda' ||
+    ropa === 'sudadera' ||
+    ropa === 'overol' ||
+    ropa === 'kimono' ||
+    ropa === 'pirata' ||
+    ropa === 'cyber' ||
+    ropa === 'astronauta' ||
+    ropa === 'explorador';
   const faceY = usaRopaFrontal ? -6.5 : 0;
 
   // Si está en partida (inGame), el aura solo resplandece cuando le toca jugar al jugador
@@ -52,12 +59,22 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
   const colTuxedo = ropaColor || '#212529';
   const colCinturon = ropaColor || '#fab005';
   const colAlas = ropaColor || '#e7f5ff';
+  const colAlasDragon = ropaColor || '#c92a2a';
+  const colBufanda = ropaColor || '#e03131';
+  const colSudadera = ropaColor || '#339af0';
+  const colOverol = ropaColor || '#1971c2';
+  const colKimono = ropaColor || '#ae3ec9';
+  const colPirata = ropaColor || '#c92a2a';
+  const colCyber = ropaColor || '#1098ad';
+  const colAstronauta = ropaColor || '#339af0';
+  const colExplorador = ropaColor || '#d97706';
 
   const bodyClipId = `bodyClip-${uid}`;
   const headWrapClipId = `headWrapClip-${uid}`;
   const dragonScalesId = `dragonScales-${uid}`;
   const auraGoldId = `auraGoldGrad-${uid}`;
   const auraFireId = `auraFireGrad-${uid}`;
+  const fireFlameId = `fireFlameGrad-${uid}`;
   const auraCyberId = `auraCyberGrad-${uid}`;
   const auraRainbowId = `auraRainbowGrad-${uid}`;
 
@@ -83,24 +100,23 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
             <circle cx="50" cy="54" r="32.2" />
           </clipPath>
 
-          {/* Patrón de escamas de dragón repartido por todo el cuerpo */}
+          {/* Patrón de escamas de dragón sutiles para no opacar el color del cuerpo */}
           <pattern id={dragonScalesId} width="12" height="10" patternUnits="userSpaceOnUse">
             <path
               d="M 0 1.5 Q 3 6 6 1.5 Q 9 6 12 1.5"
-              fill="#1e1830"
-              fillOpacity="0.06"
+              fill="none"
               stroke="#1e1830"
-              strokeWidth="1.3"
-              strokeOpacity="0.34"
+              strokeWidth="0.9"
+              strokeOpacity="0.14"
               strokeLinecap="round"
             />
             <path
               d="M -6 6.5 Q -3 11 0 6.5 Q 3 11 6 6.5 Q 9 11 12 6.5 Q 15 11 18 6.5"
               fill="#ffffff"
-              fillOpacity="0.07"
+              fillOpacity="0.06"
               stroke="#1e1830"
-              strokeWidth="1.3"
-              strokeOpacity="0.32"
+              strokeWidth="0.9"
+              strokeOpacity="0.12"
               strokeLinecap="round"
             />
           </pattern>
@@ -113,13 +129,18 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
             <stop offset="100%" stopColor="#ffd43b" stopOpacity="0" />
           </radialGradient>
 
-          {/* Aura Fuego */}
-          <radialGradient id={auraFireId} cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#ffc078" stopOpacity="0.9" />
-            <stop offset="50%" stopColor="#ff922b" stopOpacity="0.65" />
-            <stop offset="80%" stopColor="#f03e3e" stopOpacity="0.35" />
+          {/* Aura Fuego (Resplandor de brasa + degradado vertical de llama) */}
+          <radialGradient id={auraFireId} cx="50%" cy="55%" r="50%">
+            <stop offset="0%" stopColor="#fff3bf" stopOpacity="0.85" />
+            <stop offset="45%" stopColor="#ff922b" stopOpacity="0.62" />
+            <stop offset="80%" stopColor="#e8590c" stopOpacity="0.32" />
             <stop offset="100%" stopColor="#c92a2a" stopOpacity="0" />
           </radialGradient>
+          <linearGradient id={fireFlameId} x1="0%" y1="100%" x2="0%" y2="0%">
+            <stop offset="0%" stopColor="#e03131" stopOpacity="0.95" />
+            <stop offset="48%" stopColor="#ff922b" stopOpacity="0.92" />
+            <stop offset="100%" stopColor="#ffe066" stopOpacity="0.9" />
+          </linearGradient>
 
           {/* Aura Cíber */}
           <radialGradient id={auraCyberId} cx="50%" cy="50%" r="50%">
@@ -142,8 +163,13 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
         {/* ============================================================== */}
         {/* AURAS (Detrás del cuerpo) */}
         {/* ============================================================== */}
-        {mostrarAura && (
-          <g className="transition-opacity duration-300">
+        {aura !== 'ninguna' && (
+          <g
+            style={{ transformOrigin: '50px 54px' }}
+            className={`transition-all duration-700 ease-out ${
+              mostrarAura ? 'opacity-100 scale-100' : 'opacity-0 scale-75 pointer-events-none'
+            }`}
+          >
             {aura === 'dorada' && (
               <circle
                 cx="50"
@@ -155,14 +181,88 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
               />
             )}
             {aura === 'fuego' && (
-              <circle
-                cx="50"
-                cy="54"
-                r="46"
-                fill={`url(#${auraFireId})`}
-                style={{ filter: 'drop-shadow(0 0 8px rgba(240, 62, 62, 0.6))' }}
-                className={isActive ? 'animate-pulse' : ''}
-              />
+              <g style={{ filter: 'drop-shadow(0 0 7px rgba(255, 107, 43, 0.55))' }}>
+                {/* Brasa cálida de fondo */}
+                <circle cx="50" cy="54" r="45" fill={`url(#${auraFireId})`} />
+
+                {/* Lenguas de fuego externas con vaivén progresivo */}
+                <g
+                  style={{ transformOrigin: '50px 64px' }}
+                  className={mostrarAura ? 'animate-[fireSwayA_2.1s_ease-in-out_infinite]' : ''}
+                >
+                  {/* Flanco izquierdo */}
+                  <path
+                    d="M 24 68 C 10 58 8 42 18 32 C 17 42 23 47 28 53 Z"
+                    fill={`url(#${fireFlameId})`}
+                    opacity="0.92"
+                  />
+                  {/* Flanco derecho */}
+                  <path
+                    d="M 76 68 C 90 58 92 42 82 32 C 83 42 77 47 72 53 Z"
+                    fill={`url(#${fireFlameId})`}
+                    opacity="0.92"
+                  />
+                  {/* Corona superior suave */}
+                  <path
+                    d="M 33 34 C 35 19 45 9 50 5 C 55 9 65 19 67 34 Z"
+                    fill={`url(#${fireFlameId})`}
+                    opacity="0.72"
+                  />
+                </g>
+
+                {/* Lenguas secundarias alternadas y centros brillantes */}
+                <g
+                  style={{ transformOrigin: '50px 60px' }}
+                  className={mostrarAura ? 'animate-[fireSwayB_1.7s_ease-in-out_infinite]' : ''}
+                >
+                  {/* Diagonal superior izquierda */}
+                  <path
+                    d="M 23 50 C 12 36 16 19 29 13 C 27 23 32 29 36 36 Z"
+                    fill={`url(#${fireFlameId})`}
+                    opacity="0.88"
+                  />
+                  {/* Diagonal superior derecha */}
+                  <path
+                    d="M 77 50 C 88 36 84 19 71 13 C 73 23 68 29 64 36 Z"
+                    fill={`url(#${fireFlameId})`}
+                    opacity="0.88"
+                  />
+                  {/* Núcleos amarillos internos */}
+                  <path
+                    d="M 21 62 C 15 54 15 45 20 39 C 20 46 23 50 26 55 Z"
+                    fill="#ffe066"
+                    opacity="0.75"
+                  />
+                  <path
+                    d="M 79 62 C 85 54 85 45 80 39 C 80 46 77 50 74 55 Z"
+                    fill="#ffe066"
+                    opacity="0.75"
+                  />
+                </g>
+
+                {/* Chispas ascendentes poco a poco */}
+                <g className={mostrarAura ? 'animate-[fireEmberRise_2.2s_ease-out_infinite]' : 'opacity-0'}>
+                  <circle cx="15" cy="30" r="1.8" fill="#ffe066" />
+                </g>
+                <g
+                  style={{ animationDelay: '0.7s' }}
+                  className={mostrarAura ? 'animate-[fireEmberRise_2.4s_ease-out_infinite]' : 'opacity-0'}
+                >
+                  <circle cx="85" cy="28" r="1.7" fill="#ffa94d" />
+                </g>
+                <g
+                  style={{ animationDelay: '1.3s' }}
+                  className={mostrarAura ? 'animate-[fireEmberRise_2s_ease-out_infinite]' : 'opacity-0'}
+                >
+                  <circle cx="32" cy="14" r="1.4" fill="#fff3bf" />
+                </g>
+                <g
+                  style={{ animationDelay: '1.8s' }}
+                  className={mostrarAura ? 'animate-[fireEmberRise_2.3s_ease-out_infinite]' : 'opacity-0'}
+                >
+                  <circle cx="68" cy="15" r="1.5" fill="#ffd43b" />
+                </g>
+              </g>
             )}
             {aura === 'ciber' && (
               <circle
@@ -222,6 +322,43 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
               strokeLinejoin="round"
             />
             <path d="M 92 62 C 84 66 78 68 72 62" stroke="#74c0fc" strokeWidth="2" fill="none" />
+          </g>
+        )}
+
+        {ropa === 'alas_dragon' && (
+          <g>
+            {/* Ala de dragón izquierda */}
+            <path
+              d="M 28 50 Q 12 31 2 43 Q 11 52 7 65 Q 16 64 17 75 Q 24 68 30 62 Z"
+              fill={colAlasDragon}
+              stroke="#2b2140"
+              strokeWidth="3"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M 10 46 Q 20 53 28 58 M 13 61 Q 21 60 28 60"
+              stroke="#2b2140"
+              strokeOpacity="0.45"
+              strokeWidth="1.8"
+              fill="none"
+              strokeLinecap="round"
+            />
+            {/* Ala de dragón derecha */}
+            <path
+              d="M 72 50 Q 88 31 98 43 Q 89 52 93 65 Q 84 64 83 75 Q 76 68 70 62 Z"
+              fill={colAlasDragon}
+              stroke="#2b2140"
+              strokeWidth="3"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M 90 46 Q 80 53 72 58 M 87 61 Q 79 60 72 60"
+              stroke="#2b2140"
+              strokeOpacity="0.45"
+              strokeWidth="1.8"
+              fill="none"
+              strokeLinecap="round"
+            />
           </g>
         )}
 
@@ -470,10 +607,329 @@ export const CartoonCharacter: React.FC<CartoonCharacterProps> = ({
               />
             </g>
           )}
+
+          {ropa === 'bufanda' && (
+            <g>
+              {/* Banda principal de bufanda tejida alrededor del cuello */}
+              <path
+                d="M 18 61.5 Q 50 68.5 82 61.5 L 81 73 Q 50 80 19 73 Z"
+                fill={colBufanda}
+                stroke="#2b2140"
+                strokeWidth="2.6"
+                strokeLinejoin="round"
+              />
+              {/* Puntadas / textura acogedora */}
+              <path
+                d="M 22 65.5 Q 50 72 78 65.5"
+                stroke="#ffffff"
+                strokeOpacity="0.35"
+                strokeWidth="2"
+                fill="none"
+                strokeLinecap="round"
+              />
+              {/* Extremo colgante con flecos */}
+              <path
+                d="M 54 68.5 L 66 66 L 69 85 L 55 86 Z"
+                fill={colBufanda}
+                stroke="#2b2140"
+                strokeWidth="2.4"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M 57 82 L 57 86.5 M 62 82 L 62 86.5 M 66.5 81.5 L 66.5 86"
+                stroke="#fff9db"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+              />
+            </g>
+          )}
+
+          {ropa === 'sudadera' && (
+            <g>
+              {/* Cuerpo de la sudadera */}
+              <path
+                d="M 18 63 Q 50 68 82 63 L 84 89 L 16 89 Z"
+                fill={colSudadera}
+                stroke="#2b2140"
+                strokeWidth="2.8"
+              />
+              {/* Cuello de capucha */}
+              <path
+                d="M 27 63.8 Q 50 71 73 63.8"
+                fill="none"
+                stroke="#ffffff"
+                strokeOpacity="0.5"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+              />
+              {/* Cremallera central */}
+              <line x1="50" y1="67.5" x2="50" y2="88" stroke="#ffffff" strokeOpacity="0.85" strokeWidth="2" />
+              <rect x="48.3" y="68.8" width="3.4" height="4.2" rx="1" fill="#ffd43b" stroke="#2b2140" strokeWidth="1" />
+              {/* Cordones blancos */}
+              <path
+                d="M 43 67 Q 42 73 43 77 M 57 67 Q 58 73 57 77"
+                stroke="#ffffff"
+                strokeWidth="2"
+                strokeLinecap="round"
+                fill="none"
+              />
+              <circle cx="43" cy="77.2" r="1.4" fill="#2b2140" />
+              <circle cx="57" cy="77.2" r="1.4" fill="#2b2140" />
+              {/* Bolsillo canguro */}
+              <path
+                d="M 34 78 L 66 78 L 69 86 L 31 86 Z"
+                fill="#000000"
+                fillOpacity="0.14"
+                stroke="#2b2140"
+                strokeOpacity="0.5"
+                strokeWidth="1.5"
+                strokeLinejoin="round"
+              />
+            </g>
+          )}
+
+          {ropa === 'overol' && (
+            <g>
+              {/* Camisa clara debajo de los tirantes */}
+              <path
+                d="M 21 63.5 Q 50 67.5 79 63.5 L 79 75 L 21 75 Z"
+                fill="#fff9db"
+                stroke="#2b2140"
+                strokeWidth="1.8"
+              />
+              {/* Peto y pantalón de overol */}
+              <path
+                d="M 28 63.5 L 35 63.5 L 35 69 L 65 69 L 65 63.5 L 72 63.5 L 72 74 L 83 74 L 84 89 L 16 89 L 17 74 L 28 74 Z"
+                fill={colOverol}
+                stroke="#2b2140"
+                strokeWidth="2.5"
+                strokeLinejoin="round"
+              />
+              {/* Botones metálicos */}
+              <circle cx="31.5" cy="70.8" r="2" fill="#ffd43b" stroke="#2b2140" strokeWidth="1.1" />
+              <circle cx="68.5" cy="70.8" r="2" fill="#ffd43b" stroke="#2b2140" strokeWidth="1.1" />
+              {/* Bolsillo frontal */}
+              <rect
+                x="41"
+                y="73.5"
+                width="18"
+                height="9.5"
+                rx="2"
+                fill="#000000"
+                fillOpacity="0.12"
+                stroke="#ffd43b"
+                strokeWidth="1.4"
+              />
+              <path d="M 41 76.5 L 59 76.5" stroke="#2b2140" strokeWidth="1.2" />
+            </g>
+          )}
+
+          {ropa === 'kimono' && (
+            <g>
+              {/* Túnica base del kimono */}
+              <path
+                d="M 18 63 Q 50 67.5 82 63 L 84 89 L 16 89 Z"
+                fill={colKimono}
+                stroke="#2b2140"
+                strokeWidth="2.8"
+              />
+              {/* Solapas blancas tradicionales cruzadas */}
+              <path
+                d="M 33 63.5 L 55 77 L 50 79.5 L 27 64 Z"
+                fill="#ffffff"
+                stroke="#2b2140"
+                strokeWidth="1.7"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M 67 63.5 L 45 77 L 50 79.5 L 73 64 Z"
+                fill="#ffffff"
+                stroke="#2b2140"
+                strokeWidth="1.7"
+                strokeLinejoin="round"
+              />
+              {/* Faja Obi ancha y nudo central */}
+              <path
+                d="M 18 75 Q 50 79 82 75 L 82 83.5 Q 50 87.5 18 83.5 Z"
+                fill="#ffd43b"
+                stroke="#2b2140"
+                strokeWidth="2.2"
+              />
+              <path d="M 20 79.5 Q 50 83 80 79.5" stroke="#e03131" strokeWidth="2.2" fill="none" />
+              <rect x="46" y="76.5" width="8" height="6" rx="2" fill="#e03131" stroke="#2b2140" strokeWidth="1.4" />
+            </g>
+          )}
+
+          {ropa === 'pirata' && (
+            <g>
+              {/* Camisa interior crema pirata */}
+              <path
+                d="M 18 63 Q 50 67.5 82 63 L 84 89 L 16 89 Z"
+                fill="#fff9db"
+                stroke="#2b2140"
+                strokeWidth="2.5"
+              />
+              {/* Solapas de casaca pirata */}
+              <path
+                d="M 17 62.5 L 38 64.5 L 45 84 L 16 87 Z"
+                fill={colPirata}
+                stroke="#2b2140"
+                strokeWidth="2.4"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M 83 62.5 L 62 64.5 L 55 84 L 84 87 Z"
+                fill={colPirata}
+                stroke="#2b2140"
+                strokeWidth="2.4"
+                strokeLinejoin="round"
+              />
+              {/* Botones dorados en la casaca */}
+              <circle cx="34" cy="70" r="1.4" fill="#ffd43b" stroke="#2b2140" strokeWidth="0.9" />
+              <circle cx="66" cy="70" r="1.4" fill="#ffd43b" stroke="#2b2140" strokeWidth="0.9" />
+              {/* Cinturón pirata con hebilla de oro */}
+              <path
+                d="M 17 77 Q 50 81.5 83 77 L 83 84.5 Q 50 89 17 84.5 Z"
+                fill="#2b2140"
+              />
+              <rect
+                x="43.5"
+                y="76"
+                width="13"
+                height="9.5"
+                rx="2"
+                fill="#495057"
+                stroke="#ffd43b"
+                strokeWidth="2.3"
+              />
+              <circle cx="50" cy="80.8" r="1.6" fill="#ffd43b" />
+            </g>
+          )}
+
+          {ropa === 'cyber' && (
+            <g>
+              {/* Exotraje oscuro tecnológico */}
+              <path
+                d="M 18 63 Q 50 67.5 82 63 L 84 89 L 16 89 Z"
+                fill="#141e30"
+                stroke="#2b2140"
+                strokeWidth="2.8"
+              />
+              {/* Placas frontales luminosas */}
+              <path
+                d="M 20 64.5 L 42 68.5 L 40 78.5 L 18.5 76 Z"
+                fill={colCyber}
+                stroke="#2b2140"
+                strokeWidth="1.7"
+              />
+              <path
+                d="M 80 64.5 L 58 68.5 L 60 78.5 L 81.5 76 Z"
+                fill={colCyber}
+                stroke="#2b2140"
+                strokeWidth="1.7"
+              />
+              {/* Líneas de circuito */}
+              <path
+                d="M 22 82 L 42 82 L 46 77 M 78 82 L 58 82 L 54 77"
+                stroke={colCyber}
+                strokeWidth="1.8"
+                fill="none"
+                strokeLinecap="round"
+              />
+              {/* Reactor central brillante */}
+              <circle cx="50" cy="74" r="5.5" fill="#090d16" stroke={colCyber} strokeWidth="2.2" />
+              <circle cx="50" cy="74" r="2.7" fill="#e7f5ff" />
+            </g>
+          )}
+
+          {ropa === 'astronauta' && (
+            <g>
+              {/* Traje espacial blanco */}
+              <path
+                d="M 18 63 Q 50 67.5 82 63 L 84 89 L 16 89 Z"
+                fill="#f1f3f5"
+                stroke="#2b2140"
+                strokeWidth="2.8"
+              />
+              {/* Franjas laterales de misión */}
+              <path d="M 24 65 L 28 88 L 21 88 L 18 65 Z" fill={colAstronauta} opacity="0.9" />
+              <path d="M 76 65 L 72 88 L 79 88 L 82 65 Z" fill={colAstronauta} opacity="0.9" />
+              {/* Aro metálico del cuello */}
+              <path d="M 23 64 Q 50 69.5 77 64" stroke="#868e96" strokeWidth="3" fill="none" />
+              {/* Panel de soporte vital en el pecho */}
+              <rect
+                x="38"
+                y="70.5"
+                width="24"
+                height="12"
+                rx="2.8"
+                fill="#dee2e6"
+                stroke="#2b2140"
+                strokeWidth="2"
+              />
+              <circle cx="43.5" cy="75" r="2" fill="#fa5252" stroke="#2b2140" strokeWidth="0.9" />
+              <circle cx="50" cy="75" r="2" fill="#40c057" stroke="#2b2140" strokeWidth="0.9" />
+              <circle cx="56.5" cy="75" r="2" fill={colAstronauta} stroke="#2b2140" strokeWidth="0.9" />
+              <line x1="42" y1="79.8" x2="58" y2="79.8" stroke="#495057" strokeWidth="1.6" strokeLinecap="round" />
+            </g>
+          )}
+
+          {ropa === 'explorador' && (
+            <g>
+              {/* Camisa interior clara */}
+              <path
+                d="M 18 63 Q 50 67.5 82 63 L 84 89 L 16 89 Z"
+                fill="#fff9db"
+                stroke="#2b2140"
+                strokeWidth="2.4"
+              />
+              {/* Chaleco de expedición */}
+              <path
+                d="M 18 63 L 41 64.5 L 48 87 L 16 88 Z M 82 63 L 59 64.5 L 52 87 L 84 88 Z"
+                fill={colExplorador}
+                stroke="#2b2140"
+                strokeWidth="2.4"
+                strokeLinejoin="round"
+              />
+              {/* Bolsillos utilitarios */}
+              <rect x="24" y="72.5" width="11" height="8.5" rx="1.5" fill="#000000" fillOpacity="0.12" stroke="#2b2140" strokeWidth="1.4" />
+              <rect x="65" y="72.5" width="11" height="8.5" rx="1.5" fill="#000000" fillOpacity="0.12" stroke="#2b2140" strokeWidth="1.4" />
+              {/* Correa cruzada de aventura */}
+              <path
+                d="M 24 63 L 73 86.5 L 65 89 L 19 66 Z"
+                fill="#5c3c00"
+                stroke="#2b2140"
+                strokeWidth="1.6"
+              />
+              <rect x="46" y="73.5" width="7" height="5.5" rx="1" fill="#ffd43b" stroke="#2b2140" strokeWidth="1.2" />
+            </g>
+          )}
         </g>
 
         {/* Contorno exterior del cuerpo siempre nítido encima de la ropa recortada */}
         <circle cx="50" cy="54" r="32" fill="none" stroke="#2b2140" strokeWidth="4" />
+
+        {/* Manitas laterales a juego con las patitas */}
+        <ellipse
+          cx="16"
+          cy="67"
+          rx="6.6"
+          ry="4.8"
+          transform="rotate(-18 16 67)"
+          fill="#ffd43b"
+          stroke="#2b2140"
+          strokeWidth="3.5"
+        />
+        <ellipse
+          cx="84"
+          cy="67"
+          rx="6.6"
+          ry="4.8"
+          transform="rotate(18 84 67)"
+          fill="#ffd43b"
+          stroke="#2b2140"
+          strokeWidth="3.5"
+        />
 
         {/* Piezas 3D de Armadura sobre el contorno (hombreras y escudo bajo las mejillas) */}
         {ropa === 'armadura' && (

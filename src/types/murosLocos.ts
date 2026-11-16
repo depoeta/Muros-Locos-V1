@@ -31,7 +31,16 @@ export type AvatarTipoDeRopa =
   | 'tuxedo'
   | 'cinturon'
   | 'alas'
-  | 'tunica';
+  | 'tunica'
+  | 'bufanda'
+  | 'sudadera'
+  | 'overol'
+  | 'kimono'
+  | 'pirata'
+  | 'cyber'
+  | 'astronauta'
+  | 'explorador'
+  | 'alas_dragon';
 
 export type AvatarTipoDeAura =
   | 'ninguna'
