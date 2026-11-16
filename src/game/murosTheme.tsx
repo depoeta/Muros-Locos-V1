@@ -22,7 +22,7 @@ export function cargarEstiloMuros(): EstiloMuros {
   } catch {
     // ignore storage errors
   }
-  return 'pastel_oscuro';
+  return 'clasico';
 }
 
 export function guardarEstiloMuros(estilo: EstiloMuros): void {
@@ -228,7 +228,7 @@ export interface MurosThemeContextValue {
 }
 
 const defaultCtx: MurosThemeContextValue = {
-  estilo: 'pastel_oscuro',
+  estilo: 'clasico',
   setEstilo: () => {},
   ciclarEstilo: () => {},
   t: TOKENS.pastel_oscuro,
@@ -242,7 +242,7 @@ export const MurosThemeProvider: React.FC<{
   children: React.ReactNode;
 }> = ({ estilo, onChangeEstilo, children }) => {
   const ciclarEstilo = () => {
-    const orden: EstiloMuros[] = ['pastel_oscuro', 'pastel_claro', 'clasico'];
+    const orden: EstiloMuros[] = ['clasico', 'pastel_oscuro', 'pastel_claro'];
     const idx = orden.indexOf(estilo);
     const sig = orden[(idx + 1) % orden.length];
     onChangeEstilo(sig);
@@ -274,7 +274,7 @@ export const ESTILO_MUROS_META: Record<
     label: 'Pastel Oscuro',
     shortLabel: 'Oscuro',
     icon: '🌙',
-    desc: 'Fondo oscuro nocturno con tonos pastel suaves (vista previa)',
+    desc: 'Fondo oscuro nocturno con tonos pastel suaves',
   },
   pastel_claro: {
     label: 'Pastel Claro',
