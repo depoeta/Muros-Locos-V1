@@ -309,7 +309,7 @@ export async function pingServidor(): Promise<{ ok: boolean; dbConectado: boolea
       data?.sesionRevocada === true ||
       (cur && (!token || data?.sesionValida === false))
     ) {
-      cerrarSesion();
+      cerrarSesion(false);
       emitSesionRevocada(
         data?.sesionRevocada === true
           ? 'Tu sesión expiró al superarse el límite de 3 sesiones activas.'
@@ -574,7 +574,7 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
           (curPre && (!token || pingData?.sesionValida === false))
         ) {
           sesionInvalidadaEnSync = true;
-          cerrarSesion();
+          cerrarSesion(false);
           emitSesionRevocada(
             pingData?.sesionRevocada === true
               ? 'Tu sesión expiró al superarse el límite de 3 sesiones activas.'
@@ -703,7 +703,7 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
       guardarRankingGlobalCache(rankingLimpio);
 
       const cur = sesionInvalidadaEnSync ? null : obteneruserActual();
-      if (cur && cur.id !== 'admin') {
+      if (cur) {
         const fresh = cuentasLimpias[cur.id];
         if (fresh) {
           guardarUserActual(fresh);
@@ -1306,14 +1306,23 @@ export function obteneruserActual(): UserCuenta | null {
     if (!parsed || !parsed.id) return null;
     const cuentas = cargarCuentas();
     if (parsed.id === 'admin') {
-      return {
-        ...cuentas['admin'],
-        ...parsed,
-        id: 'admin',
-        rol: 'dev',
-        esSupremo: true,
-        clave: '',
-      };
+      const baseAdmin = cuentas['admin'];
+      return baseAdmin
+        ? {
+            ...parsed,
+            ...baseAdmin,
+            id: 'admin',
+            rol: 'dev',
+            esSupremo: true,
+            clave: '',
+          }
+        : {
+            ...parsed,
+            id: 'admin',
+            rol: 'dev',
+            esSupremo: true,
+            clave: '',
+          };
     }
     return cuentas[parsed.id] || { ...parsed, clave: '' };
   } catch {
@@ -1339,7 +1348,19 @@ export function guardarUserActual(user: UserCuenta | null) {
   }
 }
 
-export function cerrarSesion() {
+export function cerrarSesion(notificarServidor: boolean = true) {
+  const token = notificarServidor ? obtenerTokenSesion() : null;
+  if (token && typeof fetch !== 'undefined') {
+    try {
+      fetch('/api/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        keepalive: true,
+      }).catch(() => {});
+    } catch {
+      // ignorar
+    }
+  }
   guardarUserActual(null);
 }
 
@@ -1592,7 +1613,7 @@ export async function darDeBajaUserAsync(
     if (!res.ok || !data?.ok) {
       return { ok: false, error: data?.error || 'No se pudo dar de baja tu cuenta.' };
     }
-    cerrarSesion();
+    cerrarSesion(false);
     await sincronizarConNube(true);
     return { ok: true };
   } catch {

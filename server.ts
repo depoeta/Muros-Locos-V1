@@ -359,11 +359,19 @@ function dbObtenerTodasCuentas(): Record<string, any> {
       avatarAura: inv.avatar_aura || cObj.avatarAura || (esSup ? 'dorada' : 'ninguna'),
       temaTablero: inv.tema_tablero || cObj.temaTablero || 'madera',
       inventario: {
-        personajes: Array.isArray(inv.personajes_json)
-          ? inv.personajes_json
-          : Array.isArray(cObj.inventario?.personajes)
-          ? cObj.inventario.personajes
-          : [],
+        personajes: (() => {
+          let cur: any = inv.personajes_json ?? cObj.inventario?.personajes ?? [];
+          let pasos = 0;
+          while (typeof cur === 'string' && pasos < 4) {
+            try {
+              cur = JSON.parse(cur);
+              pasos += 1;
+            } catch {
+              break;
+            }
+          }
+          return Array.isArray(cur) ? cur : [];
+        })(),
         activoId: inv.activo_id || cObj.inventario?.activoId || undefined,
       },
     };
@@ -883,6 +891,33 @@ app.post('/api/login', async (req, res) => {
     token: sesion.token,
     user: sanitizarCuentaPublica(encontrada),
   });
+});
+
+app.post('/api/logout', async (req, res) => {
+  const authHeader = req.header('Authorization') || '';
+  const token = authHeader.startsWith('Bearer ')
+    ? authHeader.slice(7).trim()
+    : String(req.header('X-Admin-Token') || '').trim();
+  if (token) {
+    const tokenHash = await sha256Hex(token);
+    const ahora = Date.now();
+    const sesiones = leerJson(ARCHIVO_SESIONES, {}) as Record<string, any>;
+    let changed = false;
+    if (sesiones[tokenHash]) {
+      delete sesiones[tokenHash];
+      changed = true;
+    }
+    for (const [h, s] of Object.entries(sesiones)) {
+      if (!s || Number(s.expiraEn) <= ahora) {
+        delete sesiones[h];
+        changed = true;
+      }
+    }
+    if (changed) {
+      escribirJson(ARCHIVO_SESIONES, sesiones);
+    }
+  }
+  return res.json({ ok: true });
 });
 
 app.post('/api/registro', async (req, res) => {

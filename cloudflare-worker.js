@@ -440,6 +440,41 @@ function sanitizarMapaCuentasPublicas(mapa, opciones = {}) {
   return out;
 }
 
+function parsearPersonajesJsonSeguro(raw) {
+  if (Array.isArray(raw)) {
+    return { ok: true, personajes: raw, estabaDobleCodificado: false };
+  }
+  if (raw === null || raw === undefined || raw === '') {
+    return { ok: true, personajes: [], estabaDobleCodificado: false };
+  }
+  if (typeof raw !== 'string') {
+    return { ok: false, error: 'personajes_json no es texto ni arreglo' };
+  }
+
+  let cur = raw.trim();
+  if (!cur) {
+    return { ok: true, personajes: [], estabaDobleCodificado: false };
+  }
+
+  let pasos = 0;
+  while (typeof cur === 'string' && pasos < 4) {
+    try {
+      cur = JSON.parse(cur);
+      pasos += 1;
+    } catch (err) {
+      return { ok: false, error: err?.message || 'JSON inválido en personajes_json' };
+    }
+  }
+
+  if (Array.isArray(cur)) {
+    return { ok: true, personajes: cur, estabaDobleCodificado: pasos > 1 };
+  }
+  if (cur === null || cur === undefined) {
+    return { ok: true, personajes: [], estabaDobleCodificado: pasos > 1 };
+  }
+  return { ok: false, error: 'personajes_json no es un arreglo JSON válido' };
+}
+
 async function d1ObtenerTodasCuentas(d1) {
   if (!d1) return {};
   await asegurarTablasD1(d1);
@@ -478,19 +513,23 @@ async function d1ObtenerTodasCuentas(d1) {
       let personajes = [];
       let inventarioCorrupto = false;
       let inventarioError = '';
-      try {
-        const parsed = JSON.parse(inv.personajes_json || '[]');
-        if (Array.isArray(parsed)) {
-          personajes = parsed;
-        } else {
-          inventarioCorrupto = true;
-          inventarioError = 'personajes_json no es un arreglo JSON válido';
-          console.error(`Inventario no es arreglo para ${invId}:`, inv.personajes_json);
+      const parsedInv = parsearPersonajesJsonSeguro(inv.personajes_json);
+      if (parsedInv.ok) {
+        personajes = parsedInv.personajes;
+        if (parsedInv.estabaDobleCodificado) {
+          try {
+            await d1
+              .prepare('UPDATE inventario SET personajes_json = ? WHERE id = ?')
+              .bind(JSON.stringify(personajes), invId)
+              .run();
+          } catch (err) {
+            console.error(`Error normalizando personajes_json doble-codificado para ${invId}:`, err);
+          }
         }
-      } catch (err) {
+      } else {
         inventarioCorrupto = true;
-        inventarioError = err?.message || 'JSON inválido en personajes_json';
-        console.error(`Error parseando personajes_json para ${invId}:`, err);
+        inventarioError = parsedInv.error || 'JSON inválido en personajes_json';
+        console.error(`Error parseando personajes_json para ${invId}:`, inventarioError);
       }
       invMap[invId] = {
         avatarColor: inv.avatar_color || '#ff6b6b',
@@ -1451,6 +1490,29 @@ async function manejarPeticionApi(request, env) {
       }),
       { headers: cabecerasJson }
     );
+  }
+
+  // ==========================================
+  // 2b. POST /api/logout (Elimina la sesión activa en D1)
+  // ==========================================
+  if (pathname === '/api/logout' && request.method === 'POST') {
+    const authHeader = request.headers.get('Authorization') || '';
+    const tokenHeader = authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7).trim()
+      : (request.headers.get('X-Admin-Token') || '').trim();
+    if (d1 && tokenHeader) {
+      await asegurarTablasD1(d1);
+      try {
+        const tokenHash = await sha256Hex(tokenHeader);
+        await d1
+          .prepare('DELETE FROM sesiones WHERE token_hash = ? OR expira_en <= ?')
+          .bind(tokenHash, Date.now())
+          .run();
+      } catch (err) {
+        console.error('Error eliminando sesión de D1 al cerrar sesión:', err);
+      }
+    }
+    return new Response(JSON.stringify({ ok: true }), { headers: cabecerasJson });
   }
 
   // ==========================================

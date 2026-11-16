@@ -403,22 +403,24 @@ export const App: React.FC = () => {
     const stopListener = iniciarEscuchaNube(30000);
     const unsubs = suscribirCambiosNube(({ cuentas }) => {
       const current = userActualRef.current;
-      if (current && current.id !== 'admin') {
+      if (current) {
         if (!cuentas || Object.keys(cuentas).length === 0) {
           return;
         }
         const fresh = cuentas[current.id];
         if (!fresh) {
-          // Solo desconectar si la base de datos descargada contiene users y confirma que este fue borrado
-          const otrasCuentas = Object.keys(cuentas).filter((k) => k !== 'admin');
-          if (otrasCuentas.length > 0) {
-            setuserActual(null);
-            guardarUserActual(null);
-            if (modalActivoRef.current === 'admin') {
-              setModalActivo(null);
-              setModalPrevio(null);
+          if (current.id !== 'admin') {
+            // Solo desconectar si la base de datos descargada contiene users y confirma que este fue borrado
+            const otrasCuentas = Object.keys(cuentas).filter((k) => k !== 'admin');
+            if (otrasCuentas.length > 0) {
+              setuserActual(null);
+              guardarUserActual(null);
+              if (modalActivoRef.current === 'admin') {
+                setModalActivo(null);
+                setModalPrevio(null);
+              }
+              showToast('⚠️ Tu cuenta ya no existe en la Database');
             }
-            showToast('⚠️ Tu cuenta ya no existe en la Database');
           }
         } else if (
           fresh.rol !== current.rol ||

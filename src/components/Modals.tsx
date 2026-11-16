@@ -2834,38 +2834,47 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       setInspectingUser((prevIns) => (prevIns && accs[prevIns.id] ? accs[prevIns.id] : null));
 
       const cur = userActualRef.current;
-      if (cur && cur.id !== 'admin' && cur.rol !== 'dev') {
+      if (cur) {
         const fresh = accs[cur.id];
         if (!fresh) {
-          if (!revocadoNotificadoRef.current) {
-            revocadoNotificadoRef.current = true;
-            onuserActualizadoRef.current?.(null);
-            onShowToastRef.current('⚠️ Tu cuenta ya no existe en la Database.');
-            onCerrarRef.current();
+          if (cur.id !== 'admin' && cur.rol !== 'dev') {
+            if (!revocadoNotificadoRef.current) {
+              revocadoNotificadoRef.current = true;
+              onuserActualizadoRef.current?.(null);
+              onShowToastRef.current('⚠️ Tu cuenta ya no existe en la Database.');
+              onCerrarRef.current();
+            }
+            return false;
           }
-          return false;
-        }
-        if (
-          fresh.rol !== cur.rol ||
-          fresh.puntos !== cur.puntos ||
-          fresh.victorias !== cur.victorias ||
-          fresh.nombre !== cur.nombre ||
-          fresh.avatarHat !== cur.avatarHat ||
-          fresh.avatarRopa !== cur.avatarRopa ||
-          fresh.avatarAura !== cur.avatarAura ||
-          JSON.stringify(fresh.inventario || { personajes: [] }) !==
-            JSON.stringify(cur.inventario || { personajes: [] })
-        ) {
-          onuserActualizadoRef.current?.(fresh);
-        }
-        if (fresh.rol !== 'admin' && fresh.rol !== 'dev' && fresh.rol !== 'mod') {
-          if (!revocadoNotificadoRef.current) {
-            revocadoNotificadoRef.current = true;
-            sounds.playError();
-            onShowToastRef.current('⛔ Tus permisos de Staff fueron revocados.');
-            onCerrarRef.current();
+        } else {
+          if (
+            fresh.rol !== cur.rol ||
+            fresh.puntos !== cur.puntos ||
+            fresh.victorias !== cur.victorias ||
+            fresh.nombre !== cur.nombre ||
+            fresh.avatarHat !== cur.avatarHat ||
+            fresh.avatarRopa !== cur.avatarRopa ||
+            fresh.avatarAura !== cur.avatarAura ||
+            JSON.stringify(fresh.inventario || { personajes: [] }) !==
+              JSON.stringify(cur.inventario || { personajes: [] })
+          ) {
+            onuserActualizadoRef.current?.(fresh);
           }
-          return false;
+          if (
+            cur.id !== 'admin' &&
+            cur.rol !== 'dev' &&
+            fresh.rol !== 'admin' &&
+            fresh.rol !== 'dev' &&
+            fresh.rol !== 'mod'
+          ) {
+            if (!revocadoNotificadoRef.current) {
+              revocadoNotificadoRef.current = true;
+              sounds.playError();
+              onShowToastRef.current('⛔ Tus permisos de Staff fueron revocados.');
+              onCerrarRef.current();
+            }
+            return false;
+          }
         }
       }
       return true;
