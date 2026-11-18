@@ -31,6 +31,7 @@ import {
   ejecutarAccionMover,
   ejecutarAccionMuro,
   ejecutarTurnoBot,
+  eliminarJugadorEnPartida,
   iniciarPartida,
   normalizarTamanoTablero,
   obtenerCaminoPista,
@@ -280,6 +281,12 @@ export const App: React.FC = () => {
   );
   const [perspectivaInvertida, setPerspectivaInvertida] = useState<boolean>(false);
   const [desconexionSegundos, setDesconexionSegundos] = useState<number | null>(null);
+  const [confirmarAbandonoAbierto, setConfirmarAbandonoAbierto] = useState<boolean>(false);
+  const [ultimoHumanoIdx, setUltimoHumanoIdx] = useState<number>(() => {
+    const initPlayers = sesionInicial?.estado?.jugadores;
+    const first = initPlayers?.find((p) => p.tipo === 'humano' && !p.eliminado);
+    return first ? first.id : 0;
+  });
 
   // Confirmación y validez de revancha Online P2P
   const [estadoRevanchaOnline, setEstadoRevanchaOnline] = useState<
@@ -314,6 +321,24 @@ export const App: React.FC = () => {
   const partidaContabilizadaRef = useRef<boolean>(
     Boolean(sesionInicial?.estado?.terminada)
   );
+  const screenRef = useRef<PantallaApp>(screen);
+  screenRef.current = screen;
+  const accionLockRef = useRef<boolean>(false);
+  const accionLockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (accionLockTimerRef.current) clearTimeout(accionLockTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!estado) return;
+    const actual = estado.jugadores[estado.turnoActual];
+    if (actual && actual.tipo === 'humano' && !actual.eliminado) {
+      setUltimoHumanoIdx(estado.turnoActual);
+    }
+  }, [estado?.turnoActual, estado?.jugadores]);
 
   useEffect(() => {
     sounds.setEnabled(ajustes.sonido);
@@ -477,46 +502,59 @@ export const App: React.FC = () => {
     if (desconexionSegundos !== null) return;
 
     const timer = setInterval(() => {
-      setEstado((prev) => {
-        if (!prev || prev.terminada || !prev.config.modoConTiempo) return prev;
-        if (prev.tiempoRestante <= 1) {
-          // En modo Online, solo el anfitrión decide el cambio de turno y lo sincroniza a todos
-          if (prev.modoOnline && !prev.esAnfitrion) {
-            return { ...prev, tiempoRestante: 0 };
-          }
+      const actual = estadoRef.current;
+      if (!actual || actual.terminada || !actual.config.modoConTiempo) return;
 
-          sounds.playError();
-          const jugadoresClonados = prev.jugadores.map((jug, idx) =>
-            idx === prev.turnoActual
-              ? {
-                  ...jug,
-                  estadisticas: {
-                    ...jug.estadisticas,
-                    turnosAgotados: jug.estadisticas.turnosAgotados + 1,
-                  },
-                }
-              : jug
-          );
-          const p = jugadoresClonados[prev.turnoActual];
-          const nextTurno = (prev.turnoActual + 1) % prev.n;
-          const timeoutState: EstadoDeJuego = {
-            ...prev,
-            jugadores: jugadoresClonados,
-            turnoActual: nextTurno,
-            tiempoRestante: prev.config.segundosPorTurno,
-            modoAccion: 'mover',
-            muroPrevisualizado: null,
-            caminoPista: null,
-            ultimoMensaje: `⏱️ ¡Se agotó el tiempo de ${p.nombre}! Turno pasado.`,
-          };
-
-          if (prev.modoOnline && prev.esAnfitrion) {
-            setTimeout(() => onlineService.syncState(timeoutState), 0);
-          }
-          return timeoutState;
+      if (actual.tiempoRestante <= 1) {
+        // En modo Online, solo el anfitrión decide el cambio de turno y lo sincroniza a todos
+        if (actual.modoOnline && !actual.esAnfitrion) {
+          setEstado((prev) => (prev && prev.tiempoRestante > 0 ? { ...prev, tiempoRestante: 0 } : prev));
+          return;
         }
-        return { ...prev, tiempoRestante: prev.tiempoRestante - 1 };
-      });
+
+        const jugadoresClonados = actual.jugadores.map((jug, idx) =>
+          idx === actual.turnoActual
+            ? {
+                ...jug,
+                estadisticas: {
+                  ...jug.estadisticas,
+                  turnosAgotados: jug.estadisticas.turnosAgotados + 1,
+                },
+              }
+            : jug
+        );
+        const p = jugadoresClonados[actual.turnoActual];
+        let nextTurno = (actual.turnoActual + 1) % actual.n;
+        let tries = 0;
+        while (tries < actual.n && jugadoresClonados[nextTurno]?.eliminado) {
+          nextTurno = (nextTurno + 1) % actual.n;
+          tries++;
+        }
+
+        const timeoutState: EstadoDeJuego = {
+          ...actual,
+          jugadores: jugadoresClonados,
+          turnoActual: nextTurno,
+          tiempoRestante: actual.config.segundosPorTurno,
+          modoAccion: 'mover',
+          muroPrevisualizado: null,
+          caminoPista: null,
+          ultimoMensaje: `⏱️ ¡Se agotó el tiempo de ${p.nombre}! Turno pasado.`,
+        };
+
+        sounds.playError();
+        setEstado(timeoutState);
+        if (actual.modoOnline && actual.esAnfitrion) {
+          onlineService.syncState(timeoutState);
+        }
+        return;
+      }
+
+      setEstado((prev) =>
+        prev && !prev.terminada && prev.tiempoRestante > 1
+          ? { ...prev, tiempoRestante: prev.tiempoRestante - 1 }
+          : prev
+      );
     }, 1000);
 
     return () => clearInterval(timer);
@@ -843,45 +881,65 @@ export const App: React.FC = () => {
         showToast('🚀 ¡Comienza la partida online!');
       },
       onStateSync: (remoteState) => {
+        if (!remoteState.terminada) {
+          partidaContabilizadaRef.current = false;
+        }
         setEstado(remoteState);
+        if (screenRef.current === 'online_lobby') {
+          setModalActivo(null);
+          setMostrarBarraPostPartida(false);
+          setScreen('juego');
+        }
         if (remoteState.terminada) {
           finalizarPartida(remoteState);
         }
       },
       onPlayerAction: (jugadorId: number, accion: 'mover' | 'muro' | 'pasar', payload: any) => {
-        setEstado((prev) => {
-          if (!prev || prev.terminada) return prev;
-          if (prev.turnoActual !== jugadorId) {
-            if (prev.esAnfitrion) {
-              setTimeout(() => onlineService.syncState(prev), 0);
-            }
-            return prev;
+        const actual = estadoRef.current;
+        if (!actual || actual.terminada) return;
+        if (actual.turnoActual !== jugadorId) {
+          if (actual.esAnfitrion) {
+            onlineService.syncState(actual);
           }
+          return;
+        }
 
-          if (accion === 'mover' && payload?.destino) {
-            const next = ejecutarAccionMover(prev, payload.destino, jugadorId);
-            if (next === prev) {
-              if (prev.esAnfitrion) setTimeout(() => onlineService.syncState(prev), 0);
-              return prev;
-            }
-            sounds.playMove();
-            if (prev.esAnfitrion) setTimeout(() => onlineService.syncState(next), 0);
-            if (next.terminada) setTimeout(() => finalizarPartida(next), 0);
-            return next;
-          } else if (accion === 'muro') {
-            const coord = payload?.coord || { r: payload?.r, c: payload?.c };
-            const next = ejecutarAccionMuro(prev, coord, payload.orientacion, jugadorId);
-            if (next === prev) {
-              if (prev.esAnfitrion) setTimeout(() => onlineService.syncState(prev), 0);
-              return prev;
-            }
-            sounds.playWallPlace();
-            if (prev.esAnfitrion) setTimeout(() => onlineService.syncState(next), 0);
-            if (next.terminada) setTimeout(() => finalizarPartida(next), 0);
-            return next;
+        if (accion === 'mover' && payload?.destino) {
+          const next = ejecutarAccionMover(actual, payload.destino, jugadorId);
+          if (next === actual) {
+            if (actual.esAnfitrion) onlineService.syncState(actual);
+            return;
           }
-          return prev;
-        });
+          sounds.playMove();
+          setEstado(next);
+          if (actual.esAnfitrion) onlineService.syncState(next);
+          if (next.terminada) finalizarPartida(next);
+        } else if (accion === 'muro') {
+          const coord = payload?.coord || { r: payload?.r, c: payload?.c };
+          const next = ejecutarAccionMuro(actual, coord, payload.orientacion, jugadorId);
+          if (next === actual) {
+            if (actual.esAnfitrion) onlineService.syncState(actual);
+            return;
+          }
+          sounds.playWallPlace();
+          setEstado(next);
+          if (actual.esAnfitrion) onlineService.syncState(next);
+          if (next.terminada) finalizarPartida(next);
+        }
+      },
+      onPeerEliminated: (jugadorId: number, nombre: string) => {
+        const actual = estadoRef.current;
+        if (!actual || actual.terminada) return;
+        const next = eliminarJugadorEnPartida(actual, jugadorId);
+        if (next === actual) return;
+        setEstado(next);
+        if (actual.esAnfitrion) {
+          onlineService.syncState(next);
+        }
+        showToast(`🚪 ${nombre} abandonó la partida`);
+        if (next.terminada) {
+          finalizarPartida(next);
+        }
       },
       onReaction: (jugadorId: number, emoji: string) => {
         setEstado((prev) =>
@@ -973,56 +1031,88 @@ export const App: React.FC = () => {
   ]);
 
   const handleMoverJugador = (destino: { r: number; c: number }) => {
-    if (!estado || estado.terminada) return;
-    const curPlayer = estado.jugadores[estado.turnoActual];
+    if (accionLockRef.current) return;
+    const actual = estadoRef.current;
+    if (!actual || actual.terminada) return;
+    const curPlayer = actual.jugadores[actual.turnoActual];
+    if (!curPlayer || curPlayer.eliminado) return;
 
-    if (estado.modoOnline && curPlayer.id !== estado.miJugadorId) {
+    if (actual.modoOnline && curPlayer.id !== actual.miJugadorId) {
       sounds.playError();
       return;
     }
 
-    const next = ejecutarAccionMover(estado, destino, curPlayer.id);
-    sounds.playMove();
-
-    if (estado.modoOnline) {
-      onlineService.sendAction('mover', { destino });
-      if (estado.esAnfitrion) {
-        onlineService.syncState(next);
+    accionLockRef.current = true;
+    try {
+      const next = ejecutarAccionMover(actual, destino, curPlayer.id);
+      if (next === actual) {
+        sounds.playError();
+        return;
       }
-    }
 
-    setEstado(next);
-    if (next.terminada) {
-      finalizarPartida(next);
+      sounds.playMove();
+
+      if (actual.modoOnline) {
+        onlineService.sendAction('mover', { destino });
+        if (actual.esAnfitrion) {
+          onlineService.syncState(next);
+        }
+      }
+
+      setEstado(next);
+      if (next.terminada) {
+        finalizarPartida(next);
+      }
+    } finally {
+      if (accionLockTimerRef.current) clearTimeout(accionLockTimerRef.current);
+      accionLockTimerRef.current = setTimeout(() => {
+        accionLockRef.current = false;
+      }, 80);
     }
   };
 
   const handleColocarMuro = (coord: { r: number; c: number }) => {
-    if (!estado || estado.terminada) return;
-    const curPlayer = estado.jugadores[estado.turnoActual];
+    if (accionLockRef.current) return;
+    const actual = estadoRef.current;
+    if (!actual || actual.terminada) return;
+    const curPlayer = actual.jugadores[actual.turnoActual];
+    if (!curPlayer || curPlayer.eliminado) return;
 
-    if (estado.modoOnline && curPlayer.id !== estado.miJugadorId) {
+    if (actual.modoOnline && curPlayer.id !== actual.miJugadorId) {
       sounds.playError();
       return;
     }
 
-    const next = ejecutarAccionMuro(estado, coord, estado.orientacionMuro, curPlayer.id);
-    sounds.playWallPlace();
-
-    if (estado.modoOnline) {
-      onlineService.sendAction('muro', {
-        orientacion: estado.orientacionMuro,
-        r: coord.r,
-        c: coord.c,
-      });
-      if (estado.esAnfitrion) {
-        onlineService.syncState(next);
+    accionLockRef.current = true;
+    try {
+      const next = ejecutarAccionMuro(actual, coord, actual.orientacionMuro, curPlayer.id);
+      if (next === actual) {
+        sounds.playError();
+        return;
       }
-    }
 
-    setEstado(next);
-    if (next.terminada) {
-      finalizarPartida(next);
+      sounds.playWallPlace();
+
+      if (actual.modoOnline) {
+        onlineService.sendAction('muro', {
+          orientacion: actual.orientacionMuro,
+          r: coord.r,
+          c: coord.c,
+        });
+        if (actual.esAnfitrion) {
+          onlineService.syncState(next);
+        }
+      }
+
+      setEstado(next);
+      if (next.terminada) {
+        finalizarPartida(next);
+      }
+    } finally {
+      if (accionLockTimerRef.current) clearTimeout(accionLockTimerRef.current);
+      accionLockTimerRef.current = setTimeout(() => {
+        accionLockRef.current = false;
+      }, 80);
     }
   };
 
@@ -1045,23 +1135,36 @@ export const App: React.FC = () => {
   };
 
   const handlePedirPista = () => {
-    if (!estado || estado.terminada) return;
-    const curPlayer = estado.jugadores[estado.turnoActual];
-    if (curPlayer.tipo !== 'humano') return;
+    const actual = estadoRef.current;
+    if (!actual || actual.terminada) return;
+    const curPlayer = actual.jugadores[actual.turnoActual];
+    if (!curPlayer || curPlayer.tipo !== 'humano' || curPlayer.eliminado) return;
 
     sounds.playClick();
-    const camino = obtenerCaminoPista(curPlayer, estado.murosH, estado.murosV, estado.n);
-    curPlayer.estadisticas.usosPista++;
+    const camino = obtenerCaminoPista(curPlayer, actual.murosH, actual.murosV, actual.n);
+    const turnoId = actual.turnoActual;
 
-    setEstado((prev) =>
-      prev
-        ? {
-            ...prev,
-            caminoPista: camino,
-            ultimoMensaje: `💡 Pista activada para ${curPlayer.nombre} (-1 pt)`,
-          }
-        : null
-    );
+    setEstado((prev) => {
+      if (!prev) return null;
+      const jugadoresAct = prev.jugadores.map((j, idx) =>
+        idx === turnoId
+          ? {
+              ...j,
+              estadisticas: {
+                ...j.estadisticas,
+                usosPista: j.estadisticas.usosPista + 1,
+                partidaLimpia: false,
+              },
+            }
+          : j
+      );
+      return {
+        ...prev,
+        jugadores: jugadoresAct,
+        caminoPista: camino,
+        ultimoMensaje: `💡 Pista activada para ${curPlayer.nombre} (-1 pt)`,
+      };
+    });
   };
 
   const handleDeshacer = () => {
@@ -1092,14 +1195,34 @@ export const App: React.FC = () => {
     resetEstadoRevanchaOnline();
     setDesconexionSegundos(null);
     setTiempoPartida(0);
-    if (typeof config.rotationMode === 'boolean' && config.jugadores.filter((p) => p.tipo === 'humano').length >= 2) {
+    if (
+      (typeof config.rotationMode === 'boolean' || typeof config.rotarControles === 'boolean') &&
+      config.jugadores.filter((p) => p.tipo === 'humano').length >= 2
+    ) {
       setAjustes((prev) => {
-        const updated = { ...prev, cambiarVistaPorTurno: config.rotationMode };
+        const updated = {
+          ...prev,
+          cambiarVistaPorTurno:
+            typeof config.rotationMode === 'boolean'
+              ? config.rotationMode
+              : prev.cambiarVistaPorTurno,
+          rotarControlesSinTablero:
+            config.numJugadores === 2 &&
+            !config.rotationMode &&
+            typeof config.rotarControles === 'boolean'
+              ? config.rotarControles
+              : prev.rotarControlesSinTablero,
+        };
         guardarAjustes(updated);
         return updated;
       });
     }
     const nuevo = iniciarPartida(config);
+    const primerHumano =
+      nuevo.jugadores[nuevo.turnoActual]?.tipo === 'humano'
+        ? nuevo.turnoActual
+        : nuevo.jugadores.find((p) => p.tipo === 'humano')?.id ?? 0;
+    setUltimoHumanoIdx(primerHumano);
     setEstado(nuevo);
     setMostrarBarraPostPartida(false);
     setModalActivo(null);
@@ -1336,18 +1459,28 @@ export const App: React.FC = () => {
     setScreen('menu');
   };
 
-  const handleVolverAlMenu = () => {
+  const ejecutarSalidaAlMenu = (esAbandonoConfirmado: boolean = false) => {
     sounds.playClick();
     limpiarSalaDeUrl();
     setCodigoSalaUrl(null);
-    const eraOnlineEnCurso = Boolean(estado?.modoOnline && !estado?.terminada);
-    if (estado && !estado.terminada) {
-      const curPlayer = estado.jugadores[estado.turnoActual];
-      if (curPlayer.tipo === 'humano') {
-        penalizarAbandono(curPlayer.nombre, 5, curPlayer.cuentaId);
+    setConfirmarAbandonoAbierto(false);
+    const actual = estadoRef.current;
+    const eraOnlineEnCurso = Boolean(actual?.modoOnline && !actual?.terminada);
+
+    // La penalización (-5 pts) SOLO aplica en partidas online activas confirmadas y sobre miJugadorId
+    if (eraOnlineEnCurso && esAbandonoConfirmado && actual) {
+      const miId = actual.miJugadorId ?? 0;
+      const miJugador = actual.jugadores[miId];
+      if (miJugador && miJugador.tipo === 'humano') {
+        penalizarAbandono(miJugador.nombre, 5, miJugador.cuentaId);
+        const refreshed = obteneruserActual();
+        if (refreshed) {
+          setuserActual(refreshed);
+        }
       }
     }
-    if (estado?.modoOnline) {
+
+    if (actual?.modoOnline) {
       onlineService.disconnect();
     }
     resetEstadoRevanchaOnline();
@@ -1356,6 +1489,16 @@ export const App: React.FC = () => {
     setDesconexionSegundos(null);
     setEstado(null);
     setScreen(eraOnlineEnCurso ? 'online_lobby' : 'menu');
+  };
+
+  const handleVolverAlMenu = () => {
+    const actual = estadoRef.current;
+    if (actual?.modoOnline && !actual.terminada) {
+      sounds.playClick();
+      setConfirmarAbandonoAbierto(true);
+      return;
+    }
+    ejecutarSalidaAlMenu(false);
   };
 
   const formatMMSS = (s: number) => {
@@ -1368,6 +1511,36 @@ export const App: React.FC = () => {
   const hayMultiplesHumanos = estado
     ? estado.jugadores.filter((p) => p.tipo === 'humano').length >= 2
     : false;
+  const esLocalMultihumano = Boolean(estado && !estado.modoOnline && hayMultiplesHumanos);
+  const preferRotarTablero = Boolean(
+    estado?.config.rotationMode ?? ajustes.cambiarVistaPorTurno
+  );
+  const preferRotarControles = Boolean(
+    estado?.config.rotarControles ?? ajustes.rotarControlesSinTablero
+  );
+  // Activado: solo rota el tablero y las opciones permanecen fijas.
+  // Desactivado: el tablero queda fijo (0°) y, si preferRotarControles está activo, todas las opciones (incluida la barra de colocar muro) giran 180° arriba <-> abajo.
+  const rotationModeActivo = esLocalMultihumano && preferRotarTablero;
+  const activeHumanId =
+    estado &&
+    estado.jugadores[estado.turnoActual]?.tipo === 'humano' &&
+    !estado.jugadores[estado.turnoActual]?.eliminado
+      ? estado.turnoActual
+      : ultimoHumanoIdx;
+  const localActiveAngle =
+    estado && esLocalMultihumano
+      ? estado.n === 2
+        ? activeHumanId === 1
+          ? 180
+          : 0
+        : [0, -90, 180, 90][((activeHumanId % 4) + 4) % 4]
+      : 0;
+  const controlesInvertidos =
+    Boolean(estado && estado.n === 2) &&
+    esLocalMultihumano &&
+    !preferRotarTablero &&
+    preferRotarControles &&
+    localActiveAngle === 180;
   const dbDesconectado = diagRed.checkedOnce && (!diagRed.isOnline || !diagRed.dbConectado);
   const [mostrarBannerDesconexion, setMostrarBannerDesconexion] = useState<boolean>(false);
   const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1726,15 +1899,22 @@ export const App: React.FC = () => {
                 modoDaltonico={ajustes.modoDaltonico}
                 animacionesReducidas={ajustes.animacionesReducidas}
                 perspectivaInvertida={false}
-                rotationMode={false}
+                rotationMode={rotationModeActivo}
+                controlesInvertidos={controlesInvertidos}
                 vistaPropiaOnline={true}
                 temaTablero={temaTableroActivo}
               />
             </div>
 
-            {/* Panel lateral (en móvil se aplana con `contents` para respetar el orden Jugadores arriba y Acciones abajo) */}
+            {/* Panel lateral (en móvil se aplana con `contents` para respetar el orden Jugadores arriba y Acciones abajo, o invertido si el jugador 180° tiene su turno en mesa) */}
             <div className="contents lg:flex lg:flex-col lg:gap-2.5 lg:w-[320px] xl:w-[340px] lg:col-start-2 lg:row-start-1 lg:self-start">
-              <div className="order-1 lg:order-1 w-full max-w-[620px] lg:max-w-none shrink-0">
+              <div
+                className={`w-full max-w-[620px] lg:max-w-none shrink-0 ${
+                  controlesInvertidos
+                    ? 'order-3 lg:order-2 rotate-180'
+                    : 'order-1 lg:order-1'
+                }`}
+              >
                 <PlayerCards
                   estado={estado}
                   mostrarDistancia={ajustes.mostrarDistancia}
@@ -1742,7 +1922,13 @@ export const App: React.FC = () => {
                 />
               </div>
 
-              <div className="order-3 lg:order-2 w-full max-w-[560px] lg:max-w-none shrink-0">
+              <div
+                className={`w-full max-w-[560px] lg:max-w-none shrink-0 ${
+                  controlesInvertidos
+                    ? 'order-1 lg:order-1 rotate-180'
+                    : 'order-3 lg:order-2'
+                }`}
+              >
                 <ActionBar
                   estado={estado}
                   onCambiarModo={handleCambiarModo}
@@ -1863,9 +2049,32 @@ export const App: React.FC = () => {
       {modalActivo === 'ajustes' && (
         <AjustesModal
           ajustes={ajustes}
+          ocultarRotacion={Boolean(
+            screen === 'juego' && estado && (estado.modoOnline || !hayMultiplesHumanos)
+          )}
+          ocultarRotarControles={Boolean(
+            screen === 'juego' &&
+              estado &&
+              (estado.modoOnline || !hayMultiplesHumanos || estado.n !== 2)
+          )}
           onGuardar={(nuevos) => {
             setAjustes(nuevos);
             guardarAjustes(nuevos);
+            setEstado((prev) => {
+              if (!prev || prev.modoOnline) return prev;
+              const multiH = prev.jugadores.filter((p) => p.tipo === 'humano').length >= 2;
+              return multiH
+                ? {
+                    ...prev,
+                    config: {
+                      ...prev.config,
+                      rotationMode: Boolean(nuevos.cambiarVistaPorTurno),
+                      rotarControles:
+                        prev.n === 2 ? Boolean(nuevos.rotarControlesSinTablero) : false,
+                    },
+                  }
+                : prev;
+            });
           }}
           onCerrar={() => {
             setModalActivo(modalPrevio);
@@ -2042,6 +2251,61 @@ export const App: React.FC = () => {
             });
           }}
         />
+      )}
+
+      {confirmarAbandonoAbierto && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/65 backdrop-blur-sm animate-[fadeIn_0.15s_ease-out]">
+          <div
+            className={`w-full max-w-sm rounded-3xl p-5 flex flex-col gap-3 text-center ${
+              estiloMuros === 'clasico'
+                ? 'bg-[#fff8e7] border-4 border-[#2b2140] shadow-[0_8px_0_#2b2140]'
+                : estiloMuros === 'pastel_claro'
+                ? 'bg-[#FFFDF6] border border-[#DFD6BF] shadow-2xl text-[#171923]'
+                : 'bg-[#1B1F30] border border-white/15 shadow-2xl text-slate-100'
+            }`}
+          >
+            <div className="text-3xl">⚠️</div>
+            <h3 className="text-lg font-black leading-tight">¿Salir de la partida online?</h3>
+            <p className="text-xs font-semibold opacity-85 leading-relaxed">
+              Si abandonas ahora una partida online en curso, perderás{' '}
+              <strong className={estiloMuros === 'clasico' ? 'text-[#c92a2a]' : 'text-rose-400'}>
+                -5 puntos
+              </strong>{' '}
+              en tu perfil y ranking.
+            </p>
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playClick();
+                  setConfirmarAbandonoAbierto(false);
+                }}
+                className={`py-2.5 px-3 rounded-xl font-black text-xs cursor-pointer ${
+                  estiloMuros === 'clasico'
+                    ? 'bg-[#51cf66] text-[#134e20] border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                    : estiloMuros === 'pastel_claro'
+                    ? 'bg-[#B7EBD0] text-[#0F3D27] border border-[#8AD2AE]'
+                    : 'bg-emerald-400/20 text-emerald-200 border border-emerald-400/35'
+                }`}
+              >
+                Seguir jugando
+              </button>
+              <button
+                type="button"
+                onClick={() => ejecutarSalidaAlMenu(true)}
+                className={`py-2.5 px-3 rounded-xl font-black text-xs cursor-pointer ${
+                  estiloMuros === 'clasico'
+                    ? 'bg-[#ff6b6b] text-white border-2 border-[#2b2140] shadow-[0_2px_0_#2b2140]'
+                    : estiloMuros === 'pastel_claro'
+                    ? 'bg-[#FAD8DD] text-[#661924] border border-[#EEB1B9]'
+                    : 'bg-rose-400/20 text-rose-200 border border-rose-400/35'
+                }`}
+              >
+                Abandonar (-5 pts)
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <OfflineIndicator compact={screen !== 'menu' || Boolean(modalActivo)} />

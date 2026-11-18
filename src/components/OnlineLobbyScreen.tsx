@@ -260,7 +260,9 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
   const [esAnfitrionLocal, setEsAnfitrionLocal] = useState<boolean>(
     () => onlineService.getRole() === 'host'
   );
+  const [reconectandoSesion, setReconectandoSesion] = useState<boolean>(false);
   const autoJoinedCodeRef = useRef<string | null>(null);
+  const autoReconnectAttemptedRef = useRef<boolean>(false);
 
   const onConsumirRef = useRef(onConsumirSalaInicial);
   onConsumirRef.current = onConsumirSalaInicial;
@@ -402,6 +404,45 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
               ? detail
               : `No se pudo entrar automáticamente a la sala ${targetCode}. Verifica que siga abierta o pulsa "Unirme a la Sala".`
           );
+        });
+    }
+  }, [codigoSalaInicial]);
+
+  // Reconexión automática tras recargar (F5) si había una partida online en curso en sessionStorage
+  useEffect(() => {
+    if (autoReconnectAttemptedRef.current) return;
+    if (codigoSalaInicial) return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (normalizeRoomCode(params.get('sala') || '').length >= 3) return;
+    } catch {}
+
+    const saved = onlineService.getSavedSession();
+    if (
+      saved &&
+      saved.roomCode &&
+      saved.lastState &&
+      !saved.lastState.terminada &&
+      Date.now() - saved.timestamp < 120000
+    ) {
+      autoReconnectAttemptedRef.current = true;
+      setReconectandoSesion(true);
+      setConectando(true);
+      setErrorMsg(null);
+      onlineService
+        .reconectarUltimaSesion()
+        .then((res) => {
+          setReconectandoSesion(false);
+          setConectando(false);
+          if (res.ok) {
+            onShowToastRef.current(`⚡ Reconectado a la sala ${saved.roomCode}`);
+          } else if (res.error) {
+            setErrorMsg(res.error);
+          }
+        })
+        .catch(() => {
+          setReconectandoSesion(false);
+          setConectando(false);
         });
     }
   }, [codigoSalaInicial]);
@@ -570,6 +611,13 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
         </div>
         <div className="w-16" />
       </div>
+
+      {reconectandoSesion && (
+        <div className={`w-full p-3 rounded-2xl mb-2 flex items-center justify-center gap-2 text-xs font-bold animate-pulse ${t.bannerWarn}`}>
+          <span className="animate-spin">🔄</span>
+          <span>Reconectando a tu partida en curso...</span>
+        </div>
+      )}
 
       {tab !== 'en_sala' && (
         <div className="w-full flex-1 flex flex-col gap-3 py-1">

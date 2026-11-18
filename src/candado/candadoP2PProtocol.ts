@@ -44,6 +44,14 @@ export function prepararEnvioIntentoP2P(
     return { ok: false, error: 'Espera tu turno para probar combinación.' };
   }
 
+  const saltosMios = duelo.turnosSaltadosPorJugador?.[duelo.miJugadorId] ?? 0;
+  if (
+    duelo.config.maxIntentos > 0 &&
+    duelo.misIntentos.length + saltosMios >= duelo.config.maxIntentos
+  ) {
+    return { ok: false, error: 'Ya alcanzaste el límite de intentos de la sala.' };
+  }
+
   const entrada = entradaActual.join('');
   if (entrada.length !== duelo.config.digitos || entradaActual.some((x) => x === '')) {
     return { ok: false, error: `Completa los ${duelo.config.digitos} dígitos.` };
@@ -72,6 +80,7 @@ export function prepararEnvioIntentoP2P(
     nuevoEstado: {
       ...duelo,
       intentoPendiente: pendiente,
+      ultimoIntentoExpiradoPorLag: null,
     },
     mensaje: {
       type: 'CANDADO_GUESS',
@@ -239,16 +248,22 @@ export function procesarGuessRivalP2P(
       partidaTerminada = true;
       ganadorId = 1;
       motivoFin = `${nombres.rivalNombre} descifró tu candado en ${numeroEsperado} intentos.`;
-    } else if (
-      cur.config.maxIntentos > 0 &&
-      numeroEsperado >= cur.config.maxIntentos &&
-      cur.misIntentos.length >= cur.config.maxIntentos
-    ) {
-      partidaTerminada = true;
-      ganadorId = 'empate';
-      motivoFin = 'Se agotó el límite de intentos para ambos.';
     } else {
-      siguienteTurno = 0;
+      const saltosMios = cur.turnosSaltadosPorJugador?.[cur.miJugadorId] ?? 0;
+      const saltosRival = cur.turnosSaltadosPorJugador?.[1] ?? 0;
+      const consumidosMios = cur.misIntentos.length + saltosMios;
+      const consumidosRival = numeroEsperado + saltosRival;
+      if (
+        cur.config.maxIntentos > 0 &&
+        consumidosRival >= cur.config.maxIntentos &&
+        consumidosMios >= cur.config.maxIntentos
+      ) {
+        partidaTerminada = true;
+        ganadorId = 'empate';
+        motivoFin = 'Se agotó el límite de intentos para ambos.';
+      } else {
+        siguienteTurno = 0;
+      }
     }
   }
 
@@ -349,6 +364,18 @@ export function procesarClueRecibidaP2P(
       : 'derrota'
     : null;
 
+  const lagExp = cur.ultimoIntentoExpiradoPorLag;
+  const esRecuperacionDeLag = Boolean(
+    lagExp &&
+      (msg.actionId === `c_${lagExp.actionId}` || msg.intento.numero === lagExp.numeroIntento)
+  );
+  const saltosActuales: [number, number] = cur.turnosSaltadosPorJugador
+    ? [cur.turnosSaltadosPorJugador[0], cur.turnosSaltadosPorJugador[1]]
+    : [0, 0];
+  if (esRecuperacionDeLag) {
+    saltosActuales[cur.miJugadorId] = Math.max(0, saltosActuales[cur.miJugadorId] - 1);
+  }
+
   const nuevoEstado: EstadoDueloP2P = {
     ...cur,
     misIntentos: [msg.intento, ...cur.misIntentos],
@@ -357,6 +384,7 @@ export function procesarClueRecibidaP2P(
     yoDescifre: cur.yoDescifre || msg.descifrado,
     turnoIgualadorPendiente: msg.turnoIgualadorPendiente,
     turnoActual: msg.siguienteTurno,
+    turnosSaltadosPorJugador: saltosActuales,
     fase: msg.partidaTerminada ? 'terminada' : 'jugando',
     ganadorId: msg.ganadorId,
     desenlaceParaMi: desenlace,
@@ -364,6 +392,7 @@ export function procesarClueRecibidaP2P(
     tiempoRestanteTurno: cur.config.tiempoTurnoSeg,
     finMs: msg.partidaTerminada ? now : null,
     intentoPendiente: null,
+    ultimoIntentoExpiradoPorLag: null,
   };
 
   return {

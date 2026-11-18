@@ -35,6 +35,7 @@ import {
   IntentoLogico,
   IntentoMayorMenor,
   JugadorCandadoOnline,
+  LimiteIntentosCandado,
   MensajeCandadoP2P,
   ModoCandado,
   NotaDigito,
@@ -69,6 +70,14 @@ const TIEMPOS_TURNO: { valor: TiempoTurnoCandado; texto: string }[] = [
   { valor: 45, texto: '45s' },
   { valor: 60, texto: '60s' },
   { valor: 0, texto: 'Libre' },
+];
+
+const OPCIONES_INTENTOS_ONLINE: { valor: LimiteIntentosCandado; texto: string }[] = [
+  { valor: 0, texto: '∞ Libre' },
+  { valor: 20, texto: '20' },
+  { valor: 30, texto: '30' },
+  { valor: 40, texto: '40' },
+  { valor: 50, texto: '50' },
 ];
 
 const REACCIONES_RAPIDAS = ['👏', '🔥', '🧠', '😅', '😱', '🎯'];
@@ -137,6 +146,10 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
   const [revanchaEstado, setRevanchaEstado] = useState<
     'ninguna' | 'enviada' | 'recibida' | 'rechazada'
   >('ninguna');
+  const revanchaEstadoRef = useRef(revanchaEstado);
+  revanchaEstadoRef.current = revanchaEstado;
+  const soyAnfitrionRef = useRef(soyAnfitrion);
+  soyAnfitrionRef.current = soyAnfitrion;
 
   const errorTimerRef = useRef<number | null>(null);
   const secretoManualRef = useRef<string>('');
@@ -149,6 +162,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
   const retryGuessTimerRef = useRef<number | null>(null);
   const retryGuessTimer2Ref = useRef<number | null>(null);
   const cluesEmitidasRef = useRef(crearCacheCluesEmitidas());
+  const processedTimeoutsRef = useRef<Set<string>>(new Set());
 
   const limpiarBloqueoEnvio = useCallback(() => {
     envioEnCursoRef.current = null;
@@ -240,6 +254,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
 
       limpiarBloqueoEnvio();
       cluesEmitidasRef.current = crearCacheCluesEmitidas();
+      processedTimeoutsRef.current.clear();
 
       const nuevoDuelo: EstadoDueloP2P = {
         matchId,
@@ -269,7 +284,9 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
         tiempoRestanteTurno: cfgNorm.tiempoTurnoSeg,
         inicioMs: Date.now(),
         finMs: null,
+        turnosSaltadosPorJugador: [0, 0],
         intentoPendiente: null,
+        ultimoIntentoExpiradoPorLag: null,
       };
 
       dueloRef.current = nuevoDuelo;
@@ -404,16 +421,58 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
         }
 
         if (msg.type === 'CANDADO_REMATCH_REQUEST') {
-          if (msg.jugadorId !== dueloRef.current?.miJugadorId) {
-            setRevanchaEstado('recibida');
+          const curDuelo = dueloRef.current;
+          if (curDuelo && msg.jugadorId !== curDuelo.miJugadorId) {
+            if (revanchaEstadoRef.current === 'enviada') {
+              candadoOnlineService.send({
+                type: 'CANDADO_REMATCH_RESPONSE',
+                jugadorId: curDuelo.miJugadorId,
+                nombre: miPerfilSala.nombre,
+                aceptada: true,
+              });
+              if (soyAnfitrionRef.current) {
+                const newMatch = generarMatchIdCandado('cndp');
+                candadoOnlineService.send({
+                  type: 'CANDADO_START',
+                  matchId: newMatch,
+                  config: curDuelo.config,
+                  startId: `rm_${Date.now()}`,
+                });
+                await prepararDueloLocalmente(
+                  newMatch,
+                  curDuelo.codigoSala,
+                  curDuelo.config,
+                  curDuelo.miJugadorId,
+                  secretoManualRef.current
+                );
+              }
+            } else {
+              setRevanchaEstado('recibida');
+            }
           }
           return;
         }
 
         if (msg.type === 'CANDADO_REMATCH_RESPONSE') {
-          if (msg.jugadorId !== dueloRef.current?.miJugadorId) {
+          const curDuelo = dueloRef.current;
+          if (curDuelo && msg.jugadorId !== curDuelo.miJugadorId) {
             if (!msg.aceptada) {
               setRevanchaEstado('rechazada');
+            } else if (soyAnfitrionRef.current) {
+              const newMatch = generarMatchIdCandado('cndp');
+              candadoOnlineService.send({
+                type: 'CANDADO_START',
+                matchId: newMatch,
+                config: curDuelo.config,
+                startId: `rm_${Date.now()}`,
+              });
+              await prepararDueloLocalmente(
+                newMatch,
+                curDuelo.codigoSala,
+                curDuelo.config,
+                curDuelo.miJugadorId,
+                secretoManualRef.current
+              );
             }
           }
           return;
@@ -534,7 +593,21 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
 
         if (msg.type === 'CANDADO_TIMEOUT_SKIP') {
           if (msg.jugadorId === cur.miJugadorId || cur.fase !== 'jugando') return;
+          if (msg.actionId && processedTimeoutsRef.current.has(msg.actionId)) return;
+          // Ignorar skip tardío si ya procesamos el intento real de ese jugador en este turno
+          if (cur.turnoActual !== msg.jugadorId) return;
+          if (msg.actionId) processedTimeoutsRef.current.add(msg.actionId);
+
           limpiarBloqueoEnvio();
+          const saltos: [number, number] = cur.turnosSaltadosPorJugador
+            ? [cur.turnosSaltadosPorJugador[0], cur.turnosSaltadosPorJugador[1]]
+            : [0, 0];
+          const senderId: 0 | 1 = msg.jugadorId === 0 ? 0 : 1;
+          saltos[senderId] =
+            typeof msg.turnosSaltados === 'number'
+              ? Math.max(saltos[senderId], msg.turnosSaltados)
+              : saltos[senderId] + 1;
+
           const desenlace: EstadoDueloP2P['desenlaceParaMi'] = msg.partidaTerminada
             ? msg.ganadorId === 'empate'
               ? 'empate'
@@ -545,6 +618,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
           const actualizado: EstadoDueloP2P = {
             ...cur,
             turnoActual: msg.siguienteTurno,
+            turnosSaltadosPorJugador: saltos,
             fase: msg.partidaTerminada ? 'terminada' : 'jugando',
             ganadorId: msg.ganadorId,
             desenlaceParaMi: desenlace,
@@ -622,7 +696,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
     });
   }, [prepararDueloLocalmente, limpiarBloqueoEnvio]);
 
-  // Temporizador por turno P2P
+  // Temporizador por turno P2P (puro: actualiza dueloRef primero y emite efectos fuera de React updaters)
   useEffect(() => {
     if (subVista !== 'duelo' || !duelo || duelo.fase !== 'jugando' || duelo.config.tiempoTurnoSeg <= 0) {
       return;
@@ -630,14 +704,10 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
 
     let zeroWaitTicks = 0;
     const id = window.setInterval(() => {
-      const snap = dueloRef.current;
-      if (
-        snap &&
-        snap.fase === 'jugando' &&
-        snap.config.tiempoTurnoSeg > 0 &&
-        snap.turnoActual !== snap.miJugadorId &&
-        snap.tiempoRestanteTurno <= 1
-      ) {
+      const prev = dueloRef.current;
+      if (!prev || prev.fase !== 'jugando' || prev.config.tiempoTurnoSeg <= 0) return;
+
+      if (prev.turnoActual !== prev.miJugadorId && prev.tiempoRestanteTurno <= 1) {
         zeroWaitTicks += 1;
         if (zeroWaitTicks % 3 === 1) {
           candadoOnlineService.forceSyncPoll();
@@ -646,68 +716,113 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
         zeroWaitTicks = 0;
       }
 
-      setDuelo((prev) => {
-        if (!prev || prev.fase !== 'jugando' || prev.config.tiempoTurnoSeg <= 0) return prev;
-        const nextSeg = prev.tiempoRestanteTurno - 1;
-        if (nextSeg > 0) {
-          return { ...prev, tiempoRestanteTurno: nextSeg };
-        }
+      const nextSeg = prev.tiempoRestanteTurno - 1;
+      if (nextSeg > 0) {
+        const next: EstadoDueloP2P = { ...prev, tiempoRestanteTurno: nextSeg };
+        dueloRef.current = next;
+        setDuelo(next);
+        return;
+      }
 
-        // Si ya enviamos nuestro ataque y estamos esperando verificación del rival, no enviamos timeout skip prematuro
-        if (prev.intentoPendiente && Date.now() - prev.intentoPendiente.enviadoAt < 8000) {
-          return { ...prev, tiempoRestanteTurno: 0 };
-        }
+      // Si ya enviamos nuestro ataque y estamos esperando verificación del rival, dar margen de hasta 8s antes de auto-skip
+      if (prev.intentoPendiente && Date.now() - prev.intentoPendiente.enviadoAt < 8000) {
+        const next: EstadoDueloP2P = { ...prev, tiempoRestanteTurno: 0 };
+        dueloRef.current = next;
+        setDuelo(next);
+        return;
+      }
 
-        // Si es MI turno y se acabó el tiempo, envío auto-pase
-        if (prev.turnoActual === prev.miJugadorId) {
-          limpiarBloqueoEnvio();
-          const siguiente: 0 | 1 = prev.miJugadorId === 0 ? 1 : 0;
-          const pierdoIgualador = prev.turnoIgualadorPendiente && prev.miJugadorId === 1;
-          const ganadorId: 0 | 1 | 'empate' | null = pierdoIgualador ? 0 : null;
-          const desenlace: EstadoDueloP2P['desenlaceParaMi'] = pierdoIgualador ? 'derrota' : null;
-          const motivo = pierdoIgualador ? 'Se agotó el tiempo en el turno igualador.' : undefined;
+      // Si es MI turno y se acabó el tiempo (o expiró espera >8s), enviar auto-pase
+      if (prev.turnoActual === prev.miJugadorId) {
+        limpiarBloqueoEnvio();
+        const siguiente: 0 | 1 = prev.miJugadorId === 0 ? 1 : 0;
+        const saltos: [number, number] = prev.turnosSaltadosPorJugador
+          ? [prev.turnosSaltadosPorJugador[0], prev.turnosSaltadosPorJugador[1]]
+          : [0, 0];
+        saltos[prev.miJugadorId] += 1;
 
+        const pierdoIgualador = prev.turnoIgualadorPendiente && prev.miJugadorId === 1;
+        const consumidosMios = prev.misIntentos.length + saltos[prev.miJugadorId];
+        const consumidosRival = prev.intentosRival.length + saltos[siguiente];
+        const agotadoPorLimite =
+          !pierdoIgualador &&
+          prev.config.maxIntentos > 0 &&
+          prev.miJugadorId === 1 &&
+          consumidosMios >= prev.config.maxIntentos &&
+          consumidosRival >= prev.config.maxIntentos;
+
+        const termina = pierdoIgualador || agotadoPorLimite;
+        const ganadorId: 0 | 1 | 'empate' | null = pierdoIgualador
+          ? 0
+          : agotadoPorLimite
+          ? 'empate'
+          : null;
+        const desenlace: EstadoDueloP2P['desenlaceParaMi'] = pierdoIgualador
+          ? 'derrota'
+          : agotadoPorLimite
+          ? 'empate'
+          : null;
+        const motivo = pierdoIgualador
+          ? 'Se agotó el tiempo en el turno igualador.'
+          : agotadoPorLimite
+          ? 'Se agotó el límite de intentos para ambos.'
+          : undefined;
+
+        const lagInfo = prev.intentoPendiente
+          ? {
+              actionId: prev.intentoPendiente.actionId,
+              numeroIntento: prev.intentoPendiente.numeroIntento,
+            }
+          : null;
+
+        const next: EstadoDueloP2P = {
+          ...prev,
+          turnoActual: siguiente,
+          turnosSaltadosPorJugador: saltos,
+          fase: termina ? 'terminada' : 'jugando',
+          ganadorId,
+          desenlaceParaMi: desenlace,
+          motivoFin: motivo,
+          tiempoRestanteTurno: prev.config.tiempoTurnoSeg,
+          finMs: termina ? Date.now() : null,
+          intentoPendiente: null,
+          ultimoIntentoExpiradoPorLag: lagInfo,
+        };
+        dueloRef.current = next;
+        setDuelo(next);
+
+        candadoOnlineService.send({
+          type: 'CANDADO_TIMEOUT_SKIP',
+          matchId: prev.matchId,
+          jugadorId: prev.miJugadorId,
+          siguienteTurno: siguiente,
+          turnosSaltados: saltos[prev.miJugadorId],
+          partidaTerminada: termina,
+          ganadorId,
+          motivoFin: motivo,
+          actionId: `tmo_${Date.now()}_${prev.miJugadorId}`,
+        });
+
+        if (termina) {
+          candadoOnlineService.setInMatch(false);
           candadoOnlineService.send({
-            type: 'CANDADO_TIMEOUT_SKIP',
+            type: 'CANDADO_REVEAL',
             matchId: prev.matchId,
             jugadorId: prev.miJugadorId,
-            siguienteTurno: siguiente,
-            partidaTerminada: pierdoIgualador,
-            ganadorId,
-            motivoFin: motivo,
-            actionId: `tmo_${Date.now()}`,
+            secreto: prev.miSecreto,
+            sal: prev.miSal,
           });
-
-          if (pierdoIgualador) {
-            candadoOnlineService.setInMatch(false);
-            candadoOnlineService.send({
-              type: 'CANDADO_REVEAL',
-              matchId: prev.matchId,
-              jugadorId: prev.miJugadorId,
-              secreto: prev.miSecreto,
-              sal: prev.miSal,
-            });
-          }
-
-          return {
-            ...prev,
-            turnoActual: siguiente,
-            fase: pierdoIgualador ? 'terminada' : 'jugando',
-            ganadorId,
-            desenlaceParaMi: desenlace,
-            motivoFin: motivo,
-            tiempoRestanteTurno: prev.config.tiempoTurnoSeg,
-            finMs: pierdoIgualador ? Date.now() : null,
-            intentoPendiente: null,
-          };
         }
+        return;
+      }
 
-        return { ...prev, tiempoRestanteTurno: 0 };
-      });
+      const next: EstadoDueloP2P = { ...prev, tiempoRestanteTurno: 0 };
+      dueloRef.current = next;
+      setDuelo(next);
     }, 1000);
 
     return () => window.clearInterval(id);
-  }, [subVista, duelo?.fase, duelo?.config.tiempoTurnoSeg]);
+  }, [subVista, duelo?.fase, duelo?.config.tiempoTurnoSeg, limpiarBloqueoEnvio]);
 
   const crearSalaCandado = async () => {
     setErrorLobby(null);
@@ -1358,7 +1473,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
             </div>
 
             {/* Tiempo por turno + Visibilidad */}
-            <div className="grid grid-cols-2 gap-2 mb-3">
+            <div className="grid grid-cols-2 gap-2 mb-2.5">
               <div>
                 <label
                   className={`block text-[10px] font-semibold uppercase tracking-wider mb-1 ${
@@ -1432,6 +1547,40 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
                     Privada
                   </button>
                 </div>
+              </div>
+            </div>
+
+            {/* Límite de intentos en línea */}
+            <div className="mb-2.5">
+              <label
+                className={`block text-[10px] font-semibold uppercase tracking-wider mb-1 ${
+                  esMinimalista ? 'text-slate-400' : 'text-[#3A3F54]'
+                }`}
+              >
+                Límite de intentos
+              </label>
+              <div className="grid grid-cols-5 gap-1">
+                {OPCIONES_INTENTOS_ONLINE.map((op) => (
+                  <button
+                    key={op.valor}
+                    type="button"
+                    onClick={() => {
+                      candadoAudio.playDialTick();
+                      setConfigSala((prev) => ({ ...prev, maxIntentos: op.valor }));
+                    }}
+                    className={`py-1.5 rounded-lg text-[10px] font-semibold cursor-pointer border transition-colors ${
+                      configSala.maxIntentos === op.valor
+                        ? esMinimalista
+                          ? 'bg-violet-400/20 border-violet-300/40 text-violet-100'
+                          : 'bg-[#EAE2FC] border-[#C4B5EE] text-[#251A47]'
+                        : esMinimalista
+                        ? 'bg-slate-800 border-white/10 text-slate-300'
+                        : 'bg-[#FAF4E4] border-[#DDD3BA] text-[#282C3D]'
+                    }`}
+                  >
+                    {op.texto}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -1705,7 +1854,9 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
               {infoMetal?.metal || 'Arena'} ({configSala.digitos}D)
             </span>
             <span className={esMinimalista ? 'text-slate-300' : 'text-[#3A3F54]'}>
-              {configSala.tiempoTurnoSeg > 0 ? `${configSala.tiempoTurnoSeg}s/turno` : 'Sin límite'}
+              {configSala.tiempoTurnoSeg > 0 ? `${configSala.tiempoTurnoSeg}s/turno` : 'Sin tiempo'}
+              {' · '}
+              {configSala.maxIntentos > 0 ? `${configSala.maxIntentos} int.` : '∞ int.'}
             </span>
           </div>
 

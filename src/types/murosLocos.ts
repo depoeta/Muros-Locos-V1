@@ -163,6 +163,7 @@ export interface JugadorEnJuego {
   muros: number;
   targetType: 'row' | 'col';
   targetValue: number;
+  eliminado?: boolean;
   estadisticas: EstadisticasJugador;
 }
 
@@ -188,6 +189,7 @@ export interface ConfigDePartida {
   tamanoTablero?: TamanoTablero;
   temaTablero?: TemaTablero;
   rotationMode?: boolean;
+  rotarControles?: boolean;
 }
 
 export interface AccionRegistro {
@@ -215,6 +217,7 @@ export interface InstantaneaJuego {
     r: number;
     c: number;
     muros: number;
+    eliminado?: boolean;
     estadisticas: EstadisticasJugador;
   }[];
   murosH: number[][];
@@ -301,7 +304,7 @@ export type MensajeOnline =
   | { type: 'REACTION'; jugadorId: number; emoji: string }
   | { type: 'REMATCH_REQUEST'; jugadorId: number; nombre?: string }
   | { type: 'REMATCH_RESPONSE'; jugadorId: number; nombre?: string; aceptada: boolean }
-  | { type: 'PLAYER_LEFT'; jugadorId: number; nombre?: string }
+  | { type: 'PLAYER_LEFT'; jugadorId: number; nombre?: string; parcial?: boolean }
   | { type: 'PING'; turnosTotales?: number; turnoActual?: number; terminada?: boolean }
   | { type: 'PONG'; turnosTotales?: number; turnoActual?: number; terminada?: boolean }
   | { type: 'DIAG_PING'; ts: number }
@@ -364,6 +367,7 @@ export interface DesglosePuntos {
   murosUsados: number;
   finalCerrado: number;
   bonoDominacion?: number;
+  casiMetaDerrota?: number;
   bonoTorneo: number;
   ahorrador: number;
   rapidez: number;
@@ -461,6 +465,7 @@ export interface AjustesDeApp {
   permitirPistas: boolean;
   temaTablero: TemaTablero;
   cambiarVistaPorTurno?: boolean;
+  rotarControlesSinTablero?: boolean;
 }
 
 export interface InfoNivel {

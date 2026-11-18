@@ -286,6 +286,11 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
   );
 
   const errorTimeoutRef = useRef<number | null>(null);
+  const enviandoLocalRef = useRef<boolean>(false);
+  const entradaActualRef = useRef<string[]>(entradaActual);
+  entradaActualRef.current = entradaActual;
+  const cursorIdxRef = useRef<number>(cursorIdx);
+  cursorIdxRef.current = cursorIdx;
 
   useEffect(() => {
     candadoAudio.setEnabled(sonidoActivo);
@@ -346,7 +351,10 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
     const nuevoEstado = iniciarPartidaCandado(cfg);
     setConfig(cfg);
     setEstado(nuevoEstado);
-    setEntradaActual(new Array(cfg.digitos).fill(''));
+    const vacia = new Array(cfg.digitos).fill('');
+    entradaActualRef.current = vacia;
+    cursorIdxRef.current = 0;
+    setEntradaActual(vacia);
     setCursorIdx(0);
     setTiempoSegundos(0);
     setErrorMsg(null);
@@ -421,10 +429,13 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
         return;
       }
 
+      const curArr = entradaActualRef.current;
+      const curPos = cursorIdxRef.current;
+
       if (
         estado.config.modo === 'logico' &&
         !estado.config.permitirRepetidos &&
-        entradaActual.some((val, idx) => val === d && idx !== cursorIdx)
+        curArr.some((val, idx) => val === d && idx !== curPos)
       ) {
         dispararError(`El ${d} ya está colocado (modo únicos).`);
         return;
@@ -433,95 +444,110 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
       candadoAudio.playDigitInput();
       setErrorMsg(null);
 
-      setEntradaActual((prev) => {
-        const next = [...prev];
-        next[cursorIdx] = d;
-        return next;
-      });
+      const nextArr = [...curArr];
+      nextArr[curPos] = d;
+      entradaActualRef.current = nextArr;
+      setEntradaActual(nextArr);
 
       const len = estado.config.digitos;
-      let nextIdx = cursorIdx;
+      let nextIdx = curPos;
       for (let step = 1; step <= len; step++) {
-        const cand = (cursorIdx + step) % len;
-        if (cand > cursorIdx && entradaActual[cand] === '') {
+        const cand = (curPos + step) % len;
+        if (cand > curPos && nextArr[cand] === '') {
           nextIdx = cand;
           break;
         }
       }
-      if (nextIdx === cursorIdx && cursorIdx < len - 1) {
-        nextIdx = cursorIdx + 1;
+      if (nextIdx === curPos && curPos < len - 1) {
+        nextIdx = curPos + 1;
       }
+      cursorIdxRef.current = nextIdx;
       setCursorIdx(nextIdx);
     },
-    [estado, modoNotas, ciclarNota, entradaActual, cursorIdx, dispararError]
+    [estado, modoNotas, ciclarNota, dispararError]
   );
 
   const borrarDigito = useCallback(() => {
     if (!estado || estado.fase !== 'jugando') return;
     candadoAudio.playDelete();
     setErrorMsg(null);
-    if (entradaActual[cursorIdx] !== '') {
-      setEntradaActual((prev) => {
-        const next = [...prev];
-        next[cursorIdx] = '';
-        return next;
-      });
-    } else if (cursorIdx > 0) {
-      const prevIdx = cursorIdx - 1;
+    const curArr = entradaActualRef.current;
+    const curPos = cursorIdxRef.current;
+    if (curArr[curPos] !== '') {
+      const nextArr = [...curArr];
+      nextArr[curPos] = '';
+      entradaActualRef.current = nextArr;
+      setEntradaActual(nextArr);
+    } else if (curPos > 0) {
+      const prevIdx = curPos - 1;
+      const nextArr = [...curArr];
+      nextArr[prevIdx] = '';
+      cursorIdxRef.current = prevIdx;
+      entradaActualRef.current = nextArr;
       setCursorIdx(prevIdx);
-      setEntradaActual((prev) => {
-        const next = [...prev];
-        next[prevIdx] = '';
-        return next;
-      });
+      setEntradaActual(nextArr);
     }
-  }, [estado, entradaActual, cursorIdx]);
+  }, [estado]);
 
   const limpiarEntrada = useCallback(() => {
     if (!estado || estado.fase !== 'jugando') return;
     candadoAudio.playDelete();
-    setEntradaActual(new Array(estado.config.digitos).fill(''));
+    const vacia = new Array(estado.config.digitos).fill('');
+    entradaActualRef.current = vacia;
+    cursorIdxRef.current = 0;
+    setEntradaActual(vacia);
     setCursorIdx(0);
     setErrorMsg(null);
   }, [estado]);
 
   const enviarIntento = useCallback(() => {
-    if (!estado || estado.fase !== 'jugando') return;
-    const combinacion = entradaActual.join('');
-    if (combinacion.length !== estado.config.digitos || entradaActual.some((x) => x === '')) {
+    if (!estado || estado.fase !== 'jugando' || enviandoLocalRef.current) return;
+    const curArr = entradaActualRef.current;
+    const combinacion = curArr.join('');
+    if (combinacion.length !== estado.config.digitos || curArr.some((x) => x === '')) {
       dispararError(`Completa los ${estado.config.digitos} dígitos antes de probar.`);
       return;
     }
 
-    const res = registrarIntentoCandado(estado, combinacion);
-    if (!res.ok) {
-      dispararError(res.error || 'Combinación inválida.');
-      return;
-    }
+    enviandoLocalRef.current = true;
+    try {
+      const res = registrarIntentoCandado(estado, combinacion);
+      if (!res.ok) {
+        dispararError(res.error || 'Combinación inválida.');
+        return;
+      }
 
-    setEstado(res.estado);
-    setErrorMsg(null);
+      setEstado(res.estado);
+      setErrorMsg(null);
 
-    if (res.estado.fase === 'ganada') {
-      candadoAudio.playUnlock();
-      setTiempoSegundos(
-        Math.max(0, Math.floor(((res.estado.finMs || Date.now()) - res.estado.inicioMs) / 1000))
-      );
-    } else if (res.estado.fase === 'perdida') {
-      candadoAudio.playLockFail();
-      setTiempoSegundos(
-        Math.max(0, Math.floor(((res.estado.finMs || Date.now()) - res.estado.inicioMs) / 1000))
-      );
-    } else {
-      const exactos =
-        res.estado.config.modo === 'logico'
-          ? (res.intento as IntentoLogico)?.exactos || 0
-          : (res.intento as IntentoMayorMenor)?.exactosEnPosicion || 0;
-      candadoAudio.playAttemptCheck(exactos);
-      setEntradaActual(new Array(estado.config.digitos).fill(''));
-      setCursorIdx(0);
+      if (res.estado.fase === 'ganada') {
+        candadoAudio.playUnlock();
+        setTiempoSegundos(
+          Math.max(0, Math.floor(((res.estado.finMs || Date.now()) - res.estado.inicioMs) / 1000))
+        );
+      } else if (res.estado.fase === 'perdida') {
+        candadoAudio.playLockFail();
+        setTiempoSegundos(
+          Math.max(0, Math.floor(((res.estado.finMs || Date.now()) - res.estado.inicioMs) / 1000))
+        );
+      } else {
+        const exactos =
+          res.estado.config.modo === 'logico'
+            ? (res.intento as IntentoLogico)?.exactos || 0
+            : (res.intento as IntentoMayorMenor)?.exactosEnPosicion || 0;
+        candadoAudio.playAttemptCheck(exactos);
+        const vacia = new Array(estado.config.digitos).fill('');
+        entradaActualRef.current = vacia;
+        cursorIdxRef.current = 0;
+        setEntradaActual(vacia);
+        setCursorIdx(0);
+      }
+    } finally {
+      window.setTimeout(() => {
+        enviandoLocalRef.current = false;
+      }, 120);
     }
-  }, [estado, entradaActual, dispararError]);
+  }, [estado, dispararError]);
 
   useEffect(() => {
     if (
@@ -551,10 +577,14 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
         enviarIntento();
       } else if (e.key === 'ArrowLeft') {
         e.preventDefault();
-        setCursorIdx((c) => Math.max(0, c - 1));
+        const nextC = Math.max(0, cursorIdxRef.current - 1);
+        cursorIdxRef.current = nextC;
+        setCursorIdx(nextC);
       } else if (e.key === 'ArrowRight') {
         e.preventDefault();
-        setCursorIdx((c) => Math.min(estado.config.digitos - 1, c + 1));
+        const nextC = Math.min(estado.config.digitos - 1, cursorIdxRef.current + 1);
+        cursorIdxRef.current = nextC;
+        setCursorIdx(nextC);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -754,7 +784,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
             userActual={userActual}
             esMinimalista={esMinimalista}
             animacionesReducidas={animacionesReducidas}
-            configInicial={{ ...config, tiempoTurnoSeg: 45 }}
+            configInicial={{ ...config, maxIntentos: 0, tiempoTurnoSeg: 45 }}
             onVolverALocal={async () => {
               await candadoOnlineService.leaveRoom();
               setModalidadJuego('local');
@@ -1495,6 +1525,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                 cursorIdx={cursorIdx}
                 onSelectSlot={(idx) => {
                   candadoAudio.playDialTick();
+                  cursorIdxRef.current = idx;
                   setCursorIdx(idx);
                 }}
                 fase={estado.fase}

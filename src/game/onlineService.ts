@@ -146,6 +146,7 @@ export type OnlineEventCallback = {
   onRematchRequested?: (jugadorId: number, nombre: string) => void;
   onRematchResponded?: (jugadorId: number, nombre: string, aceptada: boolean) => void;
   onPlayerLeftRoom?: (nombre: string) => void;
+  onPeerEliminated?: (jugadorId: number, nombre: string) => void;
   onOpponentAbandoned?: (nombre: string) => void;
   onHostDisconnected?: (secondsRemaining: number) => void;
   onHostDisconnectWarning?: (secondsRemaining: number) => void;
@@ -204,11 +205,17 @@ class OnlineManager {
   private isIntentionalExit: boolean = false;
   private rivalLeftAfterMatch: boolean = false;
   private roomClosedRemotely: boolean = false;
+  private httpQueue: { url: string; body: string; attempts: number }[] = [];
+  private httpQueueRunning: boolean = false;
 
   constructor() {
     if (typeof window !== 'undefined') {
       const handleUnload = () => {
         if (this.role && this.roomCode && !this.isIntentionalExit) {
+          if (this.currentGameState && !this.currentGameState.terminada) {
+            this.saveActiveSession();
+            return;
+          }
           this.cleanUp();
         }
       };
@@ -617,6 +624,45 @@ class OnlineManager {
 
         if (this.lobbyPlayers.length >= this.maxPlayers) {
           this.callbacks.onLobbyFull?.(this.maxPlayers);
+        }
+      }
+    } else if (this.currentGameState && !this.currentGameState.terminada) {
+      const departed = this.lobbyPlayers.filter(
+        (prev) =>
+          !prev.esAnfitrion &&
+          !remoteList.some((r) => r.id === prev.id || r.peerId === prev.peerId)
+      );
+      for (const dep of departed) {
+        this.lobbyPlayers = this.lobbyPlayers.filter((p) => p.id !== dep.id);
+        const oldSlot = this.hostPeers.get(dep.peerId);
+        if (oldSlot) {
+          try {
+            oldSlot.dc?.close();
+            oldSlot.pc.close();
+          } catch {}
+          this.hostPeers.delete(dep.peerId);
+        }
+        this.lastSeenMap.delete(dep.peerId);
+        const activeRemaining = this.currentGameState.jugadores.filter(
+          (j) => !j.eliminado && j.id !== dep.id
+        );
+        if (this.maxPlayers === 4 && activeRemaining.length >= 2) {
+          this.callbacks.onPeerEliminated?.(dep.id, dep.nombre);
+        } else {
+          this.notifyPeerDeparture(dep.nombre);
+        }
+      }
+
+      for (const rem of remoteList) {
+        if (rem.esAnfitrion) continue;
+        const idx = this.lobbyPlayers.findIndex((p) => p.id === rem.id);
+        if (idx >= 0 && this.lobbyPlayers[idx].peerId !== rem.peerId) {
+          this.lobbyPlayers[idx] = {
+            ...this.lobbyPlayers[idx],
+            peerId: rem.peerId,
+            conectado: true,
+          };
+          this.lastSeenMap.set(rem.peerId, Date.now());
         }
       }
     }
@@ -1147,20 +1193,53 @@ class OnlineManager {
     };
   }
 
-  private async postFallbackMessage(msg: MensajeOnline, toPeerId?: string) {
-    if (!this.roomCode) return;
+  private async drainHttpQueue() {
+    if (this.httpQueueRunning) return;
+    this.httpQueueRunning = true;
     try {
-      await fetch(getApiBaseUrl(`/api/salas/${encodeURIComponent(this.roomCode)}/msg`), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        cache: 'no-store',
-        body: JSON.stringify({
-          from: this.myPeerId,
-          to: toPeerId || null,
-          msg,
-        }),
-      });
-    } catch {}
+      while (this.httpQueue.length > 0 && !this.isIntentionalExit && this.roomCode) {
+        const item = this.httpQueue[0];
+        try {
+          const res = await fetch(item.url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            cache: 'no-store',
+            body: item.body,
+          });
+          if (
+            res.ok ||
+            (res.status >= 400 && res.status < 500 && res.status !== 409 && res.status !== 429)
+          ) {
+            this.httpQueue.shift();
+            continue;
+          }
+        } catch {
+          // retry on transient network errors
+        }
+        item.attempts += 1;
+        if (item.attempts >= 3) {
+          this.httpQueue.shift();
+          continue;
+        }
+        await new Promise((r) => setTimeout(r, 150 * item.attempts));
+      }
+    } finally {
+      this.httpQueueRunning = false;
+    }
+  }
+
+  private postFallbackMessage(msg: MensajeOnline, toPeerId?: string) {
+    if (!this.roomCode || this.isIntentionalExit) return;
+    this.httpQueue.push({
+      url: getApiBaseUrl(`/api/salas/${encodeURIComponent(this.roomCode)}/msg`),
+      body: JSON.stringify({
+        from: this.myPeerId,
+        to: toPeerId || null,
+        msg,
+      }),
+      attempts: 0,
+    });
+    this.drainHttpQueue();
   }
 
   private sendToHost(msg: MensajeOnline) {
@@ -1341,10 +1420,38 @@ class OnlineManager {
       }
       this.callbacks.onRematchResponded?.(msg.jugadorId, senderName, msg.aceptada);
     } else if (msg.type === 'PLAYER_LEFT') {
+      const leftPlayer = this.lobbyPlayers.find(
+        (p) => p.peerId === senderPeerId || p.id === msg.jugadorId
+      );
       const senderName =
         msg.nombre ||
         this.currentGameState?.jugadores[msg.jugadorId]?.nombre ||
+        leftPlayer?.nombre ||
         'El otro jugador';
+      const leftId = leftPlayer?.id ?? msg.jugadorId;
+
+      if (this.maxPlayers === 4 && this.currentGameState && !this.currentGameState.terminada) {
+        this.lobbyPlayers = this.lobbyPlayers.filter(
+          (p) => p.peerId !== senderPeerId && p.id !== leftId
+        );
+        const slot = this.hostPeers.get(senderPeerId);
+        if (slot) {
+          try {
+            slot.dc?.close();
+            slot.pc.close();
+          } catch {}
+          this.hostPeers.delete(senderPeerId);
+        }
+        this.lastSeenMap.delete(senderPeerId);
+        const activeInGame = this.currentGameState.jugadores.filter(
+          (j) => !j.eliminado && j.id !== leftId
+        );
+        if (activeInGame.length >= 2) {
+          this.callbacks.onPeerEliminated?.(leftId, senderName);
+          return;
+        }
+      }
+
       this.broadcast(msg);
       this.notifyPeerDeparture(senderName);
     }
@@ -1647,6 +1754,40 @@ class OnlineManager {
       this.callbacks.onHostDisconnectWarning?.(secondsLeft);
       if (secondsLeft <= 0) {
         this.stopReconnectGracePeriod();
+        if (
+          this.role === 'host' &&
+          this.maxPlayers === 4 &&
+          this.currentGameState &&
+          !this.currentGameState.terminada
+        ) {
+          const now = Date.now();
+          const silentPeers = this.lobbyPlayers.filter(
+            (p) => !p.esAnfitrion && now - (this.lastSeenMap.get(p.peerId) || 0) > 12000
+          );
+          if (silentPeers.length > 0) {
+            const silentIds = new Set(silentPeers.map((p) => p.id));
+            const remainingActive = this.currentGameState.jugadores.filter(
+              (j) => !j.eliminado && !silentIds.has(j.id)
+            );
+            if (remainingActive.length >= 2) {
+              for (const sp of silentPeers) {
+                this.lobbyPlayers = this.lobbyPlayers.filter((p) => p.id !== sp.id);
+                const slot = this.hostPeers.get(sp.peerId);
+                if (slot) {
+                  try {
+                    slot.dc?.close();
+                    slot.pc.close();
+                  } catch {}
+                  this.hostPeers.delete(sp.peerId);
+                }
+                this.lastSeenMap.delete(sp.peerId);
+                this.callbacks.onPeerEliminated?.(sp.id, sp.nombre);
+              }
+              this.callbacks.onHostReconnected?.();
+              return;
+            }
+          }
+        }
         this.callbacks.onDisconnectTimeout?.();
       }
     }, 1000);
@@ -1656,6 +1797,60 @@ class OnlineManager {
     if (this.countdownInterval) {
       clearInterval(this.countdownInterval);
       this.countdownInterval = null;
+    }
+  }
+
+  public async reconectarUltimaSesion(): Promise<{
+    ok: boolean;
+    state?: EstadoDeJuego;
+    error?: string;
+  }> {
+    const saved = this.getSavedSession();
+    if (!saved || !saved.roomCode || !saved.lastState || saved.lastState.terminada) {
+      return { ok: false, error: 'No hay ninguna partida online activa para reconectar.' };
+    }
+    try {
+      await this.joinRoom(saved.roomCode, saved.myName, saved.myColor, saved.myHat, {
+        cuentaId: saved.myCuentaId,
+        ropa: saved.myRopa,
+        ropaColor: saved.myRopaColor,
+        aura: saved.myAura,
+      });
+
+      const esAnfitrionReales = this.role === 'host';
+      const restoredState: EstadoDeJuego = {
+        ...saved.lastState,
+        miJugadorId: this.myPlayerId,
+        esAnfitrion: esAnfitrionReales,
+        modoOnline: true,
+      };
+      this.currentGameState = restoredState;
+      this.saveActiveSession();
+
+      if (esAnfitrionReales) {
+        this.lastHandledStartId = `resume_${this.roomCode}`;
+        this.broadcast({
+          type: 'HOST_RESUMED',
+          state: prepareWireState(restoredState),
+        });
+      } else {
+        this.sendToHost({
+          type: 'REQUEST_SYNC',
+          jugadorId: this.myPlayerId,
+          turnosTotales: restoredState.turnosTotales,
+        });
+      }
+
+      this.callbacks.onStateSync?.(restoredState);
+      return { ok: true, state: restoredState };
+    } catch (err: any) {
+      try {
+        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      } catch {}
+      return {
+        ok: false,
+        error: err?.message || 'La sala ya no está disponible para reconectar.',
+      };
     }
   }
 
@@ -1794,6 +1989,8 @@ class OnlineManager {
     }
 
     this.isIntentionalExit = true;
+    this.httpQueue = [];
+    this.httpQueueRunning = false;
     this.rivalLeftAfterMatch = false;
     this.roomClosedRemotely = false;
     this.hadWebRtcOpenInMatch = false;

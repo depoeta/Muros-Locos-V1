@@ -162,12 +162,19 @@ export interface EstadoDueloP2P {
   tiempoRestanteTurno: number;
   inicioMs: number;
   finMs: number | null;
+  /** Conteo de turnos saltados por tiempo agotado [P0, P1] para respetar maxIntentos */
+  turnosSaltadosPorJugador?: [number, number];
   /** Bloqueo optimista del intento enviado mientras se espera CANDADO_CLUE del rival */
   intentoPendiente?: {
     actionId: string;
     entrada: string;
     numeroIntento: number;
     enviadoAt: number;
+  } | null;
+  /** Permite reconciliar si un intento tardío recibe CANDADO_CLUE tras un auto-skip local por >=8s */
+  ultimoIntentoExpiradoPorLag?: {
+    actionId: string;
+    numeroIntento: number;
   } | null;
 }
 
@@ -211,6 +218,7 @@ export type MensajeCandadoP2P =
       matchId: string;
       jugadorId: number;
       siguienteTurno: 0 | 1;
+      turnosSaltados?: number;
       partidaTerminada: boolean;
       ganadorId: 0 | 1 | 'empate' | null;
       motivoFin?: string;

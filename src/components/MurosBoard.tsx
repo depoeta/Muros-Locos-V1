@@ -23,6 +23,7 @@ interface MurosBoardProps {
   perspectivaInvertida?: boolean;
   rotacionGrados?: number;
   rotationMode?: boolean;
+  controlesInvertidos?: boolean;
   vistaPropiaOnline?: boolean;
   onTogglePerspectiva?: () => void;
   onMover: (destino: Coordenada) => void;
@@ -100,6 +101,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
   perspectivaInvertida = false,
   rotacionGrados = 0,
   rotationMode = false,
+  controlesInvertidos = false,
   vistaPropiaOnline = true,
   onTogglePerspectiva,
   onMover,
@@ -117,13 +119,13 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
 
   // Guardamos el último turno de un jugador HUMANO para no girar nunca hacia el lado de un Bot
   const [ultimoHumanoIdx, setUltimoHumanoIdx] = useState<number>(() => {
-    const firstHuman = estado.jugadores.find((p) => p.tipo === 'humano');
+    const firstHuman = estado.jugadores.find((p) => p.tipo === 'humano' && !p.eliminado);
     return firstHuman ? firstHuman.id : 0;
   });
 
   useEffect(() => {
     const actual = estado.jugadores[estado.turnoActual];
-    if (actual && actual.tipo === 'humano') {
+    if (actual && actual.tipo === 'humano' && !actual.eliminado) {
       setUltimoHumanoIdx(estado.turnoActual);
     }
   }, [estado.turnoActual, estado.jugadores]);
@@ -167,17 +169,22 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
     return angulos4P[((jugadorId % 4) + 4) % 4];
   };
 
+  const activeHumanId =
+    jugadorActivo && jugadorActivo.tipo === 'humano' && !jugadorActivo.eliminado
+      ? estado.turnoActual
+      : ultimoHumanoIdx;
+
   // Cambio de perspectiva instantáneo (aparece de inmediato sin girar: transition 'none')
   const anguloRotacion = React.useMemo(() => {
-    if (!hayMultiplesHumanos && !estado.modoOnline) {
-      return 0; // Contra bots siempre fija al lado del humano
-    }
     if (estado.modoOnline) {
       const miId = estado.miJugadorId ?? 0;
       return obtenerAnguloJugador(miId, estado.n);
     }
-    return obtenerAnguloJugador(ultimoHumanoIdx, estado.n);
-  }, [hayMultiplesHumanos, estado.modoOnline, estado.miJugadorId, estado.n, ultimoHumanoIdx]);
+    if (!hayMultiplesHumanos || !rotationMode) {
+      return 0; // Fijo si solo hay 1 humano o rotación desactivada
+    }
+    return obtenerAnguloJugador(activeHumanId, estado.n);
+  }, [hayMultiplesHumanos, rotationMode, estado.modoOnline, estado.miJugadorId, estado.n, activeHumanId]);
 
   const esRotacionLateral = Math.abs(anguloRotacion % 180) === 90;
   const etiquetaOrientacionVisual = esRotacionLateral
@@ -310,28 +317,37 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
       if (isUp || isDown || isLeft || isRight) {
         e.preventDefault();
 
+        // Transformar dirección visual en pantalla según la rotación del tablero
+        const sDr = isUp ? -1 : isDown ? 1 : 0;
+        const sDc = isLeft ? -1 : isRight ? 1 : 0;
+        const normAngle = ((anguloRotacion % 360) + 360) % 360;
+        let dr = sDr;
+        let dc = sDc;
+        if (normAngle === 180) {
+          dr = -sDr;
+          dc = -sDc;
+        } else if (normAngle === 90) {
+          dr = -sDc;
+          dc = sDr;
+        } else if (normAngle === 270) {
+          dr = sDc;
+          dc = -sDr;
+        }
+
         // Modo Mover: desplazarse a casilla legal
         if (estado.modoAccion === 'mover') {
           const curR = jugadorActivo.r;
           const curC = jugadorActivo.c;
 
           let matched: Coordenada | undefined;
-          if (isUp) {
+          if (dr !== 0) {
             matched =
-              movimientos.find((m) => m.r < curR && m.c === curC) ||
-              movimientos.find((m) => m.r < curR);
-          } else if (isDown) {
+              movimientos.find((m) => Math.sign(m.r - curR) === dr && m.c === curC) ||
+              movimientos.find((m) => Math.sign(m.r - curR) === dr);
+          } else if (dc !== 0) {
             matched =
-              movimientos.find((m) => m.r > curR && m.c === curC) ||
-              movimientos.find((m) => m.r > curR);
-          } else if (isLeft) {
-            matched =
-              movimientos.find((m) => m.c < curC && m.r === curR) ||
-              movimientos.find((m) => m.c < curC);
-          } else if (isRight) {
-            matched =
-              movimientos.find((m) => m.c > curC && m.r === curR) ||
-              movimientos.find((m) => m.c > curC);
+              movimientos.find((m) => Math.sign(m.c - curC) === dc && m.r === curR) ||
+              movimientos.find((m) => Math.sign(m.c - curC) === dc);
           }
 
           if (matched) {
@@ -347,13 +363,8 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
             const centerWall = Math.floor((wallGridSize - 1) / 2);
             const curR = prev ? prev.r : centerWall;
             const curC = prev ? prev.c : centerWall;
-            let nextR = curR;
-            let nextC = curC;
-
-            if (isUp) nextR = Math.max(0, curR - 1);
-            if (isDown) nextR = Math.min(wallGridSize - 1, curR + 1);
-            if (isLeft) nextC = Math.max(0, curC - 1);
-            if (isRight) nextC = Math.min(wallGridSize - 1, curC + 1);
+            const nextR = Math.max(0, Math.min(wallGridSize - 1, curR + dr));
+            const nextC = Math.max(0, Math.min(wallGridSize - 1, curC + dc));
 
             updatePreview(nextR, nextC);
             sounds.playClick();
@@ -379,6 +390,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
     bloqueadoPorAnimacion,
     estado.terminada,
     estado.modoAccion,
+    anguloRotacion,
     wallGridSize,
     jugadorActivo,
     movimientos,
@@ -422,7 +434,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
 
       {/* Outer Themed Board Frame (Sin animación de giro, tamaño ajustado al viewport dvh/desktop) */}
       <div
-        className={`relative aspect-square min-w-[230px] min-h-[230px] rounded-3xl p-2 sm:p-2.5 ${
+        className={`order-2 relative aspect-square min-w-[230px] min-h-[230px] rounded-3xl p-2 sm:p-2.5 ${
           estado.modoOnline
             ? 'w-[min(94vw,calc(100dvh-365px))] lg:w-[min(560px,calc(100vw-400px),calc(100dvh-172px))]'
             : 'w-[min(94vw,calc(100dvh-335px))] lg:w-[min(580px,calc(100vw-400px),calc(100dvh-140px))]'
@@ -463,7 +475,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
               const isLegalMove = movimientos.some((m) => m.r === r && m.c === c);
               const isTargetForActive = isGoalForActivePlayer(r, c);
               const isHint = estado.caminoPista?.some((pt) => pt.r === r && pt.c === c);
-              const hasPlayer = estado.jugadores.some((p) => p.r === r && p.c === c);
+              const hasPlayer = estado.jugadores.some((p) => !p.eliminado && p.r === r && p.c === c);
 
               const tileBg = isEven ? currentTheme.tileEven : currentTheme.tileOdd;
 
@@ -604,6 +616,7 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
           {/* Absolute Characters Overlay with Stepped Walking Animation */}
           <div className="absolute inset-0 pointer-events-none z-20">
             {estado.jugadores.map((player) => {
+              if (player.eliminado) return null;
               const vis = toVisualCell(player.r, player.c);
               return (
                 <motion.div
@@ -762,8 +775,12 @@ export const MurosBoard: React.FC<MurosBoardProps> = ({
         </div>
       </div>
 
-      {/* Barra inferior de estado/confirmación de altura fija (cero saltos al cambiar Mover ↔ Muro) */}
-      <div className="h-10 mt-1.5 w-full max-w-[580px] flex items-center justify-center shrink-0">
+      {/* Barra de estado/confirmación de muro de altura fija (se mueve y rota 180° junto a las opciones cuando controlesInvertidos está activo) */}
+      <div
+        className={`h-10 w-full max-w-[580px] flex items-center justify-center shrink-0 ${
+          controlesInvertidos ? 'order-1 mb-1.5 rotate-180' : 'order-3 mt-1.5'
+        }`}
+      >
         {estado.terminada ? (
           <div className={`h-9 px-3.5 rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 ${t.esClasico ? 'bg-[#fff8e7] border-2 border-[#2b2140] text-[#593922] font-extrabold' : t.shell}`}>
             <span>🏁 Partida finalizada</span>

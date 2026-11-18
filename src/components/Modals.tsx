@@ -624,11 +624,19 @@ export const AspectoModal: React.FC<AspectoModalProps> = ({
 // =========================================================================
 interface AjustesModalProps {
   ajustes: AjustesDeApp;
+  ocultarRotacion?: boolean;
+  ocultarRotarControles?: boolean;
   onGuardar: (nuevosAjustes: AjustesDeApp) => void;
   onCerrar: () => void;
 }
 
-export const AjustesModal: React.FC<AjustesModalProps> = ({ ajustes, onGuardar, onCerrar }) => {
+export const AjustesModal: React.FC<AjustesModalProps> = ({
+  ajustes,
+  ocultarRotacion = false,
+  ocultarRotarControles = false,
+  onGuardar,
+  onCerrar,
+}) => {
   const { estilo, setEstilo, t } = useMurosTheme();
   const [localAjustes, setLocalAjustes] = useState<AjustesDeApp>({ ...ajustes });
 
@@ -649,14 +657,37 @@ export const AjustesModal: React.FC<AjustesModalProps> = ({ ajustes, onGuardar, 
     onCerrar();
   };
 
-  const opciones: { key: keyof AjustesDeApp; label: string; desc: string; icon: string }[] = [
+  const todasOpciones: { key: keyof AjustesDeApp; label: string; desc: string; icon: string }[] = [
     { key: 'sonido', label: 'Efectos de Sonido', desc: 'Sonidos retro y efectos en cada jugada', icon: '🔊' },
     { key: 'animacionesReducidas', label: 'Animaciones Reducidas', desc: 'Simplifica transiciones visuales del juego', icon: '⚡' },
     { key: 'mostrarDistancia', label: 'Mostrar Distancia a Meta', desc: 'Indica los pasos mínimos en la tarjeta', icon: '📏' },
     { key: 'permitirDeshacer', label: 'Permitir Deshacer', desc: 'Permite retroceder turnos (-2 pts)', icon: '↩️' },
     { key: 'permitirPistas', label: 'Permitir Pistas', desc: 'Muestra el camino óptimo a la meta (-1 pt)', icon: '💡' },
+    {
+      key: 'cambiarVistaPorTurno',
+      label: 'Girar Tablero por Turno',
+      desc: 'Activado: gira solo el tablero hacia el jugador activo (2+ humanos).',
+      icon: '🔄',
+    },
+    {
+      key: 'rotarControlesSinTablero',
+      label: 'Girar Controles en Tablero Fijo',
+      desc: 'Solo 1v1 en celular: mueve y rota 180° las opciones y botones de muro sin girar el tablero.',
+      icon: '🔁',
+    },
     { key: 'modoDaltonico', label: 'Modo Alto Contraste / Daltónico', desc: 'Iconos distintivos en las metas', icon: '👁️' },
   ];
+  const opciones = todasOpciones.filter((op) => {
+    if (op.key === 'cambiarVistaPorTurno') return !ocultarRotacion;
+    if (op.key === 'rotarControlesSinTablero') {
+      return (
+        !ocultarRotacion &&
+        !ocultarRotarControles &&
+        !localAjustes.cambiarVistaPorTurno
+      );
+    }
+    return true;
+  });
 
   const estilosLista: EstiloMuros[] = ['pastel_oscuro', 'pastel_claro', 'clasico'];
 
@@ -860,13 +891,22 @@ export const ComoJugarModal: React.FC<{ onCerrar: () => void }> = ({ onCerrar })
                 <strong>Uso de muros:</strong> <strong>+1 pt</strong> por cada muro colocado.
               </li>
               <li>
-                <strong>¡Por los pelos!:</strong> <strong>+5 pts extra</strong> si ganas cuando un rival estaba a solo <strong>1 cuadro</strong> de su meta.
+                <strong>¡Por los pelos!:</strong> <strong>+5 pts extra</strong> si ganas cuando un rival estaba a solo <strong>1 o 2 cuadros</strong> de su meta.
               </li>
               <li>
-                <strong>Torneos:</strong> <strong>+5 pts</strong> por cada ronda ganada (más muros y final ajustado) y <strong>+10 pts adicionales</strong> si ganas el torneo completo.
+                <strong>Dominación:</strong> <strong>+5 pts extra</strong> si ganas manteniendo a un rival a <strong>≤2 cuadros</strong> de su base de salida.
               </li>
               <li>
-                <strong>Penalizaciones:</strong> Pista (<strong>-1 pt</strong>), Deshacer (<strong>-2 pts</strong>), Tiempo agotado (<strong>-1 pt</strong>) y Abandonar (<strong>-5 pts</strong>).
+                <strong>¡Casi lo logras!:</strong> <strong>+2 pts</strong> de consuelo si pierdes estando a <strong>1 o 2 cuadros</strong> de tu meta.
+              </li>
+              <li>
+                <strong>Jugadas especiales:</strong> Muro maestro (<strong>+1/+2 pts</strong>), Saltador ágil (<strong>+1 pt</strong> por ≥2 saltos), Victoria limpia (<strong>+1 pt</strong>).
+              </li>
+              <li>
+                <strong>Torneos:</strong> <strong>+5 pts</strong> por cada ronda ganada (más muros y bonos) y <strong>+10 pts adicionales</strong> si ganas el torneo completo.
+              </li>
+              <li>
+                <strong>Penalizaciones:</strong> Pista (<strong>-1 pt</strong>), Deshacer (<strong>-2 pts</strong>), Tiempo agotado (<strong>-1 pt</strong>) y Abandonar partida online (<strong>-5 pts</strong>).
               </li>
             </ul>
           </div>
@@ -1691,6 +1731,8 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
     resultado: selectedPlayerId === ganador.id ? 5 : 0,
     murosUsados: 0,
     finalCerrado: 0,
+    bonoDominacion: 0,
+    casiMetaDerrota: 0,
     bonoTorneo: 0,
     ahorrador: 0,
     rapidez: 0,
@@ -1799,8 +1841,8 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
                 selectedPlayerId === p.id ? t.tabActive : t.tabInactive
               }`}
             >
-              <span>{p.id === ganador.id ? '👑' : '👤'}</span>
-              <span>{p.nombre}</span>
+              <span>{p.id === ganador.id ? '👑' : p.eliminado ? '🚪' : '👤'}</span>
+              <span>{p.nombre}{p.eliminado ? ' (Salió)' : ''}</span>
             </button>
           ))}
         </div>
@@ -1830,14 +1872,38 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
           </div>
           {jugadorDesglose.finalCerrado > 0 && (
             <div className={`flex justify-between font-bold ${t.esOscuro ? 'text-amber-300' : 'text-[#d9480f]'}`}>
-              <span>⚡ ¡Por los pelos! (rival a 1 cuadro):</span>
+              <span>⚡ ¡Por los pelos! (rival a ≤2 cuadros):</span>
               <span className="font-mono-num">+{jugadorDesglose.finalCerrado}</span>
             </div>
           )}
           {Boolean(jugadorDesglose.bonoDominacion && jugadorDesglose.bonoDominacion > 0) && (
             <div className={`flex justify-between font-bold ${t.accentText}`}>
-              <span>🎯 Dominación (rival retenido en inicio ≤2 casillas):</span>
+              <span>🎯 Dominación (rival a ≤2 de su base):</span>
               <span className="font-mono-num">+{jugadorDesglose.bonoDominacion}</span>
+            </div>
+          )}
+          {Boolean(jugadorDesglose.casiMetaDerrota && jugadorDesglose.casiMetaDerrota > 0) && (
+            <div className={`flex justify-between font-bold ${t.esOscuro ? 'text-sky-300' : 'text-[#1864ab]'}`}>
+              <span>🔥 ¡Casi lo logras! (a ≤2 cuadros de meta):</span>
+              <span className="font-mono-num">+{jugadorDesglose.casiMetaDerrota}</span>
+            </div>
+          )}
+          {jugadorDesglose.muroMaestro > 0 && (
+            <div className={`flex justify-between font-semibold ${t.muted}`}>
+              <span>🏰 Muro maestro:</span>
+              <span className="font-mono-num font-bold">+{jugadorDesglose.muroMaestro}</span>
+            </div>
+          )}
+          {jugadorDesglose.saltador > 0 && (
+            <div className={`flex justify-between font-semibold ${t.muted}`}>
+              <span>🦘 Saltador ágil (2+ saltos):</span>
+              <span className="font-mono-num font-bold">+{jugadorDesglose.saltador}</span>
+            </div>
+          )}
+          {jugadorDesglose.partidaLimpia > 0 && (
+            <div className={`flex justify-between font-semibold ${t.muted}`}>
+              <span>✨ Victoria limpia:</span>
+              <span className="font-mono-num font-bold">+{jugadorDesglose.partidaLimpia}</span>
             </div>
           )}
           {jugadorDesglose.bonoTorneo > 0 && (

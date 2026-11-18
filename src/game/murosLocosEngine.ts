@@ -482,8 +482,12 @@ export function movimientosLegales(jugador: JugadorEnJuego, estado: EstadoDeJueg
   ];
 
   const ocupadoPor = (r: number, c: number): JugadorEnJuego | undefined => {
-    return estado.jugadores.find((p) => p.r === r && p.c === c);
+    return estado.jugadores.find((p) => !p.eliminado && p.r === r && p.c === c);
   };
+
+  if (jugador.eliminado) {
+    return res;
+  }
 
   for (const { dr, dc } of direcciones) {
     if (bloqueado(jugador.r, jugador.c, dr, dc, estado.murosH, estado.murosV)) {
@@ -667,6 +671,7 @@ export function validarMuro(
 
   let allHavePath = true;
   for (const j of jugadores) {
+    if (j.eliminado) continue;
     const { distancia } = bfsCamino(j, murosH, murosV, undefined, jugadores.length);
     if (distancia === Infinity) {
       allHavePath = false;
@@ -695,6 +700,7 @@ export function tomarSnapshot(estado: EstadoDeJuego) {
       r: p.r,
       c: p.c,
       muros: p.muros,
+      eliminado: Boolean(p.eliminado),
       estadisticas: { ...p.estadisticas },
     })),
     murosH: estado.murosH.map((row) => [...row]),
@@ -836,10 +842,11 @@ export function aplicarMuro(
 
 function actualizarDesventaja(estado: EstadoDeJuego) {
   for (const p of estado.jugadores) {
+    if (p.eliminado) continue;
     const myDist = bfsCamino(p, estado.murosH, estado.murosV, undefined, estado.n).distancia;
     let minRivalDist = Infinity;
     for (const other of estado.jugadores) {
-      if (other.id !== p.id) {
+      if (other.id !== p.id && !other.eliminado) {
         const d = bfsCamino(other, estado.murosH, estado.murosV, undefined, estado.n).distancia;
         if (d < minRivalDist) {
           minRivalDist = d;
@@ -861,7 +868,7 @@ export function obtenerRivalMasPeligroso(estado: EstadoDeJuego, myJugadorEnJuego
   let minDist = Infinity;
 
   for (const p of estado.jugadores) {
-    if (p.id !== myJugadorEnJuegoId) {
+    if (p.id !== myJugadorEnJuegoId && !p.eliminado) {
       const dist = bfsCamino(p, estado.murosH, estado.murosV, undefined, estado.n).distancia;
       if (dist < minDist) {
         minDist = dist;
@@ -879,6 +886,20 @@ export function avanzarTurno(estado: EstadoDeJuego) {
   estado.muroPrevisualizado = null;
   estado.tiempoRestante = estado.config.segundosPorTurno || 30;
 
+  const activos = estado.jugadores.filter((p) => !p.eliminado);
+  if (activos.length === 1) {
+    estado.terminada = true;
+    estado.ganador = activos[0].id;
+    estado.ultimoMensaje = `👑 ¡${activos[0].nombre} gana por ser el único jugador activo!`;
+    return;
+  }
+  if (activos.length === 0) {
+    estado.terminada = true;
+    estado.ganador = -1;
+    estado.ultimoMensaje = '⚖️ ¡Partida finalizada sin jugadores activos!';
+    return;
+  }
+
   if (estado.turnosTotales >= 200) {
     estado.terminada = true;
     estado.ganador = -1;
@@ -891,12 +912,13 @@ export function avanzarTurno(estado: EstadoDeJuego) {
 
   while (attempts < estado.n) {
     const nextJugadorEnJuego = estado.jugadores[nextIdx];
-    const moves = movimientosLegales(nextJugadorEnJuego, estado);
-
-    if (moves.length > 0 || nextJugadorEnJuego.muros > 0) {
-      estado.turnoActual = nextIdx;
-      estado.modoAccion = moves.length > 0 ? 'mover' : 'muro';
-      return;
+    if (nextJugadorEnJuego && !nextJugadorEnJuego.eliminado) {
+      const moves = movimientosLegales(nextJugadorEnJuego, estado);
+      if (moves.length > 0 || nextJugadorEnJuego.muros > 0) {
+        estado.turnoActual = nextIdx;
+        estado.modoAccion = moves.length > 0 ? 'mover' : 'muro';
+        return;
+      }
     }
 
     nextIdx = (nextIdx + 1) % estado.n;
@@ -1186,13 +1208,12 @@ export function calcularDesglosePuntos(
   let rivalCercaDeInicio = false;
   if (esGanador) {
     for (const otro of estado.jugadores) {
-      if (otro.id !== jugador.id) {
+      if (otro.id !== jugador.id && !otro.eliminado) {
         const { distancia } = bfsCamino(otro, estado.murosH, estado.murosV, undefined, estado.n);
-        if (distancia <= 1) {
+        if (distancia <= 2) {
           rivalACasillaDeGanar = true;
         }
 
-        // Puesto inicial de cada jugador según el número de participantes y tamaño del tablero
         const startPos =
           (estado.n === 2
             ? { 0: { r: last, c: mid }, 1: { r: 0, c: mid } }[otro.id]
@@ -1201,7 +1222,6 @@ export function calcularDesglosePuntos(
             c: mid,
           };
         const distManhattan = Math.abs(otro.r - startPos.r) + Math.abs(otro.c - startPos.c);
-        // Si el oponente está a 2 casillas o menos de su puesto inicial al ganar: +2 pts extra
         if (distManhattan <= 2) {
           rivalCercaDeInicio = true;
         }
@@ -1209,7 +1229,19 @@ export function calcularDesglosePuntos(
     }
   }
   const finalCerrado = esGanador && rivalACasillaDeGanar ? 5 : 0;
-  const bonoDominacion = esGanador && rivalCercaDeInicio ? 2 : 0;
+  const bonoDominacion = esGanador && rivalCercaDeInicio ? 5 : 0;
+
+  let casiMetaDerrota = 0;
+  if (!esGanador && !jugador.eliminado) {
+    const miDistMeta = bfsCamino(jugador, estado.murosH, estado.murosV, undefined, estado.n).distancia;
+    if (miDistMeta <= 2) {
+      casiMetaDerrota = 2;
+    }
+  }
+
+  const muroMaestro = stats.murosMaestros >= 2 ? 2 : stats.murosMaestros >= 1 ? 1 : 0;
+  const saltador = stats.saltos >= 2 ? 1 : 0;
+  const partidaLimpia = esGanador && stats.partidaLimpia ? 1 : 0;
 
   const pPistas = stats.usosPista * 1;
   const pDeshacer = stats.usosDeshacer * 2;
@@ -1219,7 +1251,17 @@ export function calcularDesglosePuntos(
 
   const totalPenalizaciones = pPistas + pDeshacer + pMurosInvalidos + pTiempoAgotado + pAbandonar;
 
-  const subtotal = resultado + murosUsados + finalCerrado + bonoDominacion + bonoTorneo - totalPenalizaciones;
+  const subtotal =
+    resultado +
+    murosUsados +
+    finalCerrado +
+    bonoDominacion +
+    casiMetaDerrota +
+    muroMaestro +
+    saltador +
+    partidaLimpia +
+    bonoTorneo -
+    totalPenalizaciones;
   const total = Math.max(0, subtotal);
 
   return {
@@ -1227,14 +1269,15 @@ export function calcularDesglosePuntos(
     murosUsados,
     finalCerrado,
     bonoDominacion,
+    casiMetaDerrota,
     bonoTorneo,
     ahorrador: 0,
     rapidez: 0,
-    saltador: 0,
-    muroMaestro: 0,
+    saltador,
+    muroMaestro,
     remontada: 0,
     racha: 0,
-    partidaLimpia: 0,
+    partidaLimpia,
     penalizaciones: {
       pistas: pPistas,
       deshacer: pDeshacer,
@@ -1272,7 +1315,17 @@ function clonarEstadoParaAccion(estado: EstadoDeJuego): EstadoDeJuego {
   };
 }
 
-export function ejecutarAccionMover(estado: EstadoDeJuego, destino: Coordenada, _jugadorId?: number): EstadoDeJuego {
+export function ejecutarAccionMover(estado: EstadoDeJuego, destino: Coordenada, jugadorId?: number): EstadoDeJuego {
+  if (estado.terminada) return estado;
+  if (jugadorId !== undefined && estado.turnoActual !== jugadorId) return estado;
+  const jugadorActual = estado.jugadores[estado.turnoActual];
+  if (!jugadorActual || jugadorActual.eliminado) return estado;
+  if (!destino || !Number.isInteger(destino.r) || !Number.isInteger(destino.c)) return estado;
+  const legales = movimientosLegales(jugadorActual, estado);
+  if (!legales.some((m) => m.r === destino.r && m.c === destino.c)) {
+    return estado;
+  }
+
   const copia = clonarEstadoParaAccion(estado);
   aplicarMovimiento(copia, destino);
   return copia;
@@ -1282,10 +1335,55 @@ export function ejecutarAccionMuro(
   estado: EstadoDeJuego,
   coord: Coordenada,
   orientacion: OrientacionMuro,
-  _jugadorId?: number
+  jugadorId?: number
 ): EstadoDeJuego {
+  if (estado.terminada) return estado;
+  if (jugadorId !== undefined && estado.turnoActual !== jugadorId) return estado;
+  const jugadorActual = estado.jugadores[estado.turnoActual];
+  if (!jugadorActual || jugadorActual.eliminado || jugadorActual.muros <= 0) return estado;
+  if (orientacion !== 'H' && orientacion !== 'V') return estado;
+  if (!coord || !Number.isInteger(coord.r) || !Number.isInteger(coord.c)) return estado;
+  if (validarMuro(orientacion, coord.r, coord.c, estado.murosH, estado.murosV, estado.jugadores) !== 'ok') {
+    return estado;
+  }
+
   const copia = clonarEstadoParaAccion(estado);
   aplicarMuro(copia, orientacion, coord.r, coord.c);
+  return copia;
+}
+
+export function eliminarJugadorEnPartida(estado: EstadoDeJuego, jugadorId: number): EstadoDeJuego {
+  if (estado.terminada) return estado;
+  const target = estado.jugadores[jugadorId];
+  if (!target || target.eliminado) return estado;
+
+  const copia = clonarEstadoParaAccion(estado);
+  const jug = copia.jugadores[jugadorId];
+  jug.eliminado = true;
+
+  copia.registroAcciones.push({
+    id: `act_left_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    turnoNumero: copia.turnosTotales + 1,
+    jugadorId: jug.id,
+    jugadorNombre: jug.nombre,
+    jugadorColor: jug.color,
+    tipo: 'tiempo',
+    descripcion: `🚪 ${jug.nombre} abandonó la partida`,
+    tiempo: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+  });
+
+  const activos = copia.jugadores.filter((p) => !p.eliminado);
+  if (activos.length <= 1) {
+    copia.terminada = true;
+    copia.ganador = activos[0] ? activos[0].id : (copia.miJugadorId ?? 0);
+    copia.ultimoMensaje = `🚪 ¡${jug.nombre} se retiró! Victoria para ${activos[0]?.nombre || 'el superviviente'}.`;
+    return copia;
+  }
+
+  if (copia.turnoActual === jugadorId) {
+    avanzarTurno(copia);
+  }
+  copia.ultimoMensaje = `🚪 ${jug.nombre} salió de la sala. Continúan ${activos.length} jugadores.`;
   return copia;
 }
 
@@ -1327,6 +1425,7 @@ export function deshacerJugada(estado: EstadoDeJuego): EstadoDeJuego {
         r: sj.r,
         c: sj.c,
         muros: sj.muros,
+        eliminado: Boolean(sj.eliminado),
         estadisticas: {
           ...sj.estadisticas,
           usosDeshacer: sj.id === snapshot.turnoActual ? prevUsos + 1 : prevUsos,

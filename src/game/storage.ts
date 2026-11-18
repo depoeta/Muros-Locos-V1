@@ -787,6 +787,11 @@ export function actualizarDespuesDePartida(
   for (const j of estadoFinal.jugadores) {
     if (j.tipo !== 'humano') continue;
 
+    // En modo online, este dispositivo solo registra sus propias estadísticas locales (miJugadorId)
+    if (estadoFinal.modoOnline && j.id !== (estadoFinal.miJugadorId ?? 0)) {
+      continue;
+    }
+
     const cleanNombre = j.nombre.trim();
     const localKey = cleanNombre.toLowerCase();
     const gano = ganadorId === j.id;
@@ -875,21 +880,20 @@ export function actualizarDespuesDePartida(
       });
     }
 
-    // 2) Identificar cuenta registrada vinculada en D1 (por cuentaId o coincidencia exacta)
-    let matchingAcc: UserCuenta | undefined;
-    if (j.cuentaId && cuentas[j.cuentaId]) {
-      matchingAcc = cuentas[j.cuentaId];
-    } else if (
+    // 2) Solo actualizar cuenta oficial en D1 / Ranking Global para el usuario autenticado activo
+    const esMiCuentaAutenticada = Boolean(
       sesionActiva &&
-      (sesionActiva.id === j.cuentaId ||
-        sesionActiva.nombre.trim().toLowerCase() === cleanNombre.toLowerCase())
-    ) {
-      matchingAcc = cuentas[sesionActiva.id] || sesionActiva;
-    } else {
-      matchingAcc = Object.values(cuentas).find(
-        (acc) => acc.nombre.trim().toLowerCase() === cleanNombre.toLowerCase()
-      );
-    }
+        (estadoFinal.modoOnline
+          ? j.id === (estadoFinal.miJugadorId ?? 0) &&
+            (!j.cuentaId || j.cuentaId === sesionActiva.id)
+          : j.cuentaId === sesionActiva.id ||
+            (j.id === 0 && sesionActiva.nombre.trim().toLowerCase() === cleanNombre.toLowerCase()))
+    );
+
+    const matchingAcc: UserCuenta | undefined =
+      esMiCuentaAutenticada && sesionActiva
+        ? cuentas[sesionActiva.id] || sesionActiva
+        : undefined;
 
     if (!matchingAcc) continue;
 
@@ -1040,6 +1044,7 @@ export function penalizarAbandono(
   cuentaId?: string
 ) {
   const cleanNombre = nombre.trim();
+  const deltaNegativo = -Math.abs(Math.round(puntosPerdidos || 5));
   const sesionActiva = obteneruserActual();
   const cuentas = cargarCuentas();
   const rankingLocal = cargarRankingLocal();
@@ -1052,30 +1057,24 @@ export function penalizarAbandono(
     rankingLocal[localKey].partidas += 1;
     rankingLocal[localKey].derrotas += 1;
     rankingLocal[localKey].rachaActual = 0;
-    rankingLocal[localKey].puntosTotales = Math.max(0, rankingLocal[localKey].puntosTotales - puntosPerdidos);
+    rankingLocal[localKey].puntosTotales = Math.max(0, rankingLocal[localKey].puntosTotales + deltaNegativo);
     guardarRankingLocal(rankingLocal);
   }
 
-  let matchingAcc: UserCuenta | undefined;
-  if (cuentaId && cuentas[cuentaId]) {
-    matchingAcc = cuentas[cuentaId];
-  } else if (
+  const esMiSesion = Boolean(
     sesionActiva &&
-    (sesionActiva.id === cuentaId ||
-      sesionActiva.nombre.trim().toLowerCase() === cleanNombre.toLowerCase())
-  ) {
-    matchingAcc = cuentas[sesionActiva.id] || sesionActiva;
-  } else {
-    matchingAcc = Object.values(cuentas).find(
-      (acc) => acc.nombre.trim().toLowerCase() === cleanNombre.toLowerCase()
-    );
-  }
+      (sesionActiva.id === cuentaId ||
+        (!cuentaId && sesionActiva.nombre.trim().toLowerCase() === cleanNombre.toLowerCase()))
+  );
+
+  const matchingAcc: UserCuenta | undefined =
+    esMiSesion && sesionActiva ? cuentas[sesionActiva.id] || sesionActiva : undefined;
 
   if (!matchingAcc) return;
 
   matchingAcc.partidas = (matchingAcc.partidas || 0) + 1;
   matchingAcc.derrotas = (matchingAcc.derrotas || 0) + 1;
-  matchingAcc.puntos = Math.max(0, (matchingAcc.puntos || 0) - puntosPerdidos);
+  matchingAcc.puntos = Math.max(0, (matchingAcc.puntos || 0) + deltaNegativo);
   matchingAcc.ultimaConexion = nowIso;
   matchingAcc.historialPartidas = [
     {
@@ -1083,7 +1082,7 @@ export function penalizarAbandono(
       fecha: nowIso,
       rival: 'Abandono de partida',
       resultado: 'derrota' as const,
-      puntosGanados: 0,
+      puntosGanados: deltaNegativo,
       movimientos: 0,
       murosColocados: 0,
       saltos: 0,
@@ -1119,7 +1118,7 @@ export function penalizarAbandono(
         cuentaId: matchingAcc.id,
         nombre: matchingAcc.nombre,
         resultado: 'derrota',
-        puntosGanados: 0,
+        puntosGanados: deltaNegativo,
         movimientos: 0,
         murosColocados: 0,
         saltos: 0,
@@ -1165,10 +1164,15 @@ export function cargarAjustes(): AjustesDeApp {
         permitirDeshacer: true,
         permitirPistas: true,
         temaTablero: 'madera',
-        cambiarVistaPorTurno: false,
+        cambiarVistaPorTurno: true,
+        rotarControlesSinTablero: true,
       };
     }
     const parsed = JSON.parse(raw);
+    const rotacionActiva =
+      parsed._rotV2 === true ? parsed.cambiarVistaPorTurno !== false : true;
+    const rotarControlesActiva =
+      parsed._rotV3 === true ? parsed.rotarControlesSinTablero !== false : true;
     return {
       sonido: parsed.sonido !== false,
       mostrarDistancia: parsed.mostrarDistancia !== false,
@@ -1178,7 +1182,8 @@ export function cargarAjustes(): AjustesDeApp {
       permitirDeshacer: parsed.permitirDeshacer !== false,
       permitirPistas: parsed.permitirPistas !== false,
       temaTablero: (parsed.temaTablero as TemaTablero) || 'madera',
-      cambiarVistaPorTurno: Boolean(parsed.cambiarVistaPorTurno),
+      cambiarVistaPorTurno: rotacionActiva,
+      rotarControlesSinTablero: rotarControlesActiva,
     };
   } catch {
     return {
@@ -1190,14 +1195,18 @@ export function cargarAjustes(): AjustesDeApp {
       permitirDeshacer: true,
       permitirPistas: true,
       temaTablero: 'madera',
-      cambiarVistaPorTurno: false,
+      cambiarVistaPorTurno: true,
+      rotarControlesSinTablero: true,
     };
   }
 }
 
 export function guardarAjustes(ajustes: AjustesDeApp) {
   try {
-    localStorage.setItem(AJUSTES_KEY, JSON.stringify(ajustes));
+    localStorage.setItem(
+      AJUSTES_KEY,
+      JSON.stringify({ ...ajustes, _rotV2: true, _rotV3: true })
+    );
   } catch {
     // ignorar
   }

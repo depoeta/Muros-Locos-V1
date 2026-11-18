@@ -804,8 +804,11 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
   const [segundosPorTurno, setSegundosPorTurno] = useState<number>(30);
   const [esTorneo, setEsTorneo] = useState<boolean>(esTorneoInicial);
   const [totalRondasTorneo, setTotalRondasTorneo] = useState<number>(3);
-  const [, setRotationMode] = useState<boolean>(
-    Boolean(ajustes?.cambiarVistaPorTurno ?? false)
+  const [rotationMode, setRotationMode] = useState<boolean>(
+    ajustes?.cambiarVistaPorTurno ?? true
+  );
+  const [rotarControles, setRotarControles] = useState<boolean>(
+    ajustes?.rotarControlesSinTablero ?? true
   );
   const [avisoInvitadoVisible, setAvisoInvitadoVisible] = useState<boolean>(true);
 
@@ -813,7 +816,15 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
     if (ajustes?.cambiarVistaPorTurno !== undefined) {
       setRotationMode(Boolean(ajustes.cambiarVistaPorTurno));
     }
-  }, [ajustes?.cambiarVistaPorTurno]);
+    if (ajustes?.rotarControlesSinTablero !== undefined) {
+      setRotarControles(Boolean(ajustes.rotarControlesSinTablero));
+    }
+  }, [ajustes?.cambiarVistaPorTurno, ajustes?.rotarControlesSinTablero]);
+
+  const humanosActivos = jugadores
+    .slice(0, numJugadores)
+    .filter((p) => p.tipo === 'humano').length;
+  const hayOtroHumano = humanosActivos >= 2;
 
   const updateJugador = (idx: number, patch: Partial<(typeof jugadores)[0]>) => {
     setJugadores((prev) => {
@@ -871,7 +882,9 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
       totalRondasTorneo,
       tamanoTablero,
       temaTablero,
-      rotationMode: false,
+      rotationMode: hayOtroHumano ? rotationMode : false,
+      rotarControles:
+        numJugadores === 2 && hayOtroHumano && !rotationMode ? rotarControles : false,
     });
   };
 
@@ -1239,18 +1252,84 @@ export const ConfigScreen: React.FC<ConfigScreenProps> = ({
             </div>
           ))}
 
-          {/* Vista Fija Estable */}
-          <div className={`p-2 rounded-xl flex items-center justify-between select-none col-span-2 ${t.bannerInfo}`}>
-            <div className="flex flex-col text-left">
-              <span className="text-xs font-bold flex items-center gap-1">
-                <span>🧭</span> Vista Fija Estable (Sin Giros)
-              </span>
-              <span className="text-[10px] opacity-85">
-                El tablero se mantiene siempre fijo sin rotaciones para evitar mareos, con indicadores claros del lado e inicio del oponente.
-              </span>
+          {/* Girar tablero por turno (solo visible si hay al menos otro jugador humano en local) */}
+          {hayOtroHumano && (
+            <div className="col-span-2 flex flex-col gap-2">
+              <div
+                onClick={() => {
+                  setRotationMode(!rotationMode);
+                  sounds.playClick();
+                }}
+                className={`p-2.5 rounded-xl flex items-center justify-between gap-3 cursor-pointer select-none ${
+                  rotationMode ? t.bannerSuccess : t.card
+                }`}
+              >
+                <div className="flex flex-col text-left">
+                  <span className={`text-xs font-bold flex items-center gap-1 ${t.title}`}>
+                    <span>🔄</span> Girar tablero por turno
+                  </span>
+                  <span className={`text-[10px] leading-tight ${t.muted}`}>
+                    {rotationMode
+                      ? 'Activado: solo el tablero gira hacia el jugador activo y las opciones se quedan fijas.'
+                      : 'Desactivado: el tablero se mantiene fijo (0°) en todo momento.'}
+                  </span>
+                </div>
+                <div
+                  className={`w-9 h-5 rounded-full p-0.5 transition-colors shrink-0 ${
+                    t.esClasico
+                      ? `border border-[#2b2140] ${rotationMode ? 'bg-[#51cf66]' : 'bg-[#ced4da]'}`
+                      : t.esOscuro
+                      ? `border border-white/15 ${rotationMode ? 'bg-emerald-400/70' : 'bg-slate-700'}`
+                      : `border border-[#D4C9AE] ${rotationMode ? 'bg-[#8CD7B0]' : 'bg-[#E5DEC9]'}`
+                  }`}
+                >
+                  <div
+                    className={`w-3.5 h-3.5 rounded-full bg-white transition-transform ${
+                      t.esClasico ? 'border border-[#2b2140]' : 'shadow-xs'
+                    } ${rotationMode ? 'translate-x-4' : ''}`}
+                  />
+                </div>
+              </div>
+
+              {numJugadores === 2 && !rotationMode && (
+                <div
+                  onClick={() => {
+                    setRotarControles(!rotarControles);
+                    sounds.playClick();
+                  }}
+                  className={`p-2.5 rounded-xl flex items-center justify-between gap-3 cursor-pointer select-none animate-[slideDown_0.15s_ease-out] ${
+                    rotarControles ? t.bannerInfo : t.card
+                  }`}
+                >
+                  <div className="flex flex-col text-left">
+                    <span className={`text-xs font-bold flex items-center gap-1 ${t.title}`}>
+                      <span>🔁</span> Girar controles y opciones por turno
+                    </span>
+                    <span className={`text-[10px] leading-tight ${t.muted}`}>
+                      {rotarControles
+                        ? 'Activado (ideal celular en mesa): todo (acciones, tarjetas y colocar muro) gira 180° arriba ↔ abajo.'
+                        : 'Desactivado (ideal laptop/PC): ni el tablero ni los controles giran.'}
+                    </span>
+                  </div>
+                  <div
+                    className={`w-9 h-5 rounded-full p-0.5 transition-colors shrink-0 ${
+                      t.esClasico
+                        ? `border border-[#2b2140] ${rotarControles ? 'bg-[#4dabf7]' : 'bg-[#ced4da]'}`
+                        : t.esOscuro
+                        ? `border border-white/15 ${rotarControles ? 'bg-sky-400/70' : 'bg-slate-700'}`
+                        : `border border-[#D4C9AE] ${rotarControles ? 'bg-[#9BC0F5]' : 'bg-[#E5DEC9]'}`
+                    }`}
+                  >
+                    <div
+                      className={`w-3.5 h-3.5 rounded-full bg-white transition-transform ${
+                        t.esClasico ? 'border border-[#2b2140]' : 'shadow-xs'
+                      } ${rotarControles ? 'translate-x-4' : ''}`}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
-            <span className="text-base shrink-0">✨</span>
-          </div>
+          )}
         </div>
 
         {modoConTiempo && (

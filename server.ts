@@ -1780,12 +1780,15 @@ function procesarPartidaLocal(body: any, sesion: any, cuentas: Record<string, an
   if (participantes.length === 0 && (body.userId || sesion?.userId)) {
     const fallbackId = String(body.userId || sesion?.userId || '').trim().toLowerCase();
     if (fallbackId) {
+      const rawPtsFallback = Number(body.puntosGanados ?? body.puntos);
       participantes = [
         {
           cuentaId: fallbackId,
           nombre: body.nombre || cuentas[fallbackId]?.nombre || fallbackId,
           resultado: body.resultado || 'derrota',
-          puntosGanados: Math.max(0, Number(body.puntosGanados ?? body.puntos) || 0),
+          puntosGanados: modo === 'abandono'
+            ? Math.max(-10, Math.min(0, Math.round(Number.isFinite(rawPtsFallback) ? rawPtsFallback : -5)))
+            : Math.max(0, Number.isFinite(rawPtsFallback) ? rawPtsFallback : 0),
           movimientos: Math.max(0, Number(body.movimientos) || 0),
           murosColocados: Math.max(0, Number(body.murosColocados) || 0),
           saltos: Math.max(0, Number(body.saltos) || 0),
@@ -1817,7 +1820,7 @@ function procesarPartidaLocal(body: any, sesion: any, cuentas: Record<string, an
       continue;
     }
 
-    const MAX_PUNTOS_PARTIDA_MUROS = 35;
+    const MAX_PUNTOS_PARTIDA_MUROS = 45;
     const MAX_PUNTOS_DIARIOS_MUROS = 250;
     const hoyUtc = new Date().toISOString().slice(0, 10);
     const ptsHoy = histPrev.reduce((sum: number, h: any) => {
@@ -1827,10 +1830,18 @@ function procesarPartidaLocal(body: any, sesion: any, cuentas: Record<string, an
     const cupoDiarioRestante = Math.max(0, MAX_PUNTOS_DIARIOS_MUROS - ptsHoy);
 
     const resultado = p.resultado === 'victoria' || p.resultado === 'empate' ? p.resultado : 'derrota';
-    const puntosSolicitados = Math.max(0, Math.round(Number(p.puntosGanados) || 0));
-    const puntosGanados = Math.min(puntosSolicitados, MAX_PUNTOS_PARTIDA_MUROS, cupoDiarioRestante);
+    const rawPuntos = Number(p.puntosGanados);
+    let puntosGanados = 0;
+    if (modo === 'abandono') {
+      puntosGanados = Math.max(-10, Math.min(0, Math.round(Number.isFinite(rawPuntos) ? rawPuntos : -5)));
+    } else {
+      const puntosSolicitados = Math.max(0, Math.round(Number.isFinite(rawPuntos) ? rawPuntos : 0));
+      puntosGanados = Math.min(puntosSolicitados, MAX_PUNTOS_PARTIDA_MUROS, cupoDiarioRestante);
+    }
     const ptsSemanalPartida =
-      puntosGanados > 0
+      modo === 'abandono'
+        ? 0
+        : puntosGanados > 0
         ? puntosGanados
         : resultado === 'victoria'
         ? Math.min(cupoDiarioRestante, Number(cfgSemanal.puntosVictoria ?? 3))
@@ -2239,8 +2250,22 @@ app.post('/api/salas/:codigo/join', (req, res) => {
 
     let existente = sala.jugadores.find((p: any) => p.peerId === peerId);
     if (!existente && sala.enPartida) {
-      const porNombre = sala.jugadores.find((p: any) => !p.esAnfitrion && String(p.nombre || '').toLowerCase() === nombre.toLowerCase());
+      const porCuenta = cuentaId
+        ? sala.jugadores.find(
+            (p: any) => p.cuentaId && String(p.cuentaId).trim().toLowerCase() === cuentaId
+          )
+        : undefined;
+      const porNombre =
+        porCuenta ||
+        sala.jugadores.find(
+          (p: any) =>
+            String(p.nombre || '').trim().toLowerCase() === nombre.toLowerCase() &&
+            (!p.cuentaId || !cuentaId || String(p.cuentaId).trim().toLowerCase() === cuentaId)
+        );
       if (porNombre) {
+        if (porNombre.esAnfitrion) {
+          sala.hostPeerId = peerId;
+        }
         porNombre.peerId = peerId;
         porNombre.conectado = true;
         existente = porNombre;
@@ -2260,6 +2285,9 @@ app.post('/api/salas/:codigo/join', (req, res) => {
       existente.aura = aura || existente.aura || 'ninguna';
       existente.conectado = true;
       esAnfitrionResultado = Boolean(existente.esAnfitrion);
+      if (esAnfitrionResultado) {
+        sala.hostPeerId = peerId;
+      }
     } else {
       if (sala.jugadores.length >= (sala.maxJugadores || 2)) {
         return { abort: true, status: 409, error: 'La sala ya está llena.' };

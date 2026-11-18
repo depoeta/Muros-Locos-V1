@@ -35,7 +35,8 @@ export const PlayerCards: React.FC<PlayerCardsProps> = ({
     <div className="w-full shrink-0">
       <div className={`grid ${gridClass}`}>
         {estado.jugadores.map((jugador, idx) => {
-          const isActive = estado.turnoActual === idx && !estado.terminada;
+          const isEliminado = Boolean(jugador.eliminado);
+          const isActive = estado.turnoActual === idx && !estado.terminada && !isEliminado;
           const { distancia } = bfsCamino(jugador, estado.murosH, estado.murosV, undefined, estado.n);
           const isWinner = estado.ganador === idx;
           const tieneReaccion =
@@ -56,7 +57,9 @@ export const PlayerCards: React.FC<PlayerCardsProps> = ({
           return (
             <div
               key={jugador.id}
-              className={`relative rounded-xl sm:rounded-2xl px-2 py-1.5 flex items-center gap-2 transition-colors duration-200 ${cardCls}`}
+              className={`relative rounded-xl sm:rounded-2xl px-2 py-1.5 flex items-center gap-2 transition-colors duration-200 ${cardCls} ${
+                isEliminado ? 'opacity-55' : ''
+              }`}
             >
               <div className="relative flex-shrink-0">
                 <CartoonCharacter
@@ -90,7 +93,13 @@ export const PlayerCards: React.FC<PlayerCardsProps> = ({
                     {jugador.nombre}
                   </span>
 
-                  {tieneReaccion ? (
+                  {isEliminado ? (
+                    <span
+                      className={`shrink-0 px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider leading-none ${t.bannerDanger}`}
+                    >
+                      🚪 Salió
+                    </span>
+                  ) : tieneReaccion ? (
                     <span
                       className={`shrink-0 text-sm leading-none rounded-md px-1 py-0.5 animate-bounce ${
                         t.esClasico
@@ -125,7 +134,7 @@ export const PlayerCards: React.FC<PlayerCardsProps> = ({
                     <span>{jugador.muros}</span>
                   </div>
 
-                  {mostrarDistancia && !estado.terminada && (
+                  {mostrarDistancia && !estado.terminada && !isEliminado && (
                     <div
                       className={`text-[10px] font-semibold px-1.5 py-0.2 rounded-md border tabular-nums ${
                         t.esClasico
