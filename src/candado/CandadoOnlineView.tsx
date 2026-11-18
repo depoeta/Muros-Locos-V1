@@ -15,13 +15,17 @@ import { calcularCommitHash, generarSalAleatoria, verificarCommitYHistorial } fr
 import {
   DIGITOS_LOGICO,
   DIGITOS_MAYOR_MENOR,
-  evaluarIntentoLogico,
-  evaluarIntentoMayorMenor,
   formatearNumeroConCeros,
   generarSecreto,
   normalizarConfigCandado,
 } from './candadoEngine';
 import { candadoOnlineService, generarCodigoSalaCandado } from './candadoOnlineService';
+import {
+  crearCacheCluesEmitidas,
+  prepararEnvioIntentoP2P,
+  procesarClueRecibidaP2P,
+  procesarGuessRivalP2P,
+} from './candadoP2PProtocol';
 import { CandadoVault } from './CandadoVault';
 import {
   ConfigDueloCandadoP2P,
@@ -141,6 +145,22 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
   subVistaRef.current = subVista;
   const pendingCommitsRef = useRef<Record<string, string>>({});
   const dispararErrorDueloRef = useRef<(msg: string) => void>(() => {});
+  const envioEnCursoRef = useRef<string | null>(null);
+  const retryGuessTimerRef = useRef<number | null>(null);
+  const retryGuessTimer2Ref = useRef<number | null>(null);
+  const cluesEmitidasRef = useRef(crearCacheCluesEmitidas());
+
+  const limpiarBloqueoEnvio = useCallback(() => {
+    envioEnCursoRef.current = null;
+    if (retryGuessTimerRef.current) {
+      window.clearTimeout(retryGuessTimerRef.current);
+      retryGuessTimerRef.current = null;
+    }
+    if (retryGuessTimer2Ref.current) {
+      window.clearTimeout(retryGuessTimer2Ref.current);
+      retryGuessTimer2Ref.current = null;
+    }
+  }, []);
 
   const miPerfilSala = useMemo(
     () => ({
@@ -171,9 +191,10 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
 
   useEffect(() => {
     return () => {
+      limpiarBloqueoEnvio();
       candadoOnlineService.cleanUp();
     };
-  }, []);
+  }, [limpiarBloqueoEnvio]);
 
   const validarSecretoOpcional = useCallback(
     (raw: string, cfg: ConfigDueloCandadoP2P): string | null => {
@@ -217,6 +238,9 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
         delete pendingCommitsRef.current[pendingKey];
       }
 
+      limpiarBloqueoEnvio();
+      cluesEmitidasRef.current = crearCacheCluesEmitidas();
+
       const nuevoDuelo: EstadoDueloP2P = {
         matchId,
         codigoSala: code,
@@ -245,6 +269,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
         tiempoRestanteTurno: cfgNorm.tiempoTurnoSeg,
         inicioMs: Date.now(),
         finMs: null,
+        intentoPendiente: null,
       };
 
       dueloRef.current = nuevoDuelo;
@@ -269,7 +294,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
         commitHash: miCommitHash,
       });
     },
-    [validarSecretoOpcional]
+    [validarSecretoOpcional, limpiarBloqueoEnvio]
   );
 
   // Registrar callbacks de P2P
@@ -285,6 +310,17 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
       },
       onConnectionModeChange: (m) => {
         setModoConexion(m);
+      },
+      onWebRtcOpen: () => {
+        const cur = dueloRef.current;
+        if (cur && cur.fase === 'preparando_claves' && cur.miCommitHash && !cur.rivalCommitHash) {
+          candadoOnlineService.send({
+            type: 'CANDADO_COMMIT',
+            matchId: cur.matchId,
+            jugadorId: cur.miJugadorId,
+            commitHash: cur.miCommitHash,
+          });
+        }
       },
       onLobbyError: (err) => {
         setErrorLobby(err);
@@ -304,6 +340,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
       },
       onDisconnectTimeout: () => {
         setAvisoDesconexionSeg(null);
+        limpiarBloqueoEnvio();
         const cur = dueloRef.current;
         if (!cur || cur.fase === 'terminada') return;
         candadoAudio.playUnlock();
@@ -314,6 +351,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
           desenlaceParaMi: 'victoria',
           motivoFin: 'Tu rival se desconectó del duelo.',
           finMs: Date.now(),
+          intentoPendiente: null,
         };
         dueloRef.current = terminado;
         setDuelo(terminado);
@@ -322,6 +360,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
       },
       onPeerLeft: (nombreSaliente) => {
         setRivalSalioSala(true);
+        limpiarBloqueoEnvio();
         const cur = dueloRef.current;
         if (cur && cur.fase !== 'terminada') {
           candadoAudio.playUnlock();
@@ -332,6 +371,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
             desenlaceParaMi: 'victoria',
             motivoFin: `${nombreSaliente} abandonó el duelo.`,
             finMs: Date.now(),
+            intentoPendiente: null,
           };
           dueloRef.current = terminado;
           setDuelo(terminado);
@@ -393,6 +433,9 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
           };
           dueloRef.current = actualizado;
           setDuelo(actualizado);
+          if (actualizado.fase === 'jugando') {
+            candadoOnlineService.clearFastSync();
+          }
           return;
         }
 
@@ -400,137 +443,45 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
           return;
         }
 
-        // Rival adivina CONTRA MI secreto -> Evalúo localmente y devuelvo CANDADO_CLUE
+        // Rival adivina CONTRA MI secreto -> Validar turno + idempotencia y devolver CANDADO_CLUE
         if (msg.type === 'CANDADO_GUESS') {
-          if (msg.jugadorId === cur.miJugadorId || cur.fase !== 'jugando') return;
-          const entrada = String(msg.entrada || '').trim();
-          const numero = cur.intentosRival.length + 1;
-          let intentoGenerado: IntentoLogico | IntentoMayorMenor;
-          let descifrado = false;
-          let nuevoMin = cur.rivalRangoMin;
-          let nuevoMax = cur.rivalRangoMax;
-
-          if (cur.config.modo === 'logico') {
-            const ev = evaluarIntentoLogico(entrada, cur.miSecreto);
-            descifrado = ev.gano;
-            intentoGenerado = {
-              numero,
-              entrada,
-              digitos: ev.digitos,
-              exactos: ev.exactos,
-              desubicados: ev.desubicados,
-              ausentes: ev.ausentes,
-              timestamp: Date.now(),
-            };
-          } else {
-            const evB = evaluarIntentoMayorMenor(
-              entrada,
-              cur.miSecreto,
-              cur.rivalRangoMin,
-              cur.rivalRangoMax
-            );
-            descifrado = evB.gano;
-            nuevoMin = evB.rangoMin;
-            nuevoMax = evB.rangoMax;
-            intentoGenerado = {
-              numero,
-              entrada,
-              direccion: evB.direccion,
-              proximidad: evB.proximidad,
-              exactosEnPosicion: evB.exactosEnPosicion,
-              rangoMin: evB.rangoMin,
-              rangoMax: evB.rangoMax,
-              timestamp: Date.now(),
-            };
-          }
-
           const rivalNombre =
             jugadoresSalaRef.current.find((j) => j.id === msg.jugadorId)?.nombre || 'Rival';
           const miNombre =
             jugadoresSalaRef.current.find((j) => j.id === cur.miJugadorId)?.nombre || 'Tú';
 
-          let partidaTerminada = false;
-          let ganadorId: 0 | 1 | 'empate' | null = null;
-          let motivoFin: string | undefined;
-          let siguienteTurno: 0 | 1 = cur.miJugadorId;
-          let turnoIgualador = cur.turnoIgualadorPendiente;
+          const res = procesarGuessRivalP2P(
+            cur,
+            msg,
+            { miNombre, rivalNombre },
+            cluesEmitidasRef.current
+          );
 
-          if (msg.jugadorId === 0) {
-            if (descifrado) {
-              // P0 acertó primero -> P1 (yo) tiene turno igualador en el mismo intento!
-              turnoIgualador = true;
-              siguienteTurno = 1;
-            } else {
-              siguienteTurno = 1;
+          if (res.kind === 'ignore') return;
+
+          if (res.kind === 'resend_clue') {
+            candadoOnlineService.send(res.clue, { httpFallbackOnly: true });
+            if (res.revealNecesario) {
+              candadoOnlineService.send(
+                {
+                  type: 'CANDADO_REVEAL',
+                  matchId: cur.matchId,
+                  jugadorId: cur.miJugadorId,
+                  secreto: cur.miSecreto,
+                  sal: cur.miSal,
+                },
+                { httpFallbackOnly: true }
+              );
             }
-          } else {
-            // msg.jugadorId === 1 (Soy P0)
-            if (cur.turnoIgualadorPendiente || cur.yoDescifre) {
-              partidaTerminada = true;
-              if (descifrado) {
-                ganadorId = 'empate';
-                motivoFin = '¡Ambos descifraron el candado en la misma ronda!';
-              } else {
-                ganadorId = 0;
-                motivoFin = `${miNombre} descifró el candado primero.`;
-              }
-            } else if (descifrado) {
-              partidaTerminada = true;
-              ganadorId = 1;
-              motivoFin = `${rivalNombre} descifró tu candado en ${numero} intentos.`;
-            } else if (
-              cur.config.maxIntentos > 0 &&
-              numero >= cur.config.maxIntentos &&
-              cur.misIntentos.length >= cur.config.maxIntentos
-            ) {
-              partidaTerminada = true;
-              ganadorId = 'empate';
-              motivoFin = 'Se agotó el límite de intentos para ambos.';
-            } else {
-              siguienteTurno = 0;
-            }
+            return;
           }
 
-          const desenlace: EstadoDueloP2P['desenlaceParaMi'] = partidaTerminada
-            ? ganadorId === 'empate'
-              ? 'empate'
-              : ganadorId === cur.miJugadorId
-              ? 'victoria'
-              : 'derrota'
-            : null;
+          dueloRef.current = res.nuevoEstado;
+          setDuelo(res.nuevoEstado);
 
-          const nuevoEstado: EstadoDueloP2P = {
-            ...cur,
-            intentosRival: [intentoGenerado, ...cur.intentosRival],
-            rivalRangoMin: nuevoMin,
-            rivalRangoMax: nuevoMax,
-            rivalDescifro: cur.rivalDescifro || descifrado,
-            turnoIgualadorPendiente: turnoIgualador,
-            turnoActual: siguienteTurno,
-            fase: partidaTerminada ? 'terminada' : 'jugando',
-            ganadorId,
-            desenlaceParaMi: desenlace,
-            motivoFin,
-            tiempoRestanteTurno: cur.config.tiempoTurnoSeg,
-            finMs: partidaTerminada ? Date.now() : null,
-          };
-          dueloRef.current = nuevoEstado;
-          setDuelo(nuevoEstado);
+          candadoOnlineService.send(res.clue);
 
-          candadoOnlineService.send({
-            type: 'CANDADO_CLUE',
-            matchId: cur.matchId,
-            objetivoJugadorId: msg.jugadorId,
-            intento: intentoGenerado,
-            descifrado,
-            siguienteTurno,
-            turnoIgualadorPendiente: turnoIgualador,
-            partidaTerminada,
-            ganadorId,
-            motivoFin,
-          });
-
-          if (partidaTerminada) {
+          if (res.partidaTerminada) {
             candadoOnlineService.setInMatch(false);
             candadoOnlineService.send({
               type: 'CANDADO_REVEAL',
@@ -539,7 +490,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
               secreto: cur.miSecreto,
               sal: cur.miSal,
             });
-            if (desenlace === 'victoria') candadoAudio.playUnlock();
+            if (res.desenlace === 'victoria') candadoAudio.playUnlock();
             else candadoAudio.playLockFail();
           } else {
             candadoAudio.playDialTick();
@@ -549,34 +500,14 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
 
         // Recibo pista del RIVAL sobre MI último intento
         if (msg.type === 'CANDADO_CLUE') {
-          if (msg.objetivoJugadorId !== cur.miJugadorId) return;
-          const esLogico = cur.config.modo === 'logico';
-          const itB = !esLogico ? (msg.intento as IntentoMayorMenor) : null;
-          const desenlace: EstadoDueloP2P['desenlaceParaMi'] = msg.partidaTerminada
-            ? msg.ganadorId === 'empate'
-              ? 'empate'
-              : msg.ganadorId === cur.miJugadorId
-              ? 'victoria'
-              : 'derrota'
-            : null;
+          const res = procesarClueRecibidaP2P(cur, msg);
+          if (!res.ok) return;
 
-          const actualizado: EstadoDueloP2P = {
-            ...cur,
-            misIntentos: [msg.intento, ...cur.misIntentos],
-            miRangoMin: itB ? itB.rangoMin : cur.miRangoMin,
-            miRangoMax: itB ? itB.rangoMax : cur.miRangoMax,
-            yoDescifre: cur.yoDescifre || msg.descifrado,
-            turnoIgualadorPendiente: msg.turnoIgualadorPendiente,
-            turnoActual: msg.siguienteTurno,
-            fase: msg.partidaTerminada ? 'terminada' : 'jugando',
-            ganadorId: msg.ganadorId,
-            desenlaceParaMi: desenlace,
-            motivoFin: msg.motivoFin,
-            tiempoRestanteTurno: cur.config.tiempoTurnoSeg,
-            finMs: msg.partidaTerminada ? Date.now() : null,
-          };
-          dueloRef.current = actualizado;
-          setDuelo(actualizado);
+          limpiarBloqueoEnvio();
+          candadoOnlineService.clearFastSync();
+
+          dueloRef.current = res.nuevoEstado;
+          setDuelo(res.nuevoEstado);
           setEntradaActual(new Array(cur.config.digitos).fill(''));
           setCursorIdx(0);
 
@@ -589,9 +520,10 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
               secreto: cur.miSecreto,
               sal: cur.miSal,
             });
-            if (desenlace === 'victoria') candadoAudio.playUnlock();
+            if (res.desenlace === 'victoria') candadoAudio.playUnlock();
             else candadoAudio.playLockFail();
           } else {
+            const esLogico = cur.config.modo === 'logico';
             const ex = esLogico
               ? (msg.intento as IntentoLogico).exactos
               : (msg.intento as IntentoMayorMenor).exactosEnPosicion;
@@ -602,6 +534,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
 
         if (msg.type === 'CANDADO_TIMEOUT_SKIP') {
           if (msg.jugadorId === cur.miJugadorId || cur.fase !== 'jugando') return;
+          limpiarBloqueoEnvio();
           const desenlace: EstadoDueloP2P['desenlaceParaMi'] = msg.partidaTerminada
             ? msg.ganadorId === 'empate'
               ? 'empate'
@@ -618,6 +551,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
             motivoFin: msg.motivoFin,
             tiempoRestanteTurno: cur.config.tiempoTurnoSeg,
             finMs: msg.partidaTerminada ? Date.now() : null,
+            intentoPendiente: null,
           };
           dueloRef.current = actualizado;
           setDuelo(actualizado);
@@ -638,6 +572,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
 
         if (msg.type === 'CANDADO_SURRENDER') {
           if (msg.jugadorId === cur.miJugadorId || cur.fase === 'terminada') return;
+          limpiarBloqueoEnvio();
           candadoAudio.playUnlock();
           const terminado: EstadoDueloP2P = {
             ...cur,
@@ -646,6 +581,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
             desenlaceParaMi: 'victoria',
             motivoFin: `${msg.nombre} se rindió en el duelo.`,
             finMs: Date.now(),
+            intentoPendiente: null,
           };
           dueloRef.current = terminado;
           setDuelo(terminado);
@@ -684,7 +620,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
         }
       },
     });
-  }, [prepararDueloLocalmente]);
+  }, [prepararDueloLocalmente, limpiarBloqueoEnvio]);
 
   // Temporizador por turno P2P
   useEffect(() => {
@@ -717,8 +653,14 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
           return { ...prev, tiempoRestanteTurno: nextSeg };
         }
 
+        // Si ya enviamos nuestro ataque y estamos esperando verificación del rival, no enviamos timeout skip prematuro
+        if (prev.intentoPendiente && Date.now() - prev.intentoPendiente.enviadoAt < 8000) {
+          return { ...prev, tiempoRestanteTurno: 0 };
+        }
+
         // Si es MI turno y se acabó el tiempo, envío auto-pase
         if (prev.turnoActual === prev.miJugadorId) {
+          limpiarBloqueoEnvio();
           const siguiente: 0 | 1 = prev.miJugadorId === 0 ? 1 : 0;
           const pierdoIgualador = prev.turnoIgualadorPendiente && prev.miJugadorId === 1;
           const ganadorId: 0 | 1 | 'empate' | null = pierdoIgualador ? 0 : null;
@@ -756,6 +698,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
             motivoFin: motivo,
             tiempoRestanteTurno: prev.config.tiempoTurnoSeg,
             finMs: pierdoIgualador ? Date.now() : null,
+            intentoPendiente: null,
           };
         }
 
@@ -885,6 +828,9 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
         }));
         return;
       }
+      if (envioEnCursoRef.current || duelo.intentoPendiente) {
+        return;
+      }
       if (duelo.turnoActual !== duelo.miJugadorId) {
         dispararErrorDuelo('Espera el turno de tu rival.');
         return;
@@ -925,6 +871,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
 
   const borrarDigito = useCallback(() => {
     if (!duelo || duelo.fase !== 'jugando') return;
+    if (envioEnCursoRef.current || duelo.intentoPendiente) return;
     candadoAudio.playDelete();
     setErrorDuelo(null);
     if (entradaActual[cursorIdx] !== '') {
@@ -946,6 +893,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
 
   const limpiarEntrada = useCallback(() => {
     if (!duelo || duelo.fase !== 'jugando') return;
+    if (envioEnCursoRef.current || duelo.intentoPendiente) return;
     candadoAudio.playDelete();
     setEntradaActual(new Array(duelo.config.digitos).fill(''));
     setCursorIdx(0);
@@ -953,37 +901,53 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
   }, [duelo]);
 
   const enviarIntentoP2P = useCallback(() => {
-    if (!duelo || duelo.fase !== 'jugando') return;
-    if (duelo.turnoActual !== duelo.miJugadorId) {
-      dispararErrorDuelo('Espera tu turno para probar combinación.');
-      return;
-    }
-
-    const entrada = entradaActual.join('');
-    if (entrada.length !== duelo.config.digitos || entradaActual.some((x) => x === '')) {
-      dispararErrorDuelo(`Completa los ${duelo.config.digitos} dígitos.`);
-      return;
-    }
-    if (duelo.config.modo === 'logico' && !duelo.config.permitirRepetidos) {
-      if (new Set(entrada.split('')).size !== duelo.config.digitos) {
-        dispararErrorDuelo('Cada dígito debe ser diferente en modo únicos.');
-        return;
+    const cur = dueloRef.current;
+    const res = prepararEnvioIntentoP2P(cur, entradaActual, envioEnCursoRef.current);
+    if (!res.ok) {
+      if (!res.silencioso && res.error) {
+        dispararErrorDuelo(res.error);
       }
-    }
-    if (duelo.misIntentos.some((it) => it.entrada === entrada)) {
-      dispararErrorDuelo(`Ya probaste ${entrada}.`);
       return;
     }
 
-    candadoOnlineService.send({
-      type: 'CANDADO_GUESS',
-      matchId: duelo.matchId,
-      jugadorId: duelo.miJugadorId,
-      numeroIntento: duelo.misIntentos.length + 1,
-      entrada,
-      actionId: `g_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    });
-  }, [duelo, entradaActual, dispararErrorDuelo]);
+    // Bloqueo síncrono inmediato en ref + estado optimista para impedir clics múltiples / Enter repetido
+    envioEnCursoRef.current = res.pendiente.actionId;
+    dueloRef.current = res.nuevoEstado;
+    setDuelo(res.nuevoEstado);
+    setErrorDuelo(null);
+    candadoAudio.playDialTick();
+
+    candadoOnlineService.send(res.mensaje);
+    candadoOnlineService.boostFastSync(5500);
+
+    // Respaldo automático estilo Muros Locos: si WebRTC no entregó la respuesta en 1.1s o 2.8s, reintentar vía HTTP con el mismo actionId
+    const programarReintento = (delayMs: number, slot: 1 | 2) => {
+      const timerId = window.setTimeout(() => {
+        const latest = dueloRef.current;
+        if (
+          !latest ||
+          latest.matchId !== res.mensaje.matchId ||
+          latest.intentoPendiente?.actionId !== res.pendiente.actionId ||
+          latest.fase !== 'jugando'
+        ) {
+          return;
+        }
+        candadoOnlineService.send(
+          { ...res.mensaje, isRetry: true },
+          { httpFallbackOnly: true }
+        );
+        candadoOnlineService.boostFastSync(4500);
+        candadoOnlineService.forceSyncPoll();
+      }, delayMs);
+      if (slot === 1) retryGuessTimerRef.current = timerId;
+      else retryGuessTimer2Ref.current = timerId;
+    };
+
+    if (retryGuessTimerRef.current) window.clearTimeout(retryGuessTimerRef.current);
+    if (retryGuessTimer2Ref.current) window.clearTimeout(retryGuessTimer2Ref.current);
+    programarReintento(1100, 1);
+    programarReintento(2800, 2);
+  }, [entradaActual, dispararErrorDuelo]);
 
   // Teclado físico en duelo
   useEffect(() => {
@@ -1898,7 +1862,11 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
 
   const yoJugador = jugadoresSala.find((j) => j.id === duelo.miJugadorId);
   const rivalJugador = jugadoresSala.find((j) => j.id !== duelo.miJugadorId);
-  const esMiTurno = duelo.fase === 'jugando' && duelo.turnoActual === duelo.miJugadorId;
+  const esperandoVerificacion = Boolean(duelo.intentoPendiente);
+  const esMiTurno =
+    duelo.fase === 'jugando' &&
+    duelo.turnoActual === duelo.miJugadorId &&
+    !esperandoVerificacion;
 
   return (
     <main className="w-full max-w-4xl flex flex-col gap-2 mt-0.5">
@@ -2150,6 +2118,16 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
               >
                 Intercambiando sellos criptográficos...
               </div>
+            ) : esperandoVerificacion ? (
+              <div
+                className={
+                  esMinimalista
+                    ? 'w-full h-7 px-2.5 rounded-xl bg-indigo-400/20 border border-indigo-300/35 text-indigo-100 text-[11px] font-semibold flex items-center justify-center'
+                    : 'w-full h-7 px-2.5 rounded-xl bg-[#EAE4FC] border border-[#C3B6EC] text-[#2E2054] text-[11px] font-semibold flex items-center justify-center'
+                }
+              >
+                Verificando combinación con el rival...
+              </div>
             ) : duelo.config.modo === 'mayor_menor' && duelo.fase === 'jugando' ? (
               <div
                 className={
@@ -2360,12 +2338,16 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
                     !duelo.config.permitirRepetidos &&
                     digitosUsadosEnEntrada.has(d);
 
+                  const deshabilitadoPorVerif =
+                    esperandoVerificacion && !(modoNotas && duelo.config.modo === 'logico');
+
                   return (
                     <button
                       key={d}
                       type="button"
+                      disabled={deshabilitadoPorVerif}
                       onClick={() => ingresarDigito(d)}
-                      className={`h-10 sm:h-11 rounded-xl font-mono font-bold text-base tabular-nums transition-colors cursor-pointer active:translate-y-0.5 ${
+                      className={`h-10 sm:h-11 rounded-xl font-mono font-bold text-base tabular-nums transition-colors cursor-pointer active:translate-y-0.5 disabled:opacity-45 ${
                         nota === 'descartado'
                           ? esMinimalista
                             ? 'bg-slate-950/80 text-slate-600 border border-white/5 line-through'
@@ -2392,29 +2374,31 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
               <div className="grid grid-cols-4 gap-1.5 mt-2">
                 <button
                   type="button"
+                  disabled={esperandoVerificacion}
                   onClick={borrarDigito}
                   className={
                     esMinimalista
-                      ? 'h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-semibold text-xs cursor-pointer'
-                      : 'h-10 rounded-xl bg-[#FAF4E4] hover:bg-[#FAD8DD] text-[#1F2333] hover:text-[#661924] border border-[#DDD3BA] font-semibold text-xs cursor-pointer'
+                      ? 'h-10 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-45 text-slate-200 border border-white/10 font-semibold text-xs cursor-pointer'
+                      : 'h-10 rounded-xl bg-[#FAF4E4] hover:bg-[#FAD8DD] disabled:opacity-45 text-[#1F2333] hover:text-[#661924] border border-[#DDD3BA] font-semibold text-xs cursor-pointer'
                   }
                 >
                   ⌫ Borrar
                 </button>
                 <button
                   type="button"
+                  disabled={esperandoVerificacion}
                   onClick={limpiarEntrada}
                   className={
                     esMinimalista
-                      ? 'h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-semibold text-xs cursor-pointer'
-                      : 'h-10 rounded-xl bg-[#FAF4E4] hover:bg-[#FCE8B8] text-[#1F2333] hover:text-[#4A3309] border border-[#DDD3BA] font-semibold text-xs cursor-pointer'
+                      ? 'h-10 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-45 text-slate-200 border border-white/10 font-semibold text-xs cursor-pointer'
+                      : 'h-10 rounded-xl bg-[#FAF4E4] hover:bg-[#FCE8B8] disabled:opacity-45 text-[#1F2333] hover:text-[#4A3309] border border-[#DDD3BA] font-semibold text-xs cursor-pointer'
                   }
                 >
                   Limpiar
                 </button>
                 <button
                   type="button"
-                  disabled={!esMiTurno}
+                  disabled={!esMiTurno || esperandoVerificacion}
                   onClick={enviarIntentoP2P}
                   className={
                     esMinimalista
@@ -2422,7 +2406,11 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
                       : 'col-span-2 h-10 rounded-xl bg-[#B7EBD0] hover:bg-[#A4E3C2] disabled:opacity-45 text-[#0F3D27] border border-[#82CAA4] font-bold text-xs sm:text-sm cursor-pointer'
                   }
                 >
-                  {esMiTurno ? 'Enviar Ataque' : 'Espera Turno'}
+                  {esperandoVerificacion
+                    ? 'Verificando...'
+                    : esMiTurno
+                    ? 'Enviar Ataque'
+                    : 'Espera Turno'}
                 </button>
               </div>
             </div>

@@ -99,6 +99,7 @@ export interface CandadoOnlineCallbacks {
   onReconnected?: () => void;
   onDisconnectTimeout?: () => void;
   onConnectionModeChange?: (mode: 'webrtc' | 'http' | 'connecting') => void;
+  onWebRtcOpen?: () => void;
   onLobbyError?: (error: string) => void;
   onConnectionError?: (error: string) => void;
 }
@@ -122,7 +123,7 @@ class CandadoOnlineManager {
   private clientDc: RTCDataChannel | null = null;
   private appliedAnswerSdp: string = '';
 
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private graceTimer: ReturnType<typeof setInterval> | null = null;
   private pollInFlight: boolean = false;
@@ -130,12 +131,20 @@ class CandadoOnlineManager {
   private lastRemoteSeenAt: number = Date.now();
   private inMatch: boolean = false;
   private hadWebRtcOpenInMatch: boolean = false;
+  private webRtcOpenedAt: number = 0;
+  private lastWebRtcRxAt: number = 0;
+  private fastSyncUntil: number = 0;
   private lastRemoteActivityMarker: string = '';
   private lastHttpKeepaliveAt: number = 0;
   private consecutivePollErrors: number = 0;
   private visibilityBound: boolean = false;
   private isExiting: boolean = false;
   private seenMessageKeys: Set<string> = new Set();
+
+  // Cola secuencial FIFO para evitar colisiones CAS (409) en D1 al enviar múltiples POST /msg seguidos
+  private httpQueue: Array<{ msg: MensajeCandadoP2P; intento: number }> = [];
+  private httpQueueRunning: boolean = false;
+  private httpRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
   public setCallbacks(cb: CandadoOnlineCallbacks) {
     this.callbacks = cb;
@@ -150,14 +159,47 @@ class CandadoOnlineManager {
       const dc = this.role === 'host' ? this.hostDc : this.clientDc;
       this.hadWebRtcOpenInMatch = Boolean(dc && dc.readyState === 'open');
       this.lastRemoteSeenAt = Date.now();
+      this.fastSyncUntil = Date.now() + 6000;
       this.stopGracePeriod();
     } else {
       this.hadWebRtcOpenInMatch = false;
+      this.fastSyncUntil = 0;
     }
+    this.reschedulePollSoon(120);
+  }
+
+  public boostFastSync(durationMs: number = 5500) {
+    const until = Date.now() + Math.max(500, durationMs);
+    if (until > this.fastSyncUntil) {
+      this.fastSyncUntil = until;
+    }
+    this.reschedulePollSoon(80);
+  }
+
+  public clearFastSync() {
+    this.fastSyncUntil = 0;
   }
 
   public forceSyncPoll() {
     this.pollOnce(true);
+  }
+
+  public isWebRtcOpen(): boolean {
+    const dc = this.role === 'host' ? this.hostDc : this.clientDc;
+    return Boolean(dc && dc.readyState === 'open');
+  }
+
+  public isWebRtcHealthy(): boolean {
+    if (!this.isWebRtcOpen()) return false;
+    const now = Date.now();
+    if (this.lastWebRtcRxAt > 0) {
+      return now - this.lastWebRtcRxAt < 10000;
+    }
+    return this.webRtcOpenedAt > 0 && now - this.webRtcOpenedAt < 2500;
+  }
+
+  public getPendingHttpQueueLength(): number {
+    return this.httpQueue.length;
   }
 
   private handleVisibilityChange = () => {
@@ -334,8 +376,13 @@ class CandadoOnlineManager {
         this.bindDataChannel(dc);
 
         pc.oniceconnectionstatechange = () => {
-          if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          if (
+            (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') &&
+            this.clientDc?.readyState === 'open'
+          ) {
             this.callbacks.onConnectionModeChange?.('webrtc');
+          } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+            this.callbacks.onConnectionModeChange?.('http');
           }
         };
 
@@ -418,71 +465,121 @@ class CandadoOnlineManager {
     this.send({ type: 'LOBBY_UPDATE', jugadores: this.lobbyPlayers, config });
   }
 
-  public send(msg: MensajeCandadoP2P) {
+  public send(
+    msg: MensajeCandadoP2P,
+    options?: { forceHttpFallback?: boolean; httpFallbackOnly?: boolean }
+  ) {
     if (this.isExiting || !this.roomCode) return;
     const raw = JSON.stringify(msg);
     const dc = this.role === 'host' ? this.hostDc : this.clientDc;
     let enviadoPorWebRtc = false;
-    if (dc && dc.readyState === 'open') {
+
+    if (!options?.httpFallbackOnly && dc && dc.readyState === 'open') {
       try {
         dc.send(raw);
         enviadoPorWebRtc = true;
       } catch {}
     }
 
-    // Enviar por /msg si WebRTC no está abierto o si es evento/movimiento crítico
-    const esCritico =
-      msg.type === 'CANDADO_START' ||
-      msg.type === 'CANDADO_COMMIT' ||
-      msg.type === 'CANDADO_GUESS' ||
-      msg.type === 'CANDADO_CLUE' ||
-      msg.type === 'CANDADO_TIMEOUT_SKIP' ||
-      msg.type === 'CANDADO_REVEAL' ||
-      msg.type === 'CANDADO_SURRENDER' ||
-      msg.type === 'CANDADO_REMATCH_REQUEST' ||
-      msg.type === 'CANDADO_REMATCH_RESPONSE';
+    // CANDADO_START debe pasar también por /msg para marcar enPartida=true en el servidor/D1
+    const requiereRegistroSala = msg.type === 'CANDADO_START';
+    const webrtcConfirmado = enviadoPorWebRtc && this.isWebRtcHealthy();
 
-    if (!enviadoPorWebRtc || esCritico) {
-      this.postMsgFallback(msg);
+    const debeUsarHttp =
+      Boolean(options?.httpFallbackOnly) ||
+      Boolean(options?.forceHttpFallback) ||
+      requiereRegistroSala ||
+      !webrtcConfirmado;
+
+    if (debeUsarHttp) {
+      if (
+        msg.type === 'CANDADO_GUESS' ||
+        msg.type === 'CANDADO_COMMIT' ||
+        msg.type === 'CANDADO_START'
+      ) {
+        this.boostFastSync(5500);
+      }
+      this.enqueuePostMsg(msg);
     }
   }
 
-  private async postMsgFallback(msg: MensajeCandadoP2P, intento: number = 0) {
+  private enqueuePostMsg(msg: MensajeCandadoP2P) {
     if (!this.roomCode || this.isExiting) return;
+    this.httpQueue.push({ msg, intento: 0 });
+    this.drainHttpQueue();
+  }
+
+  private async drainHttpQueue() {
+    if (this.httpQueueRunning || this.isExiting || !this.roomCode) return;
+    this.httpQueueRunning = true;
+
     try {
-      const res = await fetch(
-        getApiBaseUrl(`/api/salas/${encodeURIComponent(this.roomCode)}/msg`),
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          cache: 'no-store',
-          body: JSON.stringify({
-            from: this.myPeerId,
-            msg,
-          }),
+      while (this.httpQueue.length > 0 && !this.isExiting && this.roomCode) {
+        const item = this.httpQueue[0];
+        let ok = false;
+        let retryDelay = 0;
+
+        try {
+          const res = await fetch(
+            getApiBaseUrl(`/api/salas/${encodeURIComponent(this.roomCode)}/msg`),
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              cache: 'no-store',
+              body: JSON.stringify({
+                from: this.myPeerId,
+                msg: item.msg,
+              }),
+            }
+          );
+          if (res.ok) {
+            ok = true;
+          } else if (res.status === 404) {
+            // La sala ya cerró; descartar elemento sin bloquear cola
+            ok = true;
+          } else if (item.intento < 2) {
+            retryDelay = item.intento === 0 ? 220 : 550;
+          }
+        } catch {
+          if (item.intento < 2) {
+            retryDelay = item.intento === 0 ? 250 : 600;
+          }
         }
-      );
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
+
+        if (ok) {
+          this.httpQueue.shift();
+          continue;
+        }
+
+        if (retryDelay > 0 && !this.isExiting && this.roomCode) {
+          item.intento += 1;
+          await new Promise<void>((resolve) => {
+            this.httpRetryTimer = setTimeout(() => {
+              this.httpRetryTimer = null;
+              resolve();
+            }, retryDelay);
+          });
+          continue;
+        }
+
+        this.httpQueue.shift();
+        if (item.msg.type !== 'HEARTBEAT' && item.msg.type !== 'PING' && item.msg.type !== 'PONG') {
+          this.callbacks.onConnectionError?.(
+            '⚠️ No se pudo enviar tu jugada por la red. Verifica tu conexión.'
+          );
+        }
       }
-    } catch {
-      if (this.isExiting || !this.roomCode) return;
-      if (intento < 1) {
-        window.setTimeout(() => {
-          this.postMsgFallback(msg, intento + 1);
-        }, 650);
-        return;
-      }
-      if (msg.type !== 'HEARTBEAT') {
-        this.callbacks.onConnectionError?.(
-          '⚠️ No se pudo enviar tu jugada por la red. Verifica tu conexión.'
-        );
+    } finally {
+      this.httpQueueRunning = false;
+      if (this.httpQueue.length > 0 && !this.isExiting && this.roomCode) {
+        this.drainHttpQueue();
       }
     }
   }
 
   private bindDataChannel(dc: RTCDataChannel) {
     dc.onopen = () => {
+      this.webRtcOpenedAt = Date.now();
       if (this.inMatch) {
         this.hadWebRtcOpenInMatch = true;
       }
@@ -490,33 +587,72 @@ class CandadoOnlineManager {
       this.stopGracePeriod();
       this.callbacks.onConnectionModeChange?.('webrtc');
       this.callbacks.onReconnected?.();
+      try {
+        dc.send(
+          JSON.stringify({
+            type: 'PING',
+            peerId: this.myPeerId,
+            ts: Date.now(),
+          } satisfies MensajeCandadoP2P)
+        );
+      } catch {}
+      this.callbacks.onWebRtcOpen?.();
     };
     dc.onmessage = (ev) => {
       try {
         const msg = JSON.parse(String(ev.data)) as MensajeCandadoP2P;
-        this.handleIncomingMessage(msg);
+        this.handleIncomingMessage(msg, 'webrtc');
       } catch {}
     };
     dc.onclose = () => {
+      this.lastWebRtcRxAt = 0;
+      this.webRtcOpenedAt = 0;
       this.callbacks.onConnectionModeChange?.('http');
       this.pollOnce(true);
+      this.reschedulePollSoon(150);
       if (this.inMatch && !this.isExiting && this.hadWebRtcOpenInMatch) {
         this.startGracePeriod();
       }
     };
   }
 
-  private handleIncomingMessage(msg: MensajeCandadoP2P) {
+  private handleIncomingMessage(msg: MensajeCandadoP2P, source: 'webrtc' | 'http' = 'http') {
     if (!msg || typeof msg !== 'object') return;
-    this.lastRemoteSeenAt = Date.now();
+    const now = Date.now();
+    this.lastRemoteSeenAt = now;
+    if (source === 'webrtc') {
+      this.lastWebRtcRxAt = now;
+    }
     this.stopGracePeriod();
     this.callbacks.onReconnected?.();
 
-    if (msg.type === 'HEARTBEAT') return;
+    if (msg.type === 'PING') {
+      if (source === 'webrtc') {
+        const dc = this.role === 'host' ? this.hostDc : this.clientDc;
+        if (dc && dc.readyState === 'open') {
+          try {
+            dc.send(
+              JSON.stringify({
+                type: 'PONG',
+                peerId: this.myPeerId,
+                ts: msg.ts,
+              } satisfies MensajeCandadoP2P)
+            );
+          } catch {}
+        }
+      }
+      return;
+    }
+    if (msg.type === 'PONG' || msg.type === 'HEARTBEAT') return;
 
-    // Deduplicar mensajes con actionId / startId / matchId+type para que WebRTC + /msg fallback no dupliquen
+    // Deduplicar mensajes para que WebRTC + /msg fallback no apliquen acciones repetidas.
+    // Los reintentos explícitos (isRetry) de CANDADO_GUESS pasan una vez al protocolo idempotente para reenviar CANDADO_CLUE si se perdió.
     let dedupeKey: string | null = null;
-    if ('actionId' in msg && msg.actionId) {
+    if (msg.type === 'CANDADO_GUESS') {
+      dedupeKey = msg.isRetry
+        ? `GUESS_RETRY:${msg.matchId}:${msg.actionId}`
+        : `GUESS:${msg.matchId}:${msg.actionId}`;
+    } else if ('actionId' in msg && msg.actionId) {
       dedupeKey = `${msg.type}:${msg.actionId}`;
     } else if (msg.type === 'CANDADO_START') {
       dedupeKey = `START:${msg.startId}`;
@@ -531,7 +667,7 @@ class CandadoOnlineManager {
     if (dedupeKey) {
       if (this.seenMessageKeys.has(dedupeKey)) return;
       this.seenMessageKeys.add(dedupeKey);
-      if (this.seenMessageKeys.size > 150) {
+      if (this.seenMessageKeys.size > 200) {
         const first = this.seenMessageKeys.values().next().value;
         if (first) this.seenMessageKeys.delete(first);
       }
@@ -552,6 +688,26 @@ class CandadoOnlineManager {
     this.callbacks.onMessage?.(msg);
   }
 
+  private getDesiredPollIntervalMs(): number {
+    if (!this.inMatch) return 1000;
+    if (this.isWebRtcHealthy()) return 2500;
+    if (Date.now() < this.fastSyncUntil) return 350;
+    return 750;
+  }
+
+  private reschedulePollSoon(delayMs?: number) {
+    if (this.isExiting || !this.role || !this.roomCode) return;
+    if (this.pollTimer) {
+      clearTimeout(this.pollTimer);
+      this.pollTimer = null;
+    }
+    const nextDelay = typeof delayMs === 'number' ? delayMs : this.getDesiredPollIntervalMs();
+    this.pollTimer = setTimeout(async () => {
+      await this.pollOnce(false);
+      this.reschedulePollSoon();
+    }, nextDelay);
+  }
+
   private startLoops() {
     this.stopLoops();
     this.lastRemoteSeenAt = Date.now();
@@ -562,9 +718,7 @@ class CandadoOnlineManager {
       this.visibilityBound = true;
     }
 
-    this.pollTimer = setInterval(() => {
-      this.pollOnce(false);
-    }, 1400);
+    this.reschedulePollSoon(this.getDesiredPollIntervalMs());
 
     this.heartbeatTimer = setInterval(() => {
       if (this.isExiting || !this.role) return;
@@ -575,15 +729,15 @@ class CandadoOnlineManager {
         try {
           dc.send(
             JSON.stringify({
-              type: 'HEARTBEAT',
+              type: 'PING',
               peerId: this.myPeerId,
-              jugadorId: this.myPlayerId,
+              ts: now,
             } satisfies MensajeCandadoP2P)
           );
         } catch {}
       } else if (this.inMatch && now - this.lastHttpKeepaliveAt >= 8000) {
         this.lastHttpKeepaliveAt = now;
-        this.postMsgFallback({
+        this.enqueuePostMsg({
           type: 'HEARTBEAT',
           peerId: this.myPeerId,
           jugadorId: this.myPlayerId,
@@ -598,7 +752,7 @@ class CandadoOnlineManager {
       if (this.inMatch && now - this.lastRemoteSeenAt > silenceLimitMs) {
         this.startGracePeriod();
       }
-    }, 2500);
+    }, 2200);
   }
 
   private stopLoops() {
@@ -607,12 +761,16 @@ class CandadoOnlineManager {
       this.visibilityBound = false;
     }
     if (this.pollTimer) {
-      clearInterval(this.pollTimer);
+      clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
+    }
+    if (this.httpRetryTimer) {
+      clearTimeout(this.httpRetryTimer);
+      this.httpRetryTimer = null;
     }
     this.stopGracePeriod();
   }
@@ -641,9 +799,7 @@ class CandadoOnlineManager {
   private async pollOnce(force: boolean = false) {
     if (this.isExiting || !this.role || !this.roomCode || this.pollInFlight) return;
 
-    const dc = this.role === 'host' ? this.hostDc : this.clientDc;
-    const webrtcOpen = Boolean(dc && dc.readyState === 'open');
-    if (!force && this.inMatch && webrtcOpen && Date.now() - this.lastRemoteSeenAt < 10000) {
+    if (!force && this.inMatch && this.isWebRtcHealthy() && Date.now() - this.lastRemoteSeenAt < 8000) {
       return;
     }
 
@@ -745,7 +901,7 @@ class CandadoOnlineManager {
       for (const item of nuevos) {
         if (item.seq > this.lastMsgSeq) this.lastMsgSeq = item.seq;
         if (item.msg) {
-          this.handleIncomingMessage(item.msg as MensajeCandadoP2P);
+          this.handleIncomingMessage(item.msg as MensajeCandadoP2P, 'http');
         }
       }
       if (typeof sala.seq === 'number' && sala.seq > this.lastMsgSeq) {
@@ -776,8 +932,13 @@ class CandadoOnlineManager {
       const pc = new RTCPeerConnection(RTC_CONFIGURATION);
       this.hostPc = pc;
       pc.oniceconnectionstatechange = () => {
-        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+        if (
+          (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') &&
+          this.hostDc?.readyState === 'open'
+        ) {
           this.callbacks.onConnectionModeChange?.('webrtc');
+        } else if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+          this.callbacks.onConnectionModeChange?.('http');
         }
       };
       pc.ondatachannel = (ev) => {
@@ -849,9 +1010,14 @@ class CandadoOnlineManager {
     this.roomCode = '';
     this.inMatch = false;
     this.hadWebRtcOpenInMatch = false;
+    this.webRtcOpenedAt = 0;
+    this.lastWebRtcRxAt = 0;
+    this.fastSyncUntil = 0;
     this.lastRemoteActivityMarker = '';
     this.consecutivePollErrors = 0;
     this.seenMessageKeys.clear();
+    this.httpQueue = [];
+    this.httpQueueRunning = false;
   }
 }
 

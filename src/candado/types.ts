@@ -162,6 +162,13 @@ export interface EstadoDueloP2P {
   tiempoRestanteTurno: number;
   inicioMs: number;
   finMs: number | null;
+  /** Bloqueo optimista del intento enviado mientras se espera CANDADO_CLUE del rival */
+  intentoPendiente?: {
+    actionId: string;
+    entrada: string;
+    numeroIntento: number;
+    enviadoAt: number;
+  } | null;
 }
 
 export type MensajeCandadoP2P =
@@ -184,6 +191,7 @@ export type MensajeCandadoP2P =
       numeroIntento: number;
       entrada: string;
       actionId: string;
+      isRetry?: boolean;
     }
   | {
       type: 'CANDADO_CLUE';
@@ -196,6 +204,7 @@ export type MensajeCandadoP2P =
       partidaTerminada: boolean;
       ganadorId: 0 | 1 | 'empate' | null;
       motivoFin?: string;
+      actionId?: string;
     }
   | {
       type: 'CANDADO_TIMEOUT_SKIP';
@@ -240,6 +249,16 @@ export type MensajeCandadoP2P =
       type: 'HEARTBEAT';
       peerId: string;
       jugadorId: number;
+    }
+  | {
+      type: 'PING';
+      peerId: string;
+      ts: number;
+    }
+  | {
+      type: 'PONG';
+      peerId: string;
+      ts: number;
     }
   | {
       type: 'PLAYER_LEFT';
