@@ -92,6 +92,8 @@ export interface SalaPersonalizada {
   tamanoTablero: TamanoTablero;
   mensajeEspecial?: string;
   creadaEn: number;
+  jugadoresConectados?: number;
+  enPartida?: boolean;
 }
 
 export type OrientacionMuro = 'H' | 'V';

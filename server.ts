@@ -1641,8 +1641,22 @@ app.post('/api/admin/desbloqueos-personajes', async (req, res) => {
 });
 
 app.get('/api/admin/salas-personalizadas', (_req, res) => {
-  const salas = leerJson(ARCHIVO_SALAS_PERSONALIZADAS, []);
-  res.json({ ok: true, salas: Array.isArray(salas) ? salas : [] });
+  limpiarSalasExpiradas();
+  const salasRaw = leerJson(ARCHIVO_SALAS_PERSONALIZADAS, []);
+  const salasOnline = leerJson(ARCHIVO_SALAS_ONLINE, {}) as Record<string, any>;
+  const lista = Array.isArray(salasRaw)
+    ? salasRaw.map((sp: any) => {
+        const codigo = normalizarCodigoSala(sp?.codigo);
+        const viva = codigo ? salasOnline[codigo] : null;
+        const conectados = viva ? Math.max(0, Number(viva.jugadoresConectados) || 0) : 0;
+        return {
+          ...sp,
+          jugadoresConectados: conectados,
+          enPartida: Boolean(viva?.enPartida),
+        };
+      })
+    : [];
+  res.json({ ok: true, salas: lista });
 });
 
 app.post('/api/admin/salas-personalizadas', async (req, res) => {
@@ -2274,7 +2288,7 @@ app.get('/api/salas', (req, res) => {
   const salasRaw = leerJson(ARCHIVO_SALAS_ONLINE, {}) as Record<string, any>;
   const validas = Object.values(salasRaw)
     .filter((r: any) => {
-      if (!r) return false;
+      if (!r || r.esOficialStaff) return false;
       const juegoSala = normalizarJuegoSala(r.juego);
       if (juegoSala !== filtroJuego) return false;
       if (filtroDigitos && Number(r.digitosCandado) !== filtroDigitos) return false;

@@ -2740,8 +2740,31 @@ async function manejarPeticionApi(request, env) {
   // ==========================================
   if (pathname === '/api/admin/salas-personalizadas' || pathname.startsWith('/api/admin/salas-personalizadas/')) {
     if (request.method === 'GET') {
+      await d1LimpiarSalasExpiradas(d1);
       const salas = await d1LeerSalasPersonalizadas(d1);
-      return new Response(JSON.stringify({ ok: true, salas }), { headers: cabecerasJson });
+      const liveMap = {};
+      if (d1 && salas.length > 0) {
+        try {
+          const filasLive = await d1.prepare('SELECT codigo, data_json FROM salas_online').all();
+          for (const f of filasLive?.results || []) {
+            try {
+              const parsed = JSON.parse(f.data_json);
+              const cod = normalizarCodigoSala(f.codigo || parsed?.codigo);
+              if (cod) liveMap[cod] = parsed;
+            } catch {}
+          }
+        } catch {}
+      }
+      const enriquecidas = salas.map((sp) => {
+        const cod = normalizarCodigoSala(sp?.codigo);
+        const viva = cod ? liveMap[cod] : null;
+        return {
+          ...sp,
+          jugadoresConectados: viva ? Math.max(0, Number(viva.jugadoresConectados) || 0) : 0,
+          enPartida: Boolean(viva?.enPartida),
+        };
+      });
+      return new Response(JSON.stringify({ ok: true, salas: enriquecidas }), { headers: cabecerasJson });
     }
 
     if (request.method === 'POST') {
@@ -3590,6 +3613,7 @@ async function manejarPeticionApi(request, env) {
           const juegoSala = normalizarJuegoSala(r?.juego);
           if (
             r &&
+            !r.esOficialStaff &&
             juegoSala === filtroJuego &&
             (!filtroDigitos || Number(r.digitosCandado) === filtroDigitos) &&
             r.publica !== false &&

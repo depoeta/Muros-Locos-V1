@@ -297,7 +297,11 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
         onlineService.obtenerSalasPublicas(),
         obtenerSalasPersonalizadasAsync(),
       ]);
-      setSalasDinamicas(salas);
+      const codigosOficiales = new Set(custom.map((c) => normalizeRoomCode(c.codigo)));
+      const salasNormales = salas.filter(
+        (s) => !s.esOficialStaff && !codigosOficiales.has(normalizeRoomCode(s.codigo))
+      );
+      setSalasDinamicas(salasNormales);
       setSalasPersonalizadas(custom);
     } catch {
       // ignore
@@ -819,7 +823,16 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                             </span>
                           )}
                           <span className={`text-[9px] font-semibold block mt-0.5 ${t.muted}`}>
-                            {sp.maxJugadores} Jugadores · {sp.tamanoTablero || 9}×{sp.tamanoTablero || 9} · Mod: {sp.creador}
+                            {sp.enPartida
+                              ? 'En partida'
+                              : `${Math.max(0, Number(sp.jugadoresConectados) || 0)}/${sp.maxJugadores} jug.`}{' '}
+                            · {sp.tamanoTablero || 9}×{sp.tamanoTablero || 9} ·{' '}
+                            {sp.creadorRol === 'dev'
+                              ? 'Dev'
+                              : sp.creadorRol === 'admin'
+                              ? 'Admin'
+                              : 'Mod'}
+                            : {sp.creador}
                           </span>
                         </div>
                         <span className={`text-[10px] font-bold px-2 py-1 rounded-lg shrink-0 ${t.btnPrimary}`}>
@@ -862,7 +875,7 @@ export const OnlineLobbyScreen: React.FC<OnlineLobbyScreenProps> = ({
                           </span>
                           <span className="text-[10px] font-semibold opacity-85 block">
                             Anfitrión: {sala.anfitrion} •{' '}
-                            {sala.jugadoresConectados || 1}/{sala.maxJugadores} jug. •{' '}
+                            {Math.max(0, Number(sala.jugadoresConectados) || 0)}/{sala.maxJugadores} jug. •{' '}
                             {sala.tamanoTablero || 9}×{sala.tamanoTablero || 9}
                           </span>
                         </div>
