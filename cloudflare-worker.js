@@ -1201,43 +1201,102 @@ async function d1EliminarSalaOnline(d1, codigo) {
 // MANEJADOR PRINCIPAL DE LA API
 // ==========================================
 
-function resolverOriginPermitido(request, env, url) {
-  const origin = (request.headers.get('Origin') || '').trim();
-  if (!origin) return url.origin;
+function normalizarOrigenHttp(raw) {
+  const txt = String(raw || '').trim();
+  if (!txt || txt.toLowerCase() === 'null') return null;
+  try {
+    const parsed = new URL(txt);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.origin.toLowerCase();
+  } catch {
+    return null;
+  }
+}
 
-  const listaEnv = String(env?.ALLOWED_ORIGIN || env?.ALLOWED_ORIGINS || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+function construirListaOrigenesPermitidos(url) {
+  const permitidos = new Set();
+  const selfOrigin = normalizarOrigenHttp(url.origin);
+  if (selfOrigin) permitidos.add(selfOrigin);
+  return permitidos;
+}
 
-  if (listaEnv.includes(origin) || origin === url.origin) {
-    return origin;
+function esOrigenAutorizado(origenNormalizado, permitidos, selfHostname) {
+  if (!origenNormalizado) return false;
+  if (permitidos.has(origenNormalizado)) return true;
+
+  if (selfHostname === 'localhost' || selfHostname === '127.0.0.1') {
+    try {
+      const h = new URL(origenNormalizado).hostname;
+      if (h === 'localhost' || h === '127.0.0.1') return true;
+    } catch {}
   }
 
-  try {
-    const oUrl = new URL(origin);
-    if (
-      oUrl.hostname === 'localhost' ||
-      oUrl.hostname === '127.0.0.1' ||
-      oUrl.hostname.endsWith('.pages.dev') ||
-      oUrl.hostname.endsWith('.workers.dev') ||
-      oUrl.hostname.endsWith('.run.app')
-    ) {
-      return origin;
-    }
-  } catch {}
+  return false;
+}
 
-  return url.origin;
+function validarAccesoOrigenApi(request, url) {
+  const permitidos = construirListaOrigenesPermitidos(url);
+  const selfHostname = url.hostname.toLowerCase();
+  const fallbackOrigin = normalizarOrigenHttp(url.origin) || url.origin;
+
+  const rawOrigin = request.headers.get('Origin');
+  if (rawOrigin !== null) {
+    const originNorm = normalizarOrigenHttp(rawOrigin);
+    if (!esOrigenAutorizado(originNorm, permitidos, selfHostname)) {
+      return {
+        permitido: false,
+        allowOrigin: fallbackOrigin,
+        motivo: 'Origen no autorizado.',
+      };
+    }
+    return {
+      permitido: true,
+      allowOrigin: originNorm,
+      motivo: null,
+    };
+  }
+
+  const rawReferer = request.headers.get('Referer');
+  if (rawReferer) {
+    const refNorm = normalizarOrigenHttp(rawReferer);
+    if (!esOrigenAutorizado(refNorm, permitidos, selfHostname)) {
+      return {
+        permitido: false,
+        allowOrigin: fallbackOrigin,
+        motivo: 'Referrer no autorizado.',
+      };
+    }
+    return {
+      permitido: true,
+      allowOrigin: refNorm,
+      motivo: null,
+    };
+  }
+
+  const secFetchSite = String(request.headers.get('Sec-Fetch-Site') || '').trim().toLowerCase();
+  if (secFetchSite === 'cross-site') {
+    return {
+      permitido: false,
+      allowOrigin: fallbackOrigin,
+      motivo: 'Petición cross-site bloqueada.',
+    };
+  }
+
+  return {
+    permitido: true,
+    allowOrigin: fallbackOrigin,
+    motivo: null,
+  };
 }
 
 async function manejarPeticionApi(request, env) {
   const url = new URL(request.url);
   const pathname = url.pathname;
-  const allowOrigin = resolverOriginPermitido(request, env, url);
+  const accesoOrigen = validarAccesoOrigenApi(request, url);
 
   const cabecerasJson = {
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': allowOrigin,
+    'Access-Control-Allow-Origin': accesoOrigen.allowOrigin,
     'Vary': 'Origin',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-User, X-Admin-Token, X-Self-Delete-Id, X-Self-Delete-Key, X-Register-Id',
@@ -1247,6 +1306,20 @@ async function manejarPeticionApi(request, env) {
     'X-DB-Bound': 'true',
     'X-Database-Bound': 'true',
   };
+
+  if (!accesoOrigen.permitido) {
+    return new Response(
+      JSON.stringify({ ok: false, error: `Acceso denegado: ${accesoOrigen.motivo}` }),
+      {
+        status: 403,
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+          'Vary': 'Origin',
+        },
+      }
+    );
+  }
 
   if (request.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: cabecerasJson });
@@ -2694,14 +2767,46 @@ async function manejarPeticionApi(request, env) {
         });
       }
 
+      const creadorId = String(perm.actor?.id || (perm.esDev ? 'admin' : '')).trim().toLowerCase();
+      const creadorNombre = String(perm.actor?.nombre || 'Staff').trim();
       const creadorRol = perm.esDev ? 'dev' : perm.esAdmin ? 'admin' : 'mod';
+
+      if (!perm.esDev) {
+        const salasActuales = await d1LeerSalasPersonalizadas(d1);
+        const salaPropiaExistente = salasActuales.find((s) => {
+          if (!s) return false;
+          const sCreadorId = String(s.creadorId || '').trim().toLowerCase();
+          if (sCreadorId) return sCreadorId === creadorId;
+          return Boolean(creadorNombre && String(s.creador || '').trim().toLowerCase() === creadorNombre.toLowerCase());
+        });
+        if (salaPropiaExistente) {
+          return new Response(
+            JSON.stringify({
+              ok: false,
+              error: `Como Mod o Admin solo puedes tener 1 sala personalizada activa a la vez (código: ${salaPropiaExistente.codigo}). Elimínala primero para crear otra.`,
+            }),
+            { status: 409, headers: cabecerasJson }
+          );
+        }
+        const codigoOcupado = salasActuales.find((s) => s && s.codigo === codigo);
+        if (codigoOcupado) {
+          return new Response(
+            JSON.stringify({
+              ok: false,
+              error: `El código "${codigo}" ya está en uso por otra sala oficial.`,
+            }),
+            { status: 409, headers: cabecerasJson }
+          );
+        }
+      }
+
       const ahora = Date.now();
       const nuevaSala = {
         id: `sp_${codigo}`,
         codigo,
         nombre: nombre.slice(0, 32),
-        creador: perm.actor?.nombre || 'Staff',
-        creadorId: perm.actor?.id || 'admin',
+        creador: creadorNombre,
+        creadorId: creadorId || 'admin',
         creadorRol,
         creadoEn: ahora,
         maxJugadores: body.maxJugadores === 4 ? 4 : 2,
@@ -2782,6 +2887,24 @@ async function manejarPeticionApi(request, env) {
       }
 
       if (codigo) {
+        const actorId = String(perm.actor?.id || '').trim().toLowerCase();
+        const salasActuales = await d1LeerSalasPersonalizadas(d1);
+        const target = salasActuales.find((s) => s && s.codigo === codigo);
+        if (target) {
+          const targetCreadorId = String(target.creadorId || '').trim().toLowerCase();
+          if (perm.esMod && !perm.esAdmin && !perm.esDev && targetCreadorId && actorId && targetCreadorId !== actorId) {
+            return new Response(
+              JSON.stringify({ ok: false, error: 'Un Moderador solo puede eliminar su propia sala personalizada.' }),
+              { status: 403, headers: cabecerasJson }
+            );
+          }
+          if (perm.esAdmin && !perm.esDev && target.creadorRol === 'dev') {
+            return new Response(
+              JSON.stringify({ ok: false, error: 'Solo el Dev puede eliminar una sala oficial creada por el Dev.' }),
+              { status: 403, headers: cabecerasJson }
+            );
+          }
+        }
         const delRes = await d1EliminarSalaPersonalizada(d1, codigo);
         if (!delRes.ok) {
           return new Response(
@@ -3192,204 +3315,253 @@ async function manejarPeticionApi(request, env) {
   }
 
   // ==========================================
-  // 5c. GET / POST /api/semanal (Calculado sobre `ranking` + liquidación semanal)
+  // 5c. GET /api/sync y GET / POST /api/semanal (Calculado sobre `ranking` + liquidación semanal)
   // ==========================================
-  if (pathname === '/api/semanal') {
+  async function construirDatosSemanalD1(cuentasEntrada) {
     const w = obtenerInfoSemana();
     await d1AsegurarSemanaEnRanking(d1, w);
-    const cuentas = await d1ObtenerTodasCuentas(d1);
+    const cuentas = cuentasEntrada || (await d1ObtenerTodasCuentas(d1));
     const cfg = (await d1LeerConfig(d1, 'config_semanal_puntos', CONFIG_SEMANAL_POR_DEFECTO)) || CONFIG_SEMANAL_POR_DEFECTO;
     const premioGlobal = await d1LeerConfig(d1, 'premio_semanal_global', null);
 
     const metaActual = (await d1LeerConfig(d1, `semanal_${w.semanaActualId}`, {})) || {};
     const metaPasada = (await d1LeerConfig(d1, `semanal_${w.semanaPasadaId}`, { premiada: false, premiados: [] })) || {};
 
-    if (request.method === 'GET') {
-      const filasRank = d1 ? await d1.prepare('SELECT * FROM ranking').all() : { results: [] };
-      const jugadoresActual = {};
-      const jugadoresPasada = {};
+    const filasRank = d1 ? await d1.prepare('SELECT * FROM ranking').all() : { results: [] };
+    const jugadoresActual = {};
+    const jugadoresPasada = {};
 
-      for (const r of filasRank?.results || []) {
-        const key = String(r.id || r.nombre || '').trim().toLowerCase();
-        if (!key) continue;
-        if (r.semana_actual_id === w.semanaActualId && (Number(r.semana_actual_part) > 0 || Number(r.semana_actual_pts) > 0)) {
-          jugadoresActual[key] = {
-            id: key,
-            nombre: r.nombre || r.id,
-            avatarColor: r.avatar_color || '#ff6b6b',
-            avatarHat: r.avatar_hat || 'corona',
-            avatarRopa: r.avatar_ropa || 'ninguna',
-            avatarRopaColor: r.avatar_ropa_color || undefined,
-            avatarAura: r.avatar_aura || 'ninguna',
-            puntos: Number(r.semana_actual_pts) || 0,
-            partidas: Number(r.semana_actual_part) || 0,
-            victorias: Number(r.semana_actual_vic) || 0,
-          };
-        }
-        if (r.semana_pasada_id === w.semanaPasadaId && Number(r.semana_pasada_pts) > 0) {
-          jugadoresPasada[key] = {
-            id: key,
-            nombre: r.nombre || r.id,
-            avatarColor: r.avatar_color || '#ff6b6b',
-            avatarHat: r.avatar_hat || 'corona',
-            avatarRopa: r.avatar_ropa || 'ninguna',
-            avatarRopaColor: r.avatar_ropa_color || undefined,
-            avatarAura: r.avatar_aura || 'ninguna',
-            puntos: Number(r.semana_pasada_pts) || 0,
-            partidas: 1,
-            victorias: 0,
-          };
+    for (const r of filasRank?.results || []) {
+      const key = String(r.id || r.nombre || '').trim().toLowerCase();
+      if (!key) continue;
+      if (r.semana_actual_id === w.semanaActualId && (Number(r.semana_actual_part) > 0 || Number(r.semana_actual_pts) > 0)) {
+        jugadoresActual[key] = {
+          id: key,
+          nombre: r.nombre || r.id,
+          avatarColor: r.avatar_color || '#ff6b6b',
+          avatarHat: r.avatar_hat || 'corona',
+          avatarRopa: r.avatar_ropa || 'ninguna',
+          avatarRopaColor: r.avatar_ropa_color || undefined,
+          avatarAura: r.avatar_aura || 'ninguna',
+          puntos: Number(r.semana_actual_pts) || 0,
+          partidas: Number(r.semana_actual_part) || 0,
+          victorias: Number(r.semana_actual_vic) || 0,
+        };
+      }
+      if (r.semana_pasada_id === w.semanaPasadaId && Number(r.semana_pasada_pts) > 0) {
+        jugadoresPasada[key] = {
+          id: key,
+          nombre: r.nombre || r.id,
+          avatarColor: r.avatar_color || '#ff6b6b',
+          avatarHat: r.avatar_hat || 'corona',
+          avatarRopa: r.avatar_ropa || 'ninguna',
+          avatarRopaColor: r.avatar_ropa_color || undefined,
+          avatarAura: r.avatar_aura || 'ninguna',
+          puntos: Number(r.semana_pasada_pts) || 0,
+          partidas: 1,
+          victorias: 0,
+        };
+      }
+    }
+
+    // Respaldo hidratado desde historial de cuentas por si hubo cambio de semana o tabla nueva
+    for (const acc of Object.values(cuentas)) {
+      if (!acc || typeof acc !== 'object') continue;
+      const hist = Array.isArray(acc.historialPartidas) ? acc.historialPartidas : [];
+      const key = String(acc.id || acc.nombre || '').trim().toLowerCase();
+      if (!key) continue;
+
+      let actPts = 0, actPart = 0, actVic = 0;
+      let pasPts = 0, pasPart = 0, pasVic = 0;
+
+      for (const m of hist) {
+        if (!m || !m.fecha) continue;
+        const t = new Date(m.fecha).getTime();
+        if (isNaN(t)) continue;
+        const ptsM = Math.max(0, Number(m.puntos) || 0);
+        if (t >= w.lunesUtc && t < w.proximoLunesUtc) {
+          actPart++;
+          actPts += ptsM > 0 ? ptsM : (m.resultado === 'victoria' ? (cfg.puntosVictoria || 3) : m.resultado === 'empate' ? (cfg.puntosEmpate || 1) : 0);
+          if (m.resultado === 'victoria') actVic++;
+        } else if (t >= w.lunesPasadoUtc && t < w.lunesUtc) {
+          pasPart++;
+          pasPts += ptsM > 0 ? ptsM : (m.resultado === 'victoria' ? (cfg.puntosVictoria || 3) : m.resultado === 'empate' ? (cfg.puntosEmpate || 1) : 0);
+          if (m.resultado === 'victoria') pasVic++;
         }
       }
 
-      // Respaldo hidratado desde historial de cuentas por si hubo cambio de semana o tabla nueva
-      for (const acc of Object.values(cuentas)) {
-        if (!acc || typeof acc !== 'object') continue;
-        const hist = Array.isArray(acc.historialPartidas) ? acc.historialPartidas : [];
-        const key = String(acc.id || acc.nombre || '').trim().toLowerCase();
-        if (!key) continue;
-
-        let actPts = 0, actPart = 0, actVic = 0;
-        let pasPts = 0, pasPart = 0, pasVic = 0;
-
-        for (const m of hist) {
-          if (!m || !m.fecha) continue;
-          const t = new Date(m.fecha).getTime();
-          if (isNaN(t)) continue;
-          const ptsM = Math.max(0, Number(m.puntos) || 0);
-          if (t >= w.lunesUtc && t < w.proximoLunesUtc) {
-            actPart++;
-            actPts += ptsM > 0 ? ptsM : (m.resultado === 'victoria' ? (cfg.puntosVictoria || 3) : m.resultado === 'empate' ? (cfg.puntosEmpate || 1) : 0);
-            if (m.resultado === 'victoria') actVic++;
-          } else if (t >= w.lunesPasadoUtc && t < w.lunesUtc) {
-            pasPart++;
-            pasPts += ptsM > 0 ? ptsM : (m.resultado === 'victoria' ? (cfg.puntosVictoria || 3) : m.resultado === 'empate' ? (cfg.puntosEmpate || 1) : 0);
-            if (m.resultado === 'victoria') pasVic++;
-          }
-        }
-
-        if (actPart > 0) {
-          const prevA = jugadoresActual[key];
-          jugadoresActual[key] = {
-            id: acc.id,
-            nombre: acc.nombre,
-            avatarColor: acc.avatarColor || '#ff6b6b',
-            avatarHat: acc.avatarHat || 'corona',
-            avatarRopa: acc.avatarRopa || 'ninguna',
-            avatarRopaColor: acc.avatarRopaColor,
-            avatarAura: acc.avatarAura || 'ninguna',
-            puntos: Math.max(prevA?.puntos || 0, actPts),
-            partidas: Math.max(prevA?.partidas || 0, actPart),
-            victorias: Math.max(prevA?.victorias || 0, actVic),
-          };
-        }
-        if (pasPart > 0) {
-          const prevP = jugadoresPasada[key];
-          jugadoresPasada[key] = {
-            id: acc.id,
-            nombre: acc.nombre,
-            avatarColor: acc.avatarColor || '#ff6b6b',
-            avatarHat: acc.avatarHat || 'corona',
-            avatarRopa: acc.avatarRopa || 'ninguna',
-            avatarRopaColor: acc.avatarRopaColor,
-            avatarAura: acc.avatarAura || 'ninguna',
-            puntos: Math.max(prevP?.puntos || 0, pasPts),
-            partidas: Math.max(prevP?.partidas || 0, pasPart),
-            victorias: Math.max(prevP?.victorias || 0, pasVic),
-          };
-        }
+      if (actPart > 0) {
+        const prevA = jugadoresActual[key];
+        jugadoresActual[key] = {
+          id: acc.id,
+          nombre: acc.nombre,
+          avatarColor: acc.avatarColor || '#ff6b6b',
+          avatarHat: acc.avatarHat || 'corona',
+          avatarRopa: acc.avatarRopa || 'ninguna',
+          avatarRopaColor: acc.avatarRopaColor,
+          avatarAura: acc.avatarAura || 'ninguna',
+          puntos: Math.max(prevA?.puntos || 0, actPts),
+          partidas: Math.max(prevA?.partidas || 0, actPart),
+          victorias: Math.max(prevA?.victorias || 0, actVic),
+        };
       }
+      if (pasPart > 0) {
+        const prevP = jugadoresPasada[key];
+        jugadoresPasada[key] = {
+          id: acc.id,
+          nombre: acc.nombre,
+          avatarColor: acc.avatarColor || '#ff6b6b',
+          avatarHat: acc.avatarHat || 'corona',
+          avatarRopa: acc.avatarRopa || 'ninguna',
+          avatarRopaColor: acc.avatarRopaColor,
+          avatarAura: acc.avatarAura || 'ninguna',
+          puntos: Math.max(prevP?.puntos || 0, pasPts),
+          partidas: Math.max(prevP?.partidas || 0, pasPart),
+          victorias: Math.max(prevP?.victorias || 0, pasVic),
+        };
+      }
+    }
 
-      // Liquidación automática de premios de la semana pasada (si aún no se premió)
-      if (!metaPasada.premiada) {
-        const candidatos = Object.values(jugadoresPasada).filter((j) => j && j.partidas > 0 && j.puntos > 0);
-        if (candidatos.length > 0) {
-          candidatos.sort((a, b) => {
-            if (b.puntos !== a.puntos) return b.puntos - a.puntos;
-            if (b.victorias !== a.victorias) return b.victorias - a.victorias;
-            return b.partidas - a.partidas;
-          });
+    // Liquidación automática de premios de la semana pasada (si aún no se premió)
+    if (!metaPasada.premiada) {
+      const candidatos = Object.values(jugadoresPasada).filter((j) => j && j.partidas > 0 && j.puntos > 0);
+      if (candidatos.length > 0) {
+        candidatos.sort((a, b) => {
+          if (b.puntos !== a.puntos) return b.puntos - a.puntos;
+          if (b.victorias !== a.victorias) return b.victorias - a.victorias;
+          return b.partidas - a.partidas;
+        });
 
-          const bonos = [
-            Number(cfg.primerLugar ?? 50),
-            Number(cfg.segundoLugar ?? 25),
-            Number(cfg.tercerLugar ?? 15),
-          ];
-          const premiados = [];
+        const bonos = [
+          Number(cfg.primerLugar ?? 50),
+          Number(cfg.segundoLugar ?? 25),
+          Number(cfg.tercerLugar ?? 15),
+        ];
+        const premiados = [];
 
-          for (let i = 0; i < Math.min(3, candidatos.length); i++) {
-            const cand = candidatos[i];
-            const acc = cuentas[cand.id];
-            if (!acc) continue;
-            const bono = bonos[i] || 0;
-            acc.puntos = (Number(acc.puntos) || 0) + bono;
+        for (let i = 0; i < Math.min(3, candidatos.length); i++) {
+          const cand = candidatos[i];
+          const acc = cuentas[cand.id];
+          if (!acc) continue;
+          const bono = bonos[i] || 0;
+          acc.puntos = (Number(acc.puntos) || 0) + bono;
 
-            let personajePremio = undefined;
-            const premioSemana = metaPasada.premioSemanal || premioGlobal;
-            if (i === 0 && premioSemana && premioSemana.nombre) {
-              if (!acc.inventario || typeof acc.inventario !== 'object') acc.inventario = { personajes: [] };
-              if (!Array.isArray(acc.inventario.personajes)) acc.inventario.personajes = [];
-              const premioIdUnico = `${premioSemana.id}_${w.semanaPasadaId}`;
-              const yaLoTiene = acc.inventario.personajes.some((p) => p.id === premioIdUnico || p.id === premioSemana.id);
-              if (!yaLoTiene) {
-                personajePremio = {
-                  ...premioSemana,
-                  id: premioIdUnico,
-                  fechaAdquisicion: new Date().toISOString(),
-                  origen: {
-                    tipo: 'torneo_semanal',
-                    otorgadoPor: `Campeón Torneo Semanal ${w.semanaPasadaId}`,
-                    fecha: new Date().toISOString(),
-                    semanaTorneo: w.semanaPasadaId,
-                  },
-                };
-                acc.inventario.personajes.push(personajePremio);
-                if (d1) {
-                  await d1
-                    .prepare('UPDATE ranking SET semana_pasada_premio = ? WHERE id = ?')
-                    .bind(personajePremio.nombre, acc.id)
-                    .run();
-                }
+          let personajePremio = undefined;
+          const premioSemana = metaPasada.premioSemanal || premioGlobal;
+          if (i === 0 && premioSemana && premioSemana.nombre) {
+            if (!acc.inventario || typeof acc.inventario !== 'object') acc.inventario = { personajes: [] };
+            if (!Array.isArray(acc.inventario.personajes)) acc.inventario.personajes = [];
+            const premioIdUnico = `${premioSemana.id}_${w.semanaPasadaId}`;
+            const yaLoTiene = acc.inventario.personajes.some((p) => p.id === premioIdUnico || p.id === premioSemana.id);
+            if (!yaLoTiene) {
+              personajePremio = {
+                ...premioSemana,
+                id: premioIdUnico,
+                fechaAdquisicion: new Date().toISOString(),
+                origen: {
+                  tipo: 'torneo_semanal',
+                  otorgadoPor: `Campeón Torneo Semanal ${w.semanaPasadaId}`,
+                  fecha: new Date().toISOString(),
+                  semanaTorneo: w.semanaPasadaId,
+                },
+              };
+              acc.inventario.personajes.push(personajePremio);
+              if (d1) {
+                await d1
+                  .prepare('UPDATE ranking SET semana_pasada_premio = ? WHERE id = ?')
+                  .bind(personajePremio.nombre, acc.id)
+                  .run();
               }
             }
-            await d1GuardarCuentaCompleta(d1, acc, false);
-            premiados.push({ nombre: acc.nombre, puesto: i + 1, bono, personajePremio });
           }
-
-          metaPasada.premiada = true;
-          metaPasada.premiados = premiados;
-          await d1GuardarConfig(d1, `semanal_${w.semanaPasadaId}`, metaPasada);
-          await tocarUltimaActualizacion(d1);
+          await d1GuardarCuentaCompleta(d1, acc, false);
+          premiados.push({ nombre: acc.nombre, puesto: i + 1, bono, personajePremio });
         }
-      }
 
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          dbBound,
-          semanaActualId: w.semanaActualId,
-          semanaPasadaId: w.semanaPasadaId,
-          cierraEnMs: w.cierraEnMs,
-          actual: {
-            semanaId: w.semanaActualId,
-            premioSemanal: metaActual.premioSemanal || premioGlobal || undefined,
-            puntosConfig: {
-              primerLugar: Number(cfg.primerLugar ?? 50),
-              segundoLugar: Number(cfg.segundoLugar ?? 25),
-              tercerLugar: Number(cfg.tercerLugar ?? 15),
-            },
-            jugadores: jugadoresActual,
-          },
-          pasada: {
-            semanaId: w.semanaPasadaId,
-            premiada: Boolean(metaPasada.premiada),
-            premiados: Array.isArray(metaPasada.premiados) ? metaPasada.premiados : [],
-            premioSemanal: metaPasada.premioSemanal || premioGlobal || undefined,
-            jugadores: jugadoresPasada,
-          },
-        }),
-        { headers: cabecerasJson }
-      );
+        metaPasada.premiada = true;
+        metaPasada.premiados = premiados;
+        await d1GuardarConfig(d1, `semanal_${w.semanaPasadaId}`, metaPasada);
+        await tocarUltimaActualizacion(d1);
+      }
+    }
+
+    return {
+      ok: true,
+      dbBound,
+      semanaActualId: w.semanaActualId,
+      semanaPasadaId: w.semanaPasadaId,
+      cierraEnMs: w.cierraEnMs,
+      actual: {
+        semanaId: w.semanaActualId,
+        premioSemanal: metaActual.premioSemanal || premioGlobal || undefined,
+        puntosConfig: {
+          primerLugar: Number(cfg.primerLugar ?? 50),
+          segundoLugar: Number(cfg.segundoLugar ?? 25),
+          tercerLugar: Number(cfg.tercerLugar ?? 15),
+        },
+        jugadores: jugadoresActual,
+      },
+      pasada: {
+        semanaId: w.semanaPasadaId,
+        premiada: Boolean(metaPasada.premiada),
+        premiados: Array.isArray(metaPasada.premiados) ? metaPasada.premiados : [],
+        premioSemanal: metaPasada.premioSemanal || premioGlobal || undefined,
+        jugadores: jugadoresPasada,
+      },
+    };
+  }
+
+  if (pathname === '/api/sync' && request.method === 'GET') {
+    const sesion = await resolverSesion(request, env, d1);
+    const cuentas = await d1ObtenerTodasCuentas(d1);
+    if (!cuentas['admin']) {
+      cuentas['admin'] = construirPerfilSupremo();
+    }
+    const perm = await verificarPermisosLlamante(cuentas, sesion);
+    const esStaff = Boolean(perm.esDev || perm.esAdmin || perm.esMod);
+    const selfId = sesion && !sesion.revocada && sesion.userId ? sesion.userId : null;
+    const tieneAuthHeader = Boolean(request.headers.get('Authorization'));
+    const cuentasCorruptas = Object.values(cuentas).filter((c) => c && c._inventarioCorrupto);
+
+    const semanal = await construirDatosSemanalD1(cuentas);
+    const ranking = await d1LeerRanking(d1);
+    const lastUpdate = d1 ? await d1LeerConfig(d1, 'last_update', Date.now()) : Date.now();
+    const cuentasPublicas = sanitizarMapaCuentasPublicas(cuentas, { esStaff, selfId });
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        dbBound,
+        d1Bound: dbBound,
+        source: 'cloudflare_d1_database',
+        timestamp: Date.now(),
+        lastUpdate,
+        sesionUserId: selfId,
+        sesionValida: tieneAuthHeader ? Boolean(sesion && sesion.userId && !sesion.revocada) : true,
+        sesionRevocada: tieneAuthHeader && Boolean(sesion?.revocada),
+        miInventarioCorrupto: Boolean(selfId && cuentas[selfId]?._inventarioCorrupto),
+        ...(esStaff && cuentasCorruptas.length > 0
+          ? {
+              advertenciasInventario: cuentasCorruptas.map((c) => ({
+                id: c.id,
+                nombre: c.nombre || c.id,
+                error: c._inventarioError || 'JSON inválido en personajes_json',
+              })),
+            }
+          : {}),
+        cuentas: cuentasPublicas,
+        ranking,
+        semanal,
+      }),
+      { headers: cabecerasJson }
+    );
+  }
+
+  if (pathname === '/api/semanal') {
+    if (request.method === 'GET') {
+      const cuentas = await d1ObtenerTodasCuentas(d1);
+      const data = await construirDatosSemanalD1(cuentas);
+      return new Response(JSON.stringify(data), { headers: cabecerasJson });
     }
 
     if (request.method === 'POST') {
@@ -3444,10 +3616,83 @@ async function manejarPeticionApi(request, env) {
         });
       }
 
+      const sesion = await resolverSesion(request, env, d1);
+      const ownerCuentaId =
+        sesion && !sesion.revocada && sesion.userId
+          ? String(sesion.userId).trim().toLowerCase()
+          : undefined;
+      const rawGuestId = String(room?.guestHostId || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+      const guestHostId = !ownerCuentaId && rawGuestId.length >= 8 ? rawGuestId.slice(0, 64) : undefined;
+
       const existente = await d1LeerSalaOnline(d1, codigo);
+      const hostPeerId = String(room.hostPeerId || existente?.hostPeerId || `host_${codigo.toLowerCase()}`).trim();
+
+      if (existente) {
+        if (existente.esOficialStaff) {
+          return new Response(
+            JSON.stringify({ ok: false, error: 'Ese código pertenece a una sala oficial de Staff.' }),
+            { status: 409, headers: cabecerasJson }
+          );
+        }
+        const esMismoOwner =
+          (existente.hostCuentaId && ownerCuentaId && existente.hostCuentaId === ownerCuentaId) ||
+          (!existente.hostCuentaId && existente.hostGuestId && guestHostId && existente.hostGuestId === guestHostId) ||
+          (!existente.hostCuentaId && !existente.hostGuestId && hostPeerId === existente.hostPeerId);
+        if (!esMismoOwner) {
+          return new Response(
+            JSON.stringify({ ok: false, error: 'Ese código de sala ya está en uso.' }),
+            { status: 409, headers: cabecerasJson }
+          );
+        }
+      }
+
+      // Límite estricto: máximo 1 sala P2P activa por persona/cuenta (entre Muros Locos y Candado)
+      const filasActivas = d1
+        ? await d1.prepare('SELECT codigo, data_json, ultimo_cambio FROM salas_online').all()
+        : { results: [] };
+      for (const f of filasActivas?.results || []) {
+        let r = null;
+        try {
+          r = JSON.parse(f.data_json);
+        } catch {}
+        const maxInact = r?.enPartida ? 25 * 60 * 1000 : 15 * 60 * 1000;
+        const ultimo = Number(f.ultimo_cambio) || Number(r?.ultimoCambio) || 0;
+        if (!r || ahora - ultimo > maxInact) {
+          if (d1 && f?.codigo) {
+            await d1.prepare('DELETE FROM salas_online WHERE codigo = ?').bind(f.codigo).run().catch(() => {});
+          }
+          continue;
+        }
+        if (r.codigo === codigo || r.esOficialStaff) continue;
+        const rHostCuenta = r.hostCuentaId
+          ? String(r.hostCuentaId).trim().toLowerCase()
+          : Array.isArray(r.jugadores)
+          ? String(r.jugadores.find((p) => p && p.esAnfitrion && p.cuentaId)?.cuentaId || '').trim().toLowerCase()
+          : '';
+        const mismoUsuario = Boolean(ownerCuentaId && rHostCuenta && rHostCuenta === ownerCuentaId);
+        const mismoInvitado = Boolean(
+          !ownerCuentaId &&
+            guestHostId &&
+            r.hostGuestId &&
+            String(r.hostGuestId).trim().toLowerCase() === guestHostId
+        );
+        if (mismoUsuario || mismoInvitado) {
+          const juegoActivo = normalizarJuegoSala(r.juego);
+          const juegoLabel = juegoActivo === 'candado' ? 'Candado' : 'Muros Locos';
+          return new Response(
+            JSON.stringify({
+              ok: false,
+              codigoActivo: r.codigo,
+              juegoActivo,
+              error: `Ya tienes una sala en línea activa (${r.codigo} en ${juegoLabel}). Ciérrala o espera a que finalice antes de crear otra.`,
+            }),
+            { status: 409, headers: cabecerasJson }
+          );
+        }
+      }
+
       const juego = normalizarJuegoSala(room.juego ?? existente?.juego);
       const esPublica = room.publica !== undefined ? Boolean(room.publica) : existente?.publica ?? true;
-      const hostPeerId = room.hostPeerId || existente?.hostPeerId || `host_${codigo.toLowerCase()}`;
       const maxJugadores = juego === 'candado' ? 2 : room.maxJugadores === 4 ? 4 : existente?.maxJugadores || 2;
       const anfitrion = String(room.anfitrion || existente?.anfitrion || 'Anfitrión').trim();
       const color = room.color || existente?.color || '#ff6b6b';
@@ -3460,7 +3705,7 @@ async function manejarPeticionApi(request, env) {
         {
           id: 0,
           peerId: hostPeerId,
-          cuentaId: room.cuentaId || undefined,
+          cuentaId: ownerCuentaId || undefined,
           nombre: anfitrion,
           color,
           hat,
@@ -3473,12 +3718,18 @@ async function manejarPeticionApi(request, env) {
         },
       ];
 
-      const jugadores =
+      const jugadoresBase =
         Array.isArray(room.jugadores) && room.jugadores.length > 0
           ? room.jugadores
           : existente?.jugadores?.length
           ? existente.jugadores
           : listaHostPorDefecto;
+
+      const jugadores = jugadoresBase.map((j) =>
+        j && j.esAnfitrion
+          ? { ...j, cuentaId: ownerCuentaId || undefined }
+          : j
+      );
 
       const modoCandado = normalizarModoCandado(room.modoCandado ?? existente?.modoCandado);
       const digitosCandado = normalizarDigitosCandado(room.digitosCandado ?? existente?.digitosCandado, modoCandado);
@@ -3490,6 +3741,8 @@ async function manejarPeticionApi(request, env) {
         nombre: String(room.nombre || existente?.nombre || `Sala de ${anfitrion}`).trim(),
         anfitrion,
         hostPeerId,
+        ...(ownerCuentaId ? { hostCuentaId: ownerCuentaId } : {}),
+        ...(guestHostId ? { hostGuestId: guestHostId } : {}),
         color,
         hat,
         ropa,
@@ -3837,6 +4090,47 @@ async function manejarPeticionApi(request, env) {
 
     // DELETE /api/salas/:codigo
     if (!subaccion && request.method === 'DELETE') {
+      const fila = d1
+        ? await d1.prepare('SELECT data_json FROM salas_online WHERE codigo = ?').bind(codigo).first()
+        : null;
+      if (fila && typeof fila.data_json === 'string') {
+        let existente = null;
+        try {
+          existente = JSON.parse(fila.data_json);
+        } catch {}
+        if (existente) {
+          if (existente.esOficialStaff) {
+            return new Response(
+              JSON.stringify({ ok: false, error: 'Las salas oficiales solo se cierran desde el panel Staff.' }),
+              { status: 403, headers: cabecerasJson }
+            );
+          }
+          const sesion = await resolverSesion(request, env, d1);
+          const sesionId =
+            sesion && !sesion.revocada && sesion.userId
+              ? String(sesion.userId).trim().toLowerCase()
+              : '';
+          const peerId = (url.searchParams.get('peerId') || '').trim();
+          const guestHostId = (url.searchParams.get('guestHostId') || '').trim().toLowerCase();
+          const esStaff = Boolean(sesionId && (sesion?.rol === 'dev' || sesion?.rol === 'admin'));
+          const autorizadoCuenta = Boolean(
+            existente.hostCuentaId && sesionId && sesionId === String(existente.hostCuentaId).trim().toLowerCase()
+          );
+          const autorizadoPeer = Boolean(peerId && existente.hostPeerId && peerId === existente.hostPeerId);
+          const autorizadoGuest = Boolean(
+            !existente.hostCuentaId &&
+              guestHostId &&
+              existente.hostGuestId &&
+              guestHostId === String(existente.hostGuestId).trim().toLowerCase()
+          );
+          if (!esStaff && !autorizadoCuenta && !autorizadoPeer && !autorizadoGuest) {
+            return new Response(
+              JSON.stringify({ ok: false, error: 'Solo el anfitrión puede cerrar esta sala.' }),
+              { status: 403, headers: cabecerasJson }
+            );
+          }
+        }
+      }
       await d1EliminarSalaOnline(d1, codigo);
       return new Response(JSON.stringify({ ok: true, dbBound }), { headers: cabecerasJson });
     }

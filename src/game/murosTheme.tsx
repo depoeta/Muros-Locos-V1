@@ -84,7 +84,7 @@ const TOKENS: Record<EstiloMuros, MurosThemeTokens> = {
     esOscuro: true,
     esClaro: false,
     esClasico: false,
-    rootBg: 'bg-gradient-to-br from-[#11131E] via-[#151828] to-[#191D30] text-slate-100',
+    rootBg: 'bg-gradient-to-br from-[#14172B] via-[#1B1D36] to-[#231D38] text-slate-100',
     shell: 'bg-[#1B1F30] border border-white/12 text-slate-100 shadow-2xl',
     shellModal: 'bg-[#1B1F30] border border-white/12 text-slate-100 shadow-2xl',
     card: 'bg-slate-800/75 border border-white/10 text-slate-100',

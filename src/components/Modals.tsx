@@ -45,6 +45,7 @@ import {
   cargarCuentas,
   cargarRanking,
   cargarRankingLocal,
+  cargarRankingSemanalCache,
   cerrarSesion,
   crearSalaPersonalizadaAsync,
   darDeBajaUserAsync,
@@ -71,12 +72,11 @@ import {
   DiagnosticoDeRed,
   obtenerDiagnosticoRed,
   obtenerNivelYTitulo,
-  obtenerRankingSemanalAsync,
-  pingServidor,
   registrarUserAsync,
   sincronizarConNube,
   suscribirCambiosNube,
   suscribirDiagnostico,
+  verificarActualizacionSiNecesaria,
   D1_VerificarAccionAdmin,
 } from '../game/storage';
 
@@ -1081,9 +1081,11 @@ export const RankingModal: React.FC<RankingModalProps> = ({
   const [localRankingData, setLocalRankingData] = useState<Record<string, EntradaRanking>>(() =>
     cargarRankingLocal()
   );
-  const [semanalData, setSemanalData] = useState<RespuestaRankingSemanal | null>(null);
+  const [semanalData, setSemanalData] = useState<RespuestaRankingSemanal | null>(() =>
+    cargarRankingSemanalCache()
+  );
   const [mensajeToast, setMensajeToast] = useState<string | null>(null);
-  const [sincronizando, setSincronizando] = useState(false);
+  const [reintentando, setReintentando] = useState(false);
   const [confirmandoBorrarLocal, setConfirmandoBorrarLocal] = useState(false);
   const [diag, setDiag] = useState<DiagnosticoDeRed>(() => obtenerDiagnosticoRed());
 
@@ -1185,28 +1187,39 @@ export const RankingModal: React.FC<RankingModalProps> = ({
     return list;
   }, [tab, rankingData, localRankingData, semanalData]);
 
-  const refrescarRanking = async (forzar: boolean = false) => {
-    setSincronizando(true);
+  const reintentarConexionDb = async () => {
+    if (reintentando) return;
+    setReintentando(true);
     try {
-      const [res, sem] = await Promise.all([
-        sincronizarConNube(forzar),
-        obtenerRankingSemanalAsync(),
-      ]);
+      const res = await sincronizarConNube(true);
       setRankingData(cargarRanking());
       setLocalRankingData(cargarRankingLocal());
-      setSemanalData(sem);
-      if (forzar) {
-        showToast(res.dbConectado ? '🔄 Sincronizado con la Database' : '⚠️ Sin conexión a la Database');
-      }
+      setSemanalData(cargarRankingSemanalCache());
+      showToast(res.dbConectado ? '🔄 Sincronizado con la Database' : '⚠️ Sin conexión a la Database');
     } catch {
       showToast('⚠️ No se pudo sincronizar con la Database');
     } finally {
-      setSincronizando(false);
+      setReintentando(false);
     }
   };
 
   useEffect(() => {
-    refrescarRanking(false);
+    const unsubNube = suscribirCambiosNube(({ ranking, semanal }) => {
+      setRankingData(ranking);
+      setLocalRankingData(cargarRankingLocal());
+      if (semanal) setSemanalData(semanal);
+    });
+
+    verificarActualizacionSiNecesaria(10000)
+      .then(() => {
+        setRankingData(cargarRanking());
+        setLocalRankingData(cargarRankingLocal());
+        const sem = cargarRankingSemanalCache();
+        if (sem) setSemanalData(sem);
+      })
+      .catch(() => {});
+
+    return () => unsubNube();
   }, []);
 
   const textoCuentaAtrasSemana = useMemo(() => {
@@ -1258,10 +1271,11 @@ export const RankingModal: React.FC<RankingModalProps> = ({
             <span>⚠️ Sin conexión a la Database: mostrando últimos datos guardados localmente.</span>
             <button
               type="button"
-              onClick={() => refrescarRanking(true)}
-              className={`py-1 px-2 rounded-lg text-[10px] font-black cursor-pointer shrink-0 ${t.btnNeutral}`}
+              disabled={reintentando}
+              onClick={reintentarConexionDb}
+              className={`py-1 px-2 rounded-lg text-[10px] font-black cursor-pointer shrink-0 disabled:opacity-50 ${t.btnNeutral}`}
             >
-              🔄 Reintentar
+              {reintentando ? '⏳ Conectando...' : '🔄 Reintentar'}
             </button>
           </div>
         )}
@@ -1492,17 +1506,9 @@ export const RankingModal: React.FC<RankingModalProps> = ({
         </div>
 
         <div className={`pt-3 mt-2 border-t-2 flex items-center justify-between gap-2 text-xs ${t.divider}`}>
-          <button
-            onClick={() => {
-              sounds.playClick();
-              refrescarRanking(true);
-            }}
-            disabled={sincronizando}
-            className={`py-1.5 px-3.5 rounded-xl font-black cursor-pointer flex items-center gap-1.5 disabled:opacity-50 ${t.btnNeutral}`}
-          >
-            <span className={sincronizando ? 'animate-spin' : ''}>🔄</span>
-            <span>{sincronizando ? 'Sincronizando...' : 'Actualizar Database'}</span>
-          </button>
+          <span className={`text-[11px] font-bold ${t.muted}`}>
+            🔄 Sincronización automática cada 30 s
+          </span>
 
           <button
             onClick={() => {
@@ -2100,7 +2106,9 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
     const unsubNube = suscribirCambiosNube(({ cuentas: nuevas }) => {
       setTodasLasCuentas(nuevas);
     });
-    sincronizarConNube(false).then(() => setTodasLasCuentas(cargarCuentas())).catch(() => {});
+    verificarActualizacionSiNecesaria(10000)
+      .then(() => setTodasLasCuentas(cargarCuentas()))
+      .catch(() => {});
     return () => {
       unsubDiag();
       unsubNube();
@@ -2191,8 +2199,7 @@ export const PerfilModal: React.FC<PerfilModalProps> = ({
             <button
               type="button"
               onClick={() => {
-                pingServidor();
-                sincronizarConNube(true);
+                sincronizarConNube(true).catch(() => {});
               }}
               className={`py-1 px-2 rounded-lg text-[10px] font-black cursor-pointer shrink-0 ${t.btnNeutral}`}
             >
@@ -2952,7 +2959,9 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     async (mostrarToastManual: boolean = false) => {
       if (mostrarToastManual) setSincronizando(true);
       try {
-        const res = await sincronizarConNube(true);
+        const res = mostrarToastManual
+          ? await sincronizarConNube(true)
+          : await verificarActualizacionSiNecesaria(5000);
         const accs = cargarCuentas();
         const sigueActivo = verificarRevocacionYActualizarLista(accs);
         if (!sigueActivo) return;
@@ -2984,14 +2993,8 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
       verificarRevocacionYActualizarLista(cloudAccs);
     });
 
-    const liveInterval = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-      pingServidor().catch(() => {});
-    }, 25000);
-
     return () => {
       unsubNube();
-      clearInterval(liveInterval);
     };
   }, [sincronizar, verificarRevocacionYActualizarLista]);
 
@@ -3461,6 +3464,15 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
   const listaJugadoresNormales = Object.values(cuentas).filter(
     (acc) => acc.id !== 'admin'
   );
+
+  const actorIdActual = String(userActual?.id || '').trim().toLowerCase();
+  const actorNombreActual = String(userActual?.nombre || '').trim().toLowerCase();
+  const miSalaPersonalizada = salasPersonalizadas.find((s) => {
+    const sId = String(s.creadorId || '').trim().toLowerCase();
+    if (sId && actorIdActual) return sId === actorIdActual;
+    return Boolean(actorNombreActual && String(s.creador || '').trim().toLowerCase() === actorNombreActual);
+  });
+  const bloqueadoPorLimiteSala = !esYoSupremo && Boolean(miSalaPersonalizada);
 
   // Paleta de colores predefinidos para el editor
   const coloresDisponibles = [
@@ -4595,7 +4607,14 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                   </div>
                   <p className={`text-[11px] leading-tight font-medium ${t.muted}`}>
                     Las salas creadas aquí aparecen destacadas en la parte superior del Lobby Online para todos los jugadores con reglas personalizadas.
+                    {!esYoSupremo && ' Cada Mod o Admin puede mantener 1 sala personalizada activa a la vez.'}
                   </p>
+
+                  {bloqueadoPorLimiteSala && miSalaPersonalizada && (
+                    <div className={`px-3 py-2 rounded-xl text-[11px] font-bold ${t.bannerWarn}`}>
+                      ⚠️ Ya tienes 1 sala personalizada activa (<strong>{miSalaPersonalizada.codigo}</strong>). Elimínala primero si deseas crear otra.
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                     <div>
@@ -4674,11 +4693,15 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
 
                   <button
                     type="button"
-                    disabled={creandoSala}
+                    disabled={creandoSala || bloqueadoPorLimiteSala}
                     onClick={handleCrearSalaPersonalizada}
-                    className={`w-full py-2 rounded-xl font-black text-xs cursor-pointer ${t.btnPrimary}`}
+                    className={`w-full py-2 rounded-xl font-black text-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${t.btnPrimary}`}
                   >
-                    {creandoSala ? '⏳ Creando Sala Oficial...' : '✨ Publicar Sala Oficial en Lobby'}
+                    {creandoSala
+                      ? '⏳ Creando Sala Oficial...'
+                      : bloqueadoPorLimiteSala
+                      ? '🔒 Límite alcanzado (1 sala activa máx.)'
+                      : '✨ Publicar Sala Oficial en Lobby'}
                   </button>
                 </div>
 
@@ -4734,14 +4757,24 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
                           </span>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => handleEliminarSalaPersonalizada(sala.codigo)}
-                          className={`p-1.5 rounded-xl cursor-pointer text-xs font-black shrink-0 ${t.btnDanger}`}
-                          title="Eliminar esta sala oficial"
-                        >
-                          🗑️
-                        </button>
+                        {(() => {
+                          const sCreadorId = String(sala.creadorId || '').trim().toLowerCase();
+                          const puedeEliminar =
+                            esYoSupremo ||
+                            (esAdmin && sala.creadorRol !== 'dev') ||
+                            (!esAdmin && (!sCreadorId || sCreadorId === actorIdActual));
+                          if (!puedeEliminar) return null;
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => handleEliminarSalaPersonalizada(sala.codigo)}
+                              className={`p-1.5 rounded-xl cursor-pointer text-xs font-black shrink-0 ${t.btnDanger}`}
+                              title="Eliminar esta sala oficial"
+                            >
+                              🗑️
+                            </button>
+                          );
+                        })()}
                       </div>
                     ))
                   )}

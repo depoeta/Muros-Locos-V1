@@ -85,6 +85,7 @@ export interface SalaPersonalizada {
   codigo: string;
   nombre: string;
   creador: string;
+  creadorId?: string;
   creadorRol: UserRol;
   maxJugadores: 2 | 4;
   modoMuros: 'estandar' | 'tactico' | 'caos';

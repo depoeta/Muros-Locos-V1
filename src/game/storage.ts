@@ -21,6 +21,7 @@ import {
 
 const RANKING_LOCAL_KEY = 'muros_locos_ranking_v2';
 const RANKING_GLOBAL_CACHE_KEY = 'muros_locos_ranking_global_cache_v2';
+const RANKING_SEMANAL_CACHE_KEY = 'muros_locos_ranking_semanal_cache_v1';
 const AJUSTES_KEY = 'muros_locos_ajustes_v2';
 const CUENTAS_CACHE_KEY = 'muros_locos_cuentas_cache_v2';
 const SESION_KEY = 'muros_locos_sesion_v2';
@@ -68,7 +69,11 @@ let redDiag: DiagnosticoDeRed = {
 
 const diagListeners = new Set<(diag: DiagnosticoDeRed) => void>();
 const nubeListeners = new Set<
-  (data: { cuentas: Record<string, UserCuenta>; ranking: Record<string, EntradaRanking> }) => void
+  (data: {
+    cuentas: Record<string, UserCuenta>;
+    ranking: Record<string, EntradaRanking>;
+    semanal: RespuestaRankingSemanal | null;
+  }) => void
 >();
 const sesionRevocadaListeners = new Set<(motivo: string) => void>();
 
@@ -85,11 +90,12 @@ function emitDiag() {
 
 function emitNube(
   cuentas: Record<string, UserCuenta>,
-  ranking: Record<string, EntradaRanking>
+  ranking: Record<string, EntradaRanking>,
+  semanal: RespuestaRankingSemanal | null = cargarRankingSemanalCache()
 ) {
   nubeListeners.forEach((cb) => {
     try {
-      cb({ cuentas, ranking });
+      cb({ cuentas, ranking, semanal });
     } catch {
       // ignorar
     }
@@ -119,7 +125,11 @@ export function suscribirDiagnostico(cb: (diag: DiagnosticoDeRed) => void): () =
 }
 
 export function suscribirCambiosNube(
-  cb: (data: { cuentas: Record<string, UserCuenta>; ranking: Record<string, EntradaRanking> }) => void
+  cb: (data: {
+    cuentas: Record<string, UserCuenta>;
+    ranking: Record<string, EntradaRanking>;
+    semanal: RespuestaRankingSemanal | null;
+  }) => void
 ): () => void {
   nubeListeners.add(cb);
   return () => {
@@ -157,6 +167,22 @@ function guardarTokenSesion(token: string | null) {
 
 export function getApiBaseUrl(path: string = ''): string {
   return path;
+}
+
+const GUEST_HOST_ID_KEY = 'muros_guest_host_id_v1';
+
+export function obtenerGuestHostId(): string {
+  try {
+    const existing = localStorage.getItem(GUEST_HOST_ID_KEY);
+    if (existing && /^[a-z0-9_-]{8,64}$/i.test(existing)) {
+      return existing.toLowerCase();
+    }
+    const created = `gst_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`.toLowerCase();
+    localStorage.setItem(GUEST_HOST_ID_KEY, created);
+    return created;
+  } catch {
+    return `gst_mem_${Math.random().toString(36).slice(2, 10)}`.toLowerCase();
+  }
 }
 
 function crearHeadersAutenticados(extra?: Record<string, string>): Record<string, string> {
@@ -261,109 +287,200 @@ export async function sincronizarColaPartidasOffline(): Promise<number> {
 // ============================================================================
 
 let syncInFlight: Promise<{ ok: boolean; dbConectado: boolean }> | null = null;
+let pingInFlight: Promise<{ ok: boolean; dbConectado: boolean; lastUpdate: number }> | null = null;
 let lastPingAt = 0;
 
-export async function pingServidor(): Promise<{ ok: boolean; dbConectado: boolean; lastUpdate: number }> {
+function puedeHacerPingRed(): boolean {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return false;
+  return true;
+}
+
+export async function pingServidor(opciones?: {
+  forzar?: boolean;
+}): Promise<{ ok: boolean; dbConectado: boolean; lastUpdate: number }> {
+  const forzar = Boolean(opciones?.forzar);
+  if (!forzar && !puedeHacerPingRed()) {
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    if (offline && redDiag.isOnline) {
+      redDiag = {
+        ...redDiag,
+        isOnline: false,
+        dbConectado: false,
+        d1Conectado: false,
+      };
+      emitDiag();
+    }
+    return {
+      ok: false,
+      dbConectado: redDiag.dbConectado,
+      lastUpdate: redDiag.lastUpdate,
+    };
+  }
+
+  if (pingInFlight && !forzar) {
+    return pingInFlight;
+  }
+
   const now = Date.now();
-  if (now - lastPingAt < 2500 && redDiag.checkedOnce) {
+  if (!forzar && now - lastPingAt < 2500 && redDiag.checkedOnce) {
     return {
       ok: redDiag.ultimoPingOk,
       dbConectado: redDiag.dbConectado,
       lastUpdate: redDiag.lastUpdate,
     };
   }
-  lastPingAt = now;
-  const t0 = performance.now();
-  try {
-    const token = obtenerTokenSesion();
-    const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const res = await fetch(`/api/ping?_t=${now}`, { cache: 'no-store', headers });
-    const ms = Math.round(performance.now() - t0);
-    if (!res.ok) {
+  lastPingAt = now;
+  const runPing = async (): Promise<{ ok: boolean; dbConectado: boolean; lastUpdate: number }> => {
+    const t0 = performance.now();
+    try {
+      const token = obtenerTokenSesion();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/ping?_t=${now}`, { cache: 'no-store', headers });
+      const ms = Math.round(performance.now() - t0);
+      if (!res.ok) {
+        redDiag = {
+          ...redDiag,
+          isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+          dbConectado: false,
+          d1Conectado: false,
+          ultimoPingOk: false,
+          ultimoError: `HTTP ${res.status}`,
+          serverPingMs: ms,
+          checkedOnce: true,
+        };
+        emitDiag();
+        return { ok: false, dbConectado: false, lastUpdate: redDiag.lastUpdate };
+      }
+      const data = await leerJsonSeguro(res);
+      const isDb = Boolean(data?.dbBound ?? data?.d1Bound);
+      const serverLastUpdate = Number(data?.lastUpdate) || 0;
+      const prevLastUpdate = redDiag.lastUpdate;
+      const miInvCorrupto = Boolean(data?.miInventarioCorrupto);
+      const advInv: AdvertenciaInventarioD1[] = Array.isArray(data?.advertenciasInventario)
+        ? data.advertenciasInventario
+        : [];
+
+      const cur = obteneruserActual();
+      if (
+        data?.sesionRevocada === true ||
+        (cur && (!token || data?.sesionValida === false))
+      ) {
+        cerrarSesion(false);
+        emitSesionRevocada(
+          data?.sesionRevocada === true
+            ? 'Tu sesión expiró al superarse el límite de 3 sesiones activas.'
+            : 'Tu sesión local no es válida o caducó. Vuelve a iniciar sesión para ver tu inventario.'
+        );
+      }
+
       redDiag = {
         ...redDiag,
         isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+        dbConectado: isDb,
+        d1Conectado: isDb,
+        ultimoPingOk: true,
+        ultimoError: null,
+        serverPingMs: ms,
+        checkedOnce: true,
+        lastUpdate: serverLastUpdate,
+        miInventarioCorrupto: miInvCorrupto,
+        advertenciasInventario: advInv,
+      };
+      emitDiag();
+
+      if (isDb && leerColaOffline().length > 0) {
+        sincronizarColaPartidasOffline().catch(() => {});
+      }
+
+      if (serverLastUpdate > 0 && serverLastUpdate !== prevLastUpdate) {
+        sincronizarConNube(false).catch(() => {});
+      }
+
+      return { ok: true, dbConectado: isDb, lastUpdate: serverLastUpdate };
+    } catch (err: any) {
+      redDiag = {
+        ...redDiag,
+        isOnline: typeof navigator !== 'undefined' ? navigator.onLine : false,
         dbConectado: false,
         d1Conectado: false,
         ultimoPingOk: false,
-        ultimoError: `HTTP ${res.status}`,
-        serverPingMs: ms,
+        ultimoError: err?.message || 'Error de conexión con D1',
+        serverPingMs: null,
         checkedOnce: true,
       };
       emitDiag();
       return { ok: false, dbConectado: false, lastUpdate: redDiag.lastUpdate };
     }
-    const data = await leerJsonSeguro(res);
-    const isDb = Boolean(data?.dbBound ?? data?.d1Bound);
-    const serverLastUpdate = Number(data?.lastUpdate) || 0;
-    const prevLastUpdate = redDiag.lastUpdate;
-    const miInvCorrupto = Boolean(data?.miInventarioCorrupto);
-    const advInv: AdvertenciaInventarioD1[] = Array.isArray(data?.advertenciasInventario)
-      ? data.advertenciasInventario
-      : [];
+  };
 
-    const cur = obteneruserActual();
-    if (
-      data?.sesionRevocada === true ||
-      (cur && (!token || data?.sesionValida === false))
-    ) {
-      cerrarSesion(false);
-      emitSesionRevocada(
-        data?.sesionRevocada === true
-          ? 'Tu sesión expiró al superarse el límite de 3 sesiones activas.'
-          : 'Tu sesión local no es válida o caducó. Vuelve a iniciar sesión para ver tu inventario.'
-      );
-    }
+  const p = runPing().finally(() => {
+    if (pingInFlight === p) pingInFlight = null;
+  });
+  pingInFlight = p;
+  return p;
+}
 
-    redDiag = {
-      ...redDiag,
-      isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
-      dbConectado: isDb,
-      d1Conectado: isDb,
-      ultimoPingOk: true,
-      ultimoError: null,
-      serverPingMs: ms,
-      checkedOnce: true,
-      lastUpdate: serverLastUpdate,
-      miInventarioCorrupto: miInvCorrupto,
-      advertenciasInventario: advInv,
+export async function verificarActualizacionSiNecesaria(
+  maxAgeMs: number = 15000
+): Promise<{ ok: boolean; dbConectado: boolean; lastUpdate: number }> {
+  if (!puedeHacerPingRed()) {
+    return {
+      ok: false,
+      dbConectado: redDiag.dbConectado,
+      lastUpdate: redDiag.lastUpdate,
     };
-    emitDiag();
-
-    if (isDb && leerColaOffline().length > 0) {
-      sincronizarColaPartidasOffline().catch(() => {});
-    }
-
-    if (serverLastUpdate > 0 && serverLastUpdate !== prevLastUpdate) {
-      sincronizarConNube(false).catch(() => {});
-    }
-
-    return { ok: true, dbConectado: isDb, lastUpdate: serverLastUpdate };
-  } catch (err: any) {
-    redDiag = {
-      ...redDiag,
-      isOnline: typeof navigator !== 'undefined' ? navigator.onLine : false,
-      dbConectado: false,
-      d1Conectado: false,
-      ultimoPingOk: false,
-      ultimoError: err?.message || 'Error de conexión con D1',
-      serverPingMs: null,
-      checkedOnce: true,
-    };
-    emitDiag();
-    return { ok: false, dbConectado: false, lastUpdate: redDiag.lastUpdate };
   }
+
+  if (!redDiag.checkedOnce || !cargarRankingSemanalCache()) {
+    const syncRes = await sincronizarConNube(false);
+    return {
+      ok: syncRes.ok,
+      dbConectado: syncRes.dbConectado,
+      lastUpdate: redDiag.lastUpdate,
+    };
+  }
+
+  if (Date.now() - lastPingAt < maxAgeMs) {
+    return {
+      ok: redDiag.ultimoPingOk,
+      dbConectado: redDiag.dbConectado,
+      lastUpdate: redDiag.lastUpdate,
+    };
+  }
+
+  return pingServidor();
 }
 
 export function iniciarEscuchaNube(intervalMs: number = 30000): () => void {
   const interval = setInterval(() => {
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    if (!puedeHacerPingRed()) return;
     pingServidor().catch(() => {});
   }, intervalMs);
 
-  return () => clearInterval(interval);
+  const onVisibilityChange = () => {
+    if (typeof document === 'undefined' || document.visibilityState !== 'visible') return;
+    if (!puedeHacerPingRed()) return;
+    if (!redDiag.checkedOnce || !cargarRankingSemanalCache()) {
+      sincronizarConNube(false).catch(() => {});
+    } else if (Date.now() - lastPingAt >= intervalMs) {
+      pingServidor().catch(() => {});
+    }
+  };
+
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', onVisibilityChange);
+  }
+
+  return () => {
+    clearInterval(interval);
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    }
+  };
 }
 
 // ============================================================================
@@ -523,6 +640,27 @@ function guardarRankingGlobalCache(data: Record<string, EntradaRanking>) {
   }
 }
 
+export function cargarRankingSemanalCache(): RespuestaRankingSemanal | null {
+  try {
+    const raw = localStorage.getItem(RANKING_SEMANAL_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && parsed.ok ? (parsed as RespuestaRankingSemanal) : null;
+  } catch {
+    return null;
+  }
+}
+
+function guardarRankingSemanalCache(data: RespuestaRankingSemanal | null) {
+  try {
+    if (data && data.ok) {
+      localStorage.setItem(RANKING_SEMANAL_CACHE_KEY, JSON.stringify(data));
+    }
+  } catch {
+    // ignorar
+  }
+}
+
 // ============================================================================
 // SINCRONIZACIÓN DE CUENTAS Y RANKING CON LA DATABASE D1
 // ============================================================================
@@ -533,6 +671,25 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
   cuentas: Record<string, UserCuenta>;
   ranking: Record<string, EntradaRanking>;
 }> {
+  if (!forzar && !puedeHacerPingRed()) {
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    if (offline && redDiag.isOnline) {
+      redDiag = {
+        ...redDiag,
+        isOnline: false,
+        dbConectado: false,
+        d1Conectado: false,
+      };
+      emitDiag();
+    }
+    return {
+      ok: false,
+      dbConectado: redDiag.dbConectado,
+      cuentas: cargarCuentas(),
+      ranking: cargarRanking(),
+    };
+  }
+
   if (syncInFlight && !forzar) {
     const r = await syncInFlight;
     return { ...r, cuentas: cargarCuentas(), ranking: cargarRanking() };
@@ -543,54 +700,22 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
     try {
       const ts = Date.now();
       const token = obtenerTokenSesion();
-      const [pingRes, cuentasRes, rankingRes] = await Promise.all([
-        fetch(`/api/ping?_t=${ts}`, {
-          cache: 'no-store',
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        }),
-        fetch(`/api/cuentas?_t=${ts}`, {
-          cache: 'no-store',
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        }),
-        fetch(`/api/ranking?_t=${ts}`, { cache: 'no-store' }),
-      ]);
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const syncRes = await fetch(`/api/sync?_t=${ts}`, {
+        cache: 'no-store',
+        headers,
+      });
       const ms = Math.round(performance.now() - t0);
 
-      let isDb = false;
-      let serverLastUpdate = redDiag.lastUpdate;
-      let miInvCorrupto = Boolean(redDiag.miInventarioCorrupto);
-      let advInv: AdvertenciaInventarioD1[] = redDiag.advertenciasInventario || [];
-      let sesionInvalidadaEnSync = false;
-      const curPre = obteneruserActual();
-
-      if (pingRes.ok) {
-        const pingData = await leerJsonSeguro(pingRes);
-        isDb = Boolean(pingData?.dbBound ?? pingData?.d1Bound);
-        serverLastUpdate = Number(pingData?.lastUpdate) || serverLastUpdate;
-        miInvCorrupto = Boolean(pingData?.miInventarioCorrupto);
-        advInv = Array.isArray(pingData?.advertenciasInventario) ? pingData.advertenciasInventario : [];
-        if (
-          pingData?.sesionRevocada === true ||
-          (curPre && (!token || pingData?.sesionValida === false))
-        ) {
-          sesionInvalidadaEnSync = true;
-          cerrarSesion(false);
-          emitSesionRevocada(
-            pingData?.sesionRevocada === true
-              ? 'Tu sesión expiró al superarse el límite de 3 sesiones activas.'
-              : 'Tu sesión local no es válida o expiró. Vuelve a iniciar sesión para ver tu inventario.'
-          );
-        }
-      }
-
-      if (!cuentasRes.ok || !rankingRes.ok) {
+      if (!syncRes.ok) {
         redDiag = {
           ...redDiag,
           isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
           dbConectado: false,
           d1Conectado: false,
           ultimoPingOk: false,
-          ultimoError: `Error HTTP cuentas:${cuentasRes.status} ranking:${rankingRes.status}`,
+          ultimoError: `Error HTTP sync:${syncRes.status}`,
           serverPingMs: ms,
           checkedOnce: true,
         };
@@ -598,8 +723,52 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
         return { ok: false, dbConectado: false };
       }
 
-      const rawCuentas = await cuentasRes.json();
-      const rawRanking = await rankingRes.json();
+      const payload = await leerJsonSeguro(syncRes);
+      if (!payload || !payload.ok) {
+        redDiag = {
+          ...redDiag,
+          isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+          dbConectado: false,
+          d1Conectado: false,
+          ultimoPingOk: false,
+          ultimoError: 'Respuesta inválida en /api/sync',
+          serverPingMs: ms,
+          checkedOnce: true,
+        };
+        emitDiag();
+        return { ok: false, dbConectado: false };
+      }
+
+      lastPingAt = Date.now();
+
+      const isDb = Boolean(payload?.dbBound ?? payload?.d1Bound);
+      const serverLastUpdate = Number(payload?.lastUpdate) || redDiag.lastUpdate;
+      const miInvCorrupto = Boolean(payload?.miInventarioCorrupto);
+      const advInv: AdvertenciaInventarioD1[] = Array.isArray(payload?.advertenciasInventario)
+        ? payload.advertenciasInventario
+        : [];
+
+      let sesionInvalidadaEnSync = false;
+      const curPre = obteneruserActual();
+      if (
+        payload?.sesionRevocada === true ||
+        (curPre && (!token || payload?.sesionValida === false))
+      ) {
+        sesionInvalidadaEnSync = true;
+        cerrarSesion(false);
+        emitSesionRevocada(
+          payload?.sesionRevocada === true
+            ? 'Tu sesión expiró al superarse el límite de 3 sesiones activas.'
+            : 'Tu sesión local no es válida o expiró. Vuelve a iniciar sesión para ver tu inventario.'
+        );
+      }
+
+      const rawCuentas = payload?.cuentas || {};
+      const rawRanking = payload?.ranking || {};
+      const rawSemanal: RespuestaRankingSemanal | null =
+        payload?.semanal && payload.semanal.ok
+          ? (payload.semanal as RespuestaRankingSemanal)
+          : cargarRankingSemanalCache();
 
       const cuentasLimpias: Record<string, UserCuenta> = {};
       if (rawCuentas && typeof rawCuentas === 'object') {
@@ -701,6 +870,9 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
 
       guardarCuentasCache(cuentasLimpias);
       guardarRankingGlobalCache(rankingLimpio);
+      if (rawSemanal) {
+        guardarRankingSemanalCache(rawSemanal);
+      }
 
       const cur = sesionInvalidadaEnSync ? null : obteneruserActual();
       if (cur) {
@@ -725,7 +897,7 @@ export async function sincronizarConNube(forzar: boolean = false): Promise<{
         advertenciasInventario: advInv,
       };
       emitDiag();
-      emitNube(cuentasLimpias, rankingLimpio);
+      emitNube(cuentasLimpias, rankingLimpio, rawSemanal);
 
       return { ok: true, dbConectado: isDb };
     } catch (err: any) {
@@ -2136,10 +2308,15 @@ export async function eliminarSalaPersonalizadaAsync(
 export async function obtenerRankingSemanalAsync(): Promise<RespuestaRankingSemanal | null> {
   try {
     const res = await fetch(`/api/semanal?_t=${Date.now()}`, { cache: 'no-store' });
-    if (!res.ok) return null;
+    if (!res.ok) return cargarRankingSemanalCache();
     const data = await res.json();
-    return data && data.ok ? (data as RespuestaRankingSemanal) : null;
+    if (data && data.ok) {
+      const typed = data as RespuestaRankingSemanal;
+      guardarRankingSemanalCache(typed);
+      return typed;
+    }
+    return cargarRankingSemanalCache();
   } catch {
-    return null;
+    return cargarRankingSemanalCache();
   }
 }

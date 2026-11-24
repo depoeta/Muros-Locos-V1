@@ -24,7 +24,7 @@ import {
   TamanoTablero,
 } from '../types/murosLocos';
 import { normalizarTamanoTablero } from './murosLocosEngine';
-import { getApiBaseUrl, obtenerTokenSesion } from './storage';
+import { getApiBaseUrl, obtenerGuestHostId, obtenerTokenSesion } from './storage';
 
 export const SESSION_STORAGE_KEY = 'muros_locos_active_online_session';
 
@@ -943,15 +943,21 @@ class OnlineManager {
       },
     ];
 
+    const token = obtenerTokenSesion();
+    const guestHostId = obtenerGuestHostId();
     const res = await fetch(getApiBaseUrl('/api/salas'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       cache: 'no-store',
       body: JSON.stringify({
         codigo: this.roomCode,
         nombre: `Sala de ${this.myName}`,
         anfitrion: this.myName,
         cuentaId: this.myCuentaId,
+        guestHostId,
         hostPeerId: this.myPeerId,
         color: this.myColor,
         hat: this.myHat,
@@ -967,8 +973,11 @@ class OnlineManager {
     });
 
     if (!res.ok) {
+      const errData = await res.json().catch(() => null);
+      this.role = null;
+      this.roomCode = '';
       this.cleanUp();
-      throw new Error('No se pudo registrar la sala en el servidor.');
+      throw new Error(errData?.error || 'No se pudo registrar la sala en el servidor.');
     }
 
     this.saveActiveSession();
@@ -1878,15 +1887,21 @@ class OnlineManager {
     if (!code) return false;
     const nombre = typeof input === 'string' ? input : info.nombre || `Sala de ${this.myName}`;
     try {
+      const token = obtenerTokenSesion();
+      const guestHostId = obtenerGuestHostId();
       const res = await fetch(getApiBaseUrl('/api/salas'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         cache: 'no-store',
         body: JSON.stringify({
           codigo: code,
           nombre: String(nombre).trim() || `Sala ${code}`,
           anfitrion: info.anfitrion || this.myName,
           cuentaId: info.cuentaId || this.myCuentaId,
+          guestHostId,
           hostPeerId: this.myPeerId || `host_${code.toLowerCase()}`,
           color: info.color || this.myColor,
           hat: info.hat || this.myHat,
@@ -1927,11 +1942,20 @@ class OnlineManager {
   public async eliminarSalaPublica(): Promise<void> {
     if (!this.roomCode) return;
     try {
-      await fetch(getApiBaseUrl(`/api/salas/${encodeURIComponent(this.roomCode)}`), {
-        method: 'DELETE',
-        cache: 'no-store',
-        keepalive: true,
+      const token = obtenerTokenSesion();
+      const qs = new URLSearchParams({
+        peerId: this.myPeerId || '',
+        guestHostId: obtenerGuestHostId(),
       });
+      await fetch(
+        getApiBaseUrl(`/api/salas/${encodeURIComponent(this.roomCode)}?${qs.toString()}`),
+        {
+          method: 'DELETE',
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          cache: 'no-store',
+          keepalive: true,
+        }
+      );
     } catch {}
   }
 
@@ -1959,8 +1983,14 @@ class OnlineManager {
           } catch {}
         }
       }
-      fetch(getApiBaseUrl(`/api/salas/${encodeURIComponent(prevCode)}`), {
+      const token = obtenerTokenSesion();
+      const qs = new URLSearchParams({
+        peerId: prevPeerId || '',
+        guestHostId: obtenerGuestHostId(),
+      });
+      fetch(getApiBaseUrl(`/api/salas/${encodeURIComponent(prevCode)}?${qs.toString()}`), {
         method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         cache: 'no-store',
         keepalive: true,
       }).catch(() => {});

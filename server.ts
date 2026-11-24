@@ -9,11 +9,109 @@ const PUERTO = 3000;
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.text({ limit: '10mb' }));
-app.use('/api', (_req, res, next) => {
+function normalizarOrigenHttp(raw?: string | null): string | null {
+  const txt = String(raw || '').trim();
+  if (!txt || txt.toLowerCase() === 'null') return null;
+  try {
+    const parsed = new URL(txt);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.origin.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function validarAccesoOrigenExpress(req: express.Request): {
+  permitido: boolean;
+  allowOrigin: string | null;
+  motivo: string | null;
+} {
+  const permitidos = new Set<string>();
+  const hostHeader = String(req.header('host') || '').trim();
+  const fwdProto = String(req.header('x-forwarded-proto') || '').split(',')[0].trim().toLowerCase();
+  const proto = fwdProto === 'http' || fwdProto === 'https' ? fwdProto : req.protocol || 'http';
+
+  let selfHostname = '';
+  let fallbackOrigin: string | null = null;
+  if (hostHeader) {
+    const exacto = normalizarOrigenHttp(`${proto}://${hostHeader}`);
+    if (exacto) {
+      permitidos.add(exacto);
+      fallbackOrigin = exacto;
+      try {
+        selfHostname = new URL(exacto).hostname.toLowerCase();
+      } catch {}
+    }
+    const httpsVariante = normalizarOrigenHttp(`https://${hostHeader}`);
+    const httpVariante = normalizarOrigenHttp(`http://${hostHeader}`);
+    if (httpsVariante) permitidos.add(httpsVariante);
+    if (httpVariante) permitidos.add(httpVariante);
+  }
+
+  const esLocal = selfHostname === 'localhost' || selfHostname === '127.0.0.1';
+  const verificar = (orig: string | null): boolean => {
+    if (!orig) return false;
+    if (permitidos.has(orig)) return true;
+    if (esLocal) {
+      try {
+        const h = new URL(orig).hostname.toLowerCase();
+        if (h === 'localhost' || h === '127.0.0.1') return true;
+      } catch {}
+    }
+    return false;
+  };
+
+  const rawOrigin = req.header('Origin');
+  if (rawOrigin !== undefined) {
+    const origNorm = normalizarOrigenHttp(rawOrigin);
+    if (!verificar(origNorm)) {
+      return { permitido: false, allowOrigin: fallbackOrigin, motivo: 'Origen no autorizado.' };
+    }
+    return { permitido: true, allowOrigin: origNorm, motivo: null };
+  }
+
+  const rawReferer = req.header('Referer');
+  if (rawReferer) {
+    const refNorm = normalizarOrigenHttp(rawReferer);
+    if (!verificar(refNorm)) {
+      return { permitido: false, allowOrigin: fallbackOrigin, motivo: 'Referrer no autorizado.' };
+    }
+    return { permitido: true, allowOrigin: refNorm, motivo: null };
+  }
+
+  const secFetchSite = String(req.header('Sec-Fetch-Site') || '').trim().toLowerCase();
+  if (secFetchSite === 'cross-site') {
+    return { permitido: false, allowOrigin: fallbackOrigin, motivo: 'Petición cross-site bloqueada.' };
+  }
+
+  return { permitido: true, allowOrigin: fallbackOrigin, motivo: null };
+}
+
+app.use('/api', (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
   res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Vary', 'Origin');
   res.setHeader('X-DB-Bound', 'true');
   res.setHeader('X-Database-Bound', 'true');
+
+  const acceso = validarAccesoOrigenExpress(req);
+  if (!acceso.permitido) {
+    return res.status(403).json({ ok: false, error: `Acceso denegado: ${acceso.motivo}` });
+  }
+
+  if (acceso.allowOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', acceso.allowOrigin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization, X-Admin-User, X-Admin-Token, X-Self-Delete-Id, X-Self-Delete-Key, X-Register-Id'
+    );
+  }
+
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end();
+  }
+
   next();
 });
 
@@ -1561,13 +1659,41 @@ app.post('/api/admin/salas-personalizadas', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'El código de sala debe tener al menos 3 caracteres.' });
   }
 
+  const creadorId = String(perm.actor?.id || (perm.esDev ? 'admin' : '')).trim().toLowerCase();
+  const creadorNombre = String(perm.actor?.nombre || 'Staff').trim();
+
+  let lista = leerJson(ARCHIVO_SALAS_PERSONALIZADAS, []);
+  if (!Array.isArray(lista)) lista = [];
+
+  if (!perm.esDev) {
+    const salaPropiaExistente = lista.find((s: any) => {
+      if (!s) return false;
+      const sCreadorId = String(s.creadorId || '').trim().toLowerCase();
+      if (sCreadorId) return sCreadorId === creadorId;
+      return Boolean(creadorNombre && String(s.creador || '').trim().toLowerCase() === creadorNombre.toLowerCase());
+    });
+    if (salaPropiaExistente) {
+      return res.status(409).json({
+        ok: false,
+        error: `Como Mod o Admin solo puedes tener 1 sala personalizada activa a la vez (código: ${salaPropiaExistente.codigo}). Elimínala primero para crear otra.`,
+      });
+    }
+    const codigoOcupado = lista.find((s: any) => s && s.codigo === codigoLimpio);
+    if (codigoOcupado) {
+      return res.status(409).json({
+        ok: false,
+        error: `El código "${codigoLimpio}" ya está en uso por otra sala oficial.`,
+      });
+    }
+  }
+
   const ahora = Date.now();
   const nuevaSala = {
     id: `sp_${codigoLimpio}`,
     codigo: codigoLimpio,
     nombre: String(nombre || `Sala Oficial ${codigoLimpio}`).trim().slice(0, 32),
-    creador: perm.actor?.nombre || 'Staff',
-    creadorId: perm.actor?.id || 'admin',
+    creador: creadorNombre,
+    creadorId: creadorId || 'admin',
     creadorRol: perm.esDev ? 'dev' : perm.esAdmin ? 'admin' : 'mod',
     creadoEn: ahora,
     maxJugadores: maxJugadores === 4 ? 4 : 2,
@@ -1577,8 +1703,6 @@ app.post('/api/admin/salas-personalizadas', async (req, res) => {
     mensajeEspecial: String(mensajeEspecial || '').trim().slice(0, 80),
   };
 
-  let lista = leerJson(ARCHIVO_SALAS_PERSONALIZADAS, []);
-  if (!Array.isArray(lista)) lista = [];
   lista = lista.filter((s: any) => s.codigo !== codigoLimpio);
   lista.unshift(nuevaSala);
   escribirJson(ARCHIVO_SALAS_PERSONALIZADAS, lista.slice(0, 25));
@@ -1621,8 +1745,19 @@ app.delete('/api/admin/salas-personalizadas/:codigo', async (req, res) => {
   }
 
   const codigoLimpio = normalizarCodigoSala(req.params.codigo);
+  const actorId = String(perm.actor?.id || '').trim().toLowerCase();
   let lista = leerJson(ARCHIVO_SALAS_PERSONALIZADAS, []);
   if (Array.isArray(lista)) {
+    const target = lista.find((s: any) => s && s.codigo === codigoLimpio);
+    if (target) {
+      const targetCreadorId = String(target.creadorId || '').trim().toLowerCase();
+      if (perm.esMod && !perm.esAdmin && !perm.esDev && targetCreadorId && actorId && targetCreadorId !== actorId) {
+        return res.status(403).json({ ok: false, error: 'Un Moderador solo puede eliminar su propia sala personalizada.' });
+      }
+      if (perm.esAdmin && !perm.esDev && target.creadorRol === 'dev') {
+        return res.status(403).json({ ok: false, error: 'Solo el Dev puede eliminar una sala oficial creada por el Dev.' });
+      }
+    }
     lista = lista.filter((s: any) => s.codigo !== codigoLimpio);
     escribirJson(ARCHIVO_SALAS_PERSONALIZADAS, lista);
   }
@@ -1927,10 +2062,10 @@ app.post('/api/partidas/sincronizar', async (req, res) => {
   res.json({ ok: true, dbBound: true, sincronizadas });
 });
 
-app.get('/api/semanal', (_req, res) => {
+function construirDatosSemanalLocal(cuentasEntrada?: Record<string, any>) {
   const w = obtenerInfoSemana();
   dbAsegurarSemanaEnRanking(w);
-  const cuentas = dbObtenerTodasCuentas();
+  const cuentas = cuentasEntrada || dbObtenerTodasCuentas();
   const cfg = leerConfig('config_semanal_puntos', CONFIG_SEMANAL_POR_DEFECTO) || CONFIG_SEMANAL_POR_DEFECTO;
   const premioGlobal = leerConfig('premio_semanal_global', null);
   const metaActual = leerConfig(`semanal_${w.semanaActualId}`, {}) || {};
@@ -2071,7 +2206,7 @@ app.get('/api/semanal', (_req, res) => {
     }
   }
 
-  res.json({
+  return {
     ok: true,
     dbBound: true,
     semanaActualId: w.semanaActualId,
@@ -2090,7 +2225,39 @@ app.get('/api/semanal', (_req, res) => {
       premioSemanal: metaPasada.premioSemanal || premioGlobal || undefined,
       jugadores: jugadoresPasada,
     },
+  };
+}
+
+app.get('/api/sync', async (req, res) => {
+  const sesion = await resolverSesionLocal(req);
+  const tieneAuthHeader = Boolean(req.header('Authorization'));
+  const cuentas = dbObtenerTodasCuentas();
+  const perm = verificarPermisosLlamante(req, cuentas, sesion);
+  const esStaff = Boolean(perm.esDev || perm.esAdmin || perm.esMod);
+  const selfId = sesion && !(sesion as any).revocada && sesion.userId ? sesion.userId : null;
+  const semanal = construirDatosSemanalLocal(cuentas);
+  const ranking = dbLeerRanking();
+
+  res.json({
+    ok: true,
+    dbBound: true,
+    d1Bound: true,
+    source: 'local_database_store',
+    timestamp: Date.now(),
+    lastUpdate: leerConfig('last_update', Date.now()),
+    sesionValida: tieneAuthHeader ? Boolean(sesion && sesion.userId && !(sesion as any).revocada) : true,
+    sesionRevocada: tieneAuthHeader && Boolean((sesion as any)?.revocada),
+    sesionUserId: sesion && !(sesion as any).revocada ? sesion.userId || null : null,
+    miInventarioCorrupto: false,
+    advertenciasInventario: [],
+    cuentas: sanitizarMapaCuentasPublicas(cuentas, { esStaff, selfId }),
+    ranking,
+    semanal,
   });
+});
+
+app.get('/api/semanal', (_req, res) => {
+  res.json(construirDatosSemanalLocal());
 });
 
 app.post('/api/semanal', (_req, res) => {
@@ -2117,17 +2284,67 @@ app.get('/api/salas', (req, res) => {
   res.json(validas);
 });
 
-app.post('/api/salas', (req, res) => {
+app.post('/api/salas', async (req, res) => {
   limpiarSalasExpiradas();
   const room = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
   const codigo = normalizarCodigoSala(room.codigo);
   if (!codigo) return res.status(400).json({ ok: false, error: 'Código inválido' });
 
+  const sesion = await resolverSesionLocal(req);
+  const ownerCuentaId =
+    sesion && !(sesion as any).revocada && sesion.userId
+      ? String(sesion.userId).trim().toLowerCase()
+      : undefined;
+  const rawGuestId = String(room.guestHostId || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  const guestHostId = !ownerCuentaId && rawGuestId.length >= 8 ? rawGuestId.slice(0, 64) : undefined;
+
   const ahora = Date.now();
   const existente = leerSalaOnline(codigo);
+  const hostPeerId = String(room.hostPeerId || existente?.hostPeerId || `host_${codigo.toLowerCase()}`).trim();
+
+  if (existente) {
+    if (existente.esOficialStaff) {
+      return res.status(409).json({ ok: false, error: 'Ese código pertenece a una sala oficial de Staff.' });
+    }
+    const esMismoOwner =
+      (existente.hostCuentaId && ownerCuentaId && existente.hostCuentaId === ownerCuentaId) ||
+      (!existente.hostCuentaId && existente.hostGuestId && guestHostId && existente.hostGuestId === guestHostId) ||
+      (!existente.hostCuentaId && !existente.hostGuestId && hostPeerId === existente.hostPeerId);
+    if (!esMismoOwner) {
+      return res.status(409).json({ ok: false, error: 'Ese código de sala ya está en uso.' });
+    }
+  }
+
+  // Límite estricto: máximo 1 sala P2P activa por persona/cuenta (entre Muros Locos y Candado)
+  const salasActivas = leerJson(ARCHIVO_SALAS_ONLINE, {}) as Record<string, any>;
+  for (const r of Object.values(salasActivas)) {
+    if (!r || r.codigo === codigo || r.esOficialStaff) continue;
+    const rHostCuenta = r.hostCuentaId
+      ? String(r.hostCuentaId).trim().toLowerCase()
+      : Array.isArray(r.jugadores)
+      ? String(r.jugadores.find((p: any) => p && p.esAnfitrion && p.cuentaId)?.cuentaId || '').trim().toLowerCase()
+      : '';
+    const mismoUsuario = Boolean(ownerCuentaId && rHostCuenta && rHostCuenta === ownerCuentaId);
+    const mismoInvitado = Boolean(
+      !ownerCuentaId &&
+        guestHostId &&
+        r.hostGuestId &&
+        String(r.hostGuestId).trim().toLowerCase() === guestHostId
+    );
+    if (mismoUsuario || mismoInvitado) {
+      const juegoActivo = normalizarJuegoSala(r.juego);
+      const juegoLabel = juegoActivo === 'candado' ? 'Candado' : 'Muros Locos';
+      return res.status(409).json({
+        ok: false,
+        codigoActivo: r.codigo,
+        juegoActivo,
+        error: `Ya tienes una sala en línea activa (${r.codigo} en ${juegoLabel}). Ciérrala o espera a que finalice antes de crear otra.`,
+      });
+    }
+  }
+
   const juego = normalizarJuegoSala(room.juego ?? existente?.juego);
   const esPublica = room.publica !== undefined ? Boolean(room.publica) : existente?.publica ?? true;
-  const hostPeerId = room.hostPeerId || existente?.hostPeerId || `host_${codigo.toLowerCase()}`;
   const maxJugadores = juego === 'candado' ? 2 : room.maxJugadores === 4 ? 4 : existente?.maxJugadores || 2;
   const anfitrion = String(room.anfitrion || existente?.anfitrion || 'Anfitrión').trim();
   const color = room.color || existente?.color || '#ff6b6b';
@@ -2136,12 +2353,18 @@ app.post('/api/salas', (req, res) => {
   const ropaColor = room.ropaColor || existente?.ropaColor;
   const aura = room.aura || existente?.aura || 'ninguna';
 
-  const jugadores =
+  const jugadoresBase =
     Array.isArray(room.jugadores) && room.jugadores.length > 0
       ? room.jugadores
       : existente?.jugadores?.length
       ? existente.jugadores
-      : [{ id: 0, peerId: hostPeerId, cuentaId: room.cuentaId, nombre: anfitrion, color, hat, ropa, ropaColor, aura, listo: true, conectado: true, esAnfitrion: true }];
+      : [{ id: 0, peerId: hostPeerId, cuentaId: ownerCuentaId, nombre: anfitrion, color, hat, ropa, ropaColor, aura, listo: true, conectado: true, esAnfitrion: true }];
+
+  const jugadores = jugadoresBase.map((j: any) =>
+    j && j.esAnfitrion
+      ? { ...j, cuentaId: ownerCuentaId || undefined }
+      : j
+  );
 
   const modoCandado = normalizarModoCandado(room.modoCandado ?? existente?.modoCandado);
   const digitosCandado = normalizarDigitosCandado(room.digitosCandado ?? existente?.digitosCandado, modoCandado);
@@ -2153,6 +2376,8 @@ app.post('/api/salas', (req, res) => {
     nombre: String(room.nombre || existente?.nombre || `Sala de ${anfitrion}`).trim(),
     anfitrion,
     hostPeerId,
+    ...(ownerCuentaId ? { hostCuentaId: ownerCuentaId } : {}),
+    ...(guestHostId ? { hostGuestId: guestHostId } : {}),
     color,
     hat,
     ropa,
@@ -2415,8 +2640,30 @@ app.patch('/api/salas/:codigo', (req, res) => {
   res.json({ ok: true, dbBound: true });
 });
 
-app.delete('/api/salas/:codigo', (req, res) => {
-  eliminarSalaOnline(req.params.codigo);
+app.delete('/api/salas/:codigo', async (req, res) => {
+  const codigo = normalizarCodigoSala(req.params.codigo);
+  const salasRaw = leerJson(ARCHIVO_SALAS_ONLINE, {}) as Record<string, any>;
+  const existente = salasRaw[codigo];
+  if (existente) {
+    if (existente.esOficialStaff) {
+      return res.status(403).json({ ok: false, error: 'Las salas oficiales solo se cierran desde el panel Staff.' });
+    }
+    const sesion = await resolverSesionLocal(req);
+    const sesionId =
+      sesion && !(sesion as any).revocada && sesion.userId
+        ? String(sesion.userId).trim().toLowerCase()
+        : '';
+    const peerId = String(req.query.peerId || '').trim();
+    const guestHostId = String(req.query.guestHostId || '').trim().toLowerCase();
+    const esStaff = Boolean(sesionId && (sesion?.rol === 'dev' || sesion?.rol === 'admin'));
+    const autorizadoCuenta = Boolean(existente.hostCuentaId && sesionId && sesionId === String(existente.hostCuentaId).trim().toLowerCase());
+    const autorizadoPeer = Boolean(peerId && existente.hostPeerId && peerId === existente.hostPeerId);
+    const autorizadoGuest = Boolean(!existente.hostCuentaId && guestHostId && existente.hostGuestId && guestHostId === String(existente.hostGuestId).trim().toLowerCase());
+    if (!esStaff && !autorizadoCuenta && !autorizadoPeer && !autorizadoGuest) {
+      return res.status(403).json({ ok: false, error: 'Solo el anfitrión puede cerrar esta sala.' });
+    }
+  }
+  eliminarSalaOnline(codigo);
   res.json({ ok: true, dbBound: true });
 });
 

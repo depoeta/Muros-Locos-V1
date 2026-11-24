@@ -9,6 +9,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EstiloVisual, UserCuenta } from '../types/murosLocos';
 import { CartoonCharacter } from '../components/CartoonCharacter';
+import { AmbientBackdrop } from '../components/AmbientBackdrop';
 import { candadoAudio } from './candadoAudio';
 import {
   DIGITOS_LOGICO,
@@ -641,11 +642,15 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
             return (
               <div
                 key={itemA.numero}
-                className={
+                className={`${
+                  !animacionesReducidas
+                    ? 'animate-[candadoAttemptEnter_0.24s_cubic-bezier(0.16,1,0.3,1)] '
+                    : ''
+                }${
                   esMinimalista
                     ? 'px-2.5 py-1.5 rounded-xl bg-slate-800/70 border border-white/10 flex items-center justify-between gap-1.5'
                     : 'px-2.5 py-1.5 rounded-xl bg-[#FAF4E4] border border-[#DFD5BC] flex items-center justify-between gap-1.5'
-                }
+                }`}
               >
                 <span
                   className={`text-[10px] font-semibold tabular-nums w-5 shrink-0 ${
@@ -711,11 +716,15 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
           return (
             <div
               key={itemB.numero}
-              className={
+              className={`${
+                !animacionesReducidas
+                  ? 'animate-[candadoAttemptEnter_0.24s_cubic-bezier(0.16,1,0.3,1)] '
+                  : ''
+              }${
                 esMinimalista
                   ? 'px-2.5 py-1.5 rounded-xl bg-slate-800/70 border border-white/10 flex items-center justify-between gap-2'
                   : 'px-2.5 py-1.5 rounded-xl bg-[#FAF4E4] border border-[#DFD5BC] flex items-center justify-between gap-2'
-              }
+              }`}
             >
               <div className="flex items-center gap-1.5 min-w-0">
                 <span
@@ -771,15 +780,21 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
     <div
       className={`relative w-full min-h-dvh flex flex-col items-center justify-between p-3 sm:p-5 z-10 transition-colors duration-300 overflow-x-hidden ${
         esMinimalista
-          ? 'bg-gradient-to-br from-[#11131E] via-[#151828] to-[#191D30] text-slate-100'
+          ? 'bg-gradient-to-br from-[#14172B] via-[#1B1D36] to-[#231D38] text-slate-100'
           : 'bg-gradient-to-b from-[#FCF8EC] via-[#FAF4E4] to-[#F7EFE0] text-[#171923]'
       }`}
     >
+      <AmbientBackdrop
+        variant={esMinimalista ? 'pastel_oscuro' : 'pastel_claro'}
+        reducedMotion={animacionesReducidas}
+        calmMotes
+      />
+
       {/* ===================================================================== */}
       {/* MODO ONLINE P2P AISLADO                                               */}
       {/* ===================================================================== */}
       {modalidadJuego === 'p2p' && (
-        <div className="w-full flex flex-col items-center flex-1">
+        <div className="relative z-10 w-full flex flex-col items-center flex-1">
           <CandadoOnlineView
             userActual={userActual}
             esMinimalista={esMinimalista}
@@ -798,7 +813,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
       {/* PANTALLA 1: MENÚ PRINCIPAL MODERNO PASTEL                             */}
       {/* ===================================================================== */}
       {modalidadJuego === 'local' && pantalla === 'menu' && (
-        <>
+        <div className="relative z-10 w-full flex-1 flex flex-col items-center justify-between">
           {/* Top Bar */}
           <div className="w-full max-w-lg flex items-center justify-between px-0.5 sm:px-1 z-30 gap-2 min-w-0">
             <div className="relative shrink-0">
@@ -963,12 +978,16 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               CANDADO
             </h1>
             <div
-              className={`mt-2.5 h-1 w-24 rounded-full ${
+              className={`relative overflow-hidden mt-2.5 h-1 w-24 rounded-full ${
                 esMinimalista
                   ? 'bg-gradient-to-r from-emerald-300/60 via-sky-300/60 to-violet-300/60'
                   : 'bg-gradient-to-r from-[#8CD7B0] via-[#9BC0F5] to-[#BEB0F5]'
               }`}
-            />
+            >
+              {!animacionesReducidas && (
+                <div className="absolute inset-y-0 w-10 bg-white/55 blur-[1px] animate-[candadoShimmerLine_4.8s_ease-in-out_infinite]" />
+              )}
+            </div>
             <p
               className={`mt-3 text-xs sm:text-sm max-w-xs sm:max-w-md leading-relaxed font-medium ${
                 esMinimalista ? 'text-slate-400' : 'text-[#353A4D]'
@@ -1010,9 +1029,18 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
             ].map((tile, idx) => (
               <div
                 key={idx}
-                className={`w-12 h-14 sm:w-14 sm:h-16 rounded-xl border flex items-center justify-center font-mono font-bold text-xl sm:text-2xl ${
+                className={`w-12 h-14 sm:w-14 sm:h-16 rounded-xl border flex items-center justify-center font-mono font-bold text-xl sm:text-2xl transition-transform duration-200 hover:-translate-y-1 ${
                   esMinimalista ? tile.dark : tile.light
+                } ${
+                  !animacionesReducidas
+                    ? 'animate-[candadoTileWave_4.8s_ease-in-out_infinite]'
+                    : ''
                 }`}
+                style={
+                  !animacionesReducidas
+                    ? { animationDelay: `${idx * 0.45}s` }
+                    : undefined
+                }
               >
                 {tile.txt}
               </div>
@@ -1029,8 +1057,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               }}
               className={
                 esMinimalista
-                  ? 'w-full py-3.5 px-6 rounded-xl font-bold text-sm sm:text-base bg-emerald-300/90 hover:bg-emerald-200 text-slate-950 shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap'
-                  : 'w-full py-3.5 px-6 rounded-xl font-bold text-sm sm:text-base bg-[#B7EBD0] hover:bg-[#A4E3C2] text-[#0F3D27] border border-[#8AD2AE] shadow-xs hover:-translate-y-0.5 active:translate-y-0 transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap'
+                  ? 'w-full py-3.5 px-6 rounded-xl font-bold text-sm sm:text-base bg-emerald-300/90 hover:bg-emerald-200 text-slate-950 shadow-md hover:-translate-y-0.5 active:scale-[0.99] transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap'
+                  : 'w-full py-3.5 px-6 rounded-xl font-bold text-sm sm:text-base bg-[#B7EBD0] hover:bg-[#A4E3C2] text-[#0F3D27] border border-[#8AD2AE] shadow-xs hover:-translate-y-0.5 active:scale-[0.99] transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap'
               }
             >
               <span>Partida en Solitario</span>
@@ -1041,8 +1069,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               onClick={iniciarRetoAleatorio}
               className={
                 esMinimalista
-                  ? 'w-full py-3 px-6 rounded-xl font-semibold text-sm bg-amber-200/15 hover:bg-amber-200/25 text-amber-200 border border-amber-200/30 transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap'
-                  : 'w-full py-3 px-6 rounded-xl font-semibold text-sm bg-[#FCE8B8] hover:bg-[#F9DE9E] text-[#4A3309] border border-[#EAD08E] shadow-xs hover:-translate-y-0.5 active:translate-y-0 transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap'
+                  ? 'w-full py-3 px-6 rounded-xl font-semibold text-sm bg-amber-200/15 hover:bg-amber-200/25 text-amber-200 border border-amber-200/30 hover:-translate-y-0.5 active:scale-[0.99] transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap'
+                  : 'w-full py-3 px-6 rounded-xl font-semibold text-sm bg-[#FCE8B8] hover:bg-[#F9DE9E] text-[#4A3309] border border-[#EAD08E] shadow-xs hover:-translate-y-0.5 active:scale-[0.99] transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap'
               }
             >
               <span>Reto Aleatorio</span>
@@ -1056,8 +1084,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               }}
               className={
                 esMinimalista
-                  ? 'w-full py-3 px-6 rounded-xl font-semibold text-sm bg-sky-200/15 hover:bg-sky-200/25 text-sky-200 border border-sky-200/30 transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap'
-                  : 'w-full py-3 px-6 rounded-xl font-semibold text-sm bg-[#CEE4FF] hover:bg-[#BBD8FE] text-[#143254] border border-[#A4C6F4] shadow-xs hover:-translate-y-0.5 active:translate-y-0 transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap'
+                  ? 'w-full py-3 px-6 rounded-xl font-semibold text-sm bg-sky-200/15 hover:bg-sky-200/25 text-sky-200 border border-sky-200/30 hover:-translate-y-0.5 active:scale-[0.99] transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap'
+                  : 'w-full py-3 px-6 rounded-xl font-semibold text-sm bg-[#CEE4FF] hover:bg-[#BBD8FE] text-[#143254] border border-[#A4C6F4] shadow-xs hover:-translate-y-0.5 active:scale-[0.99] transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap'
               }
             >
               <span>Jugar en Línea (P2P)</span>
@@ -1106,7 +1134,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               </button>
             </div>
           </div>
-        </>
+        </div>
       )}
 
       {/* ===================================================================== */}
@@ -1441,7 +1469,7 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
       {/* PANTALLA 3: JUEGO ACTIVO LOCAL (MISMA GEOMETRÍA COMPACTA Y FIJA)      */}
       {/* ===================================================================== */}
       {modalidadJuego === 'local' && pantalla === 'juego' && estado && (
-        <div className="w-full flex-1 flex flex-col items-center justify-start">
+        <div className="relative z-10 w-full flex-1 flex flex-col items-center justify-start">
           {/* Barra superior compacta */}
           <div
             className={
@@ -1595,6 +1623,10 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
               {estado.fase !== 'jugando' ? (
                 <div
                   className={`w-full rounded-2xl p-3.5 text-center border ${
+                    !animacionesReducidas
+                      ? 'animate-[scaleIn_0.22s_cubic-bezier(0.16,1,0.3,1)] '
+                      : ''
+                  }${
                     estado.fase === 'ganada'
                       ? esMinimalista
                         ? 'bg-emerald-950/60 border-emerald-400/35 text-emerald-100'
@@ -1697,7 +1729,9 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                           key={d}
                           type="button"
                           onClick={() => ingresarDigito(d)}
-                          className={`relative h-10 sm:h-11 rounded-xl font-mono font-bold text-base tabular-nums transition-colors cursor-pointer active:translate-y-0.5 ${
+                          className={`relative h-10 sm:h-11 rounded-xl font-mono font-bold text-base tabular-nums transition-all duration-150 cursor-pointer ${
+                            !animacionesReducidas ? 'hover:-translate-y-0.5 active:scale-95' : 'active:translate-y-0.5'
+                          } ${
                             nota === 'descartado'
                               ? esMinimalista
                                 ? 'bg-slate-950/80 text-slate-600 border border-white/5 line-through'
@@ -1727,8 +1761,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                       onClick={borrarDigito}
                       className={
                         esMinimalista
-                          ? 'h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-semibold text-xs cursor-pointer'
-                          : 'h-10 rounded-xl bg-[#FAF4E4] hover:bg-[#FAD8DD] text-[#1F2333] hover:text-[#661924] border border-[#DDD3BA] font-semibold text-xs cursor-pointer transition-colors'
+                          ? 'h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-semibold text-xs cursor-pointer transition-all duration-150 active:scale-95'
+                          : 'h-10 rounded-xl bg-[#FAF4E4] hover:bg-[#FAD8DD] text-[#1F2333] hover:text-[#661924] border border-[#DDD3BA] font-semibold text-xs cursor-pointer transition-all duration-150 active:scale-95'
                       }
                     >
                       ⌫ Borrar
@@ -1738,8 +1772,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                       onClick={limpiarEntrada}
                       className={
                         esMinimalista
-                          ? 'h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-semibold text-xs cursor-pointer'
-                          : 'h-10 rounded-xl bg-[#FAF4E4] hover:bg-[#FCE8B8] text-[#1F2333] hover:text-[#4A3309] border border-[#DDD3BA] font-semibold text-xs cursor-pointer transition-colors'
+                          ? 'h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-semibold text-xs cursor-pointer transition-all duration-150 active:scale-95'
+                          : 'h-10 rounded-xl bg-[#FAF4E4] hover:bg-[#FCE8B8] text-[#1F2333] hover:text-[#4A3309] border border-[#DDD3BA] font-semibold text-xs cursor-pointer transition-all duration-150 active:scale-95'
                       }
                     >
                       Limpiar
@@ -1749,8 +1783,8 @@ export const CandadoGame: React.FC<CandadoGameProps> = ({
                       onClick={enviarIntento}
                       className={
                         esMinimalista
-                          ? 'col-span-2 h-10 rounded-xl bg-emerald-300/90 hover:bg-emerald-200 text-slate-950 font-bold text-xs sm:text-sm cursor-pointer transition-colors'
-                          : 'col-span-2 h-10 rounded-xl bg-[#B7EBD0] hover:bg-[#A4E3C2] text-[#0F3D27] border border-[#8AD2AE] active:translate-y-0.5 font-bold text-xs sm:text-sm cursor-pointer transition-colors'
+                          ? 'col-span-2 h-10 rounded-xl bg-emerald-300/90 hover:bg-emerald-200 text-slate-950 font-bold text-xs sm:text-sm cursor-pointer transition-all duration-150 hover:-translate-y-0.5 active:scale-95'
+                          : 'col-span-2 h-10 rounded-xl bg-[#B7EBD0] hover:bg-[#A4E3C2] text-[#0F3D27] border border-[#8AD2AE] hover:-translate-y-0.5 active:scale-95 font-bold text-xs sm:text-sm cursor-pointer transition-all duration-150'
                       }
                     >
                       Probar clave

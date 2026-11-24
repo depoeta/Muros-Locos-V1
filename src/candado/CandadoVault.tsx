@@ -136,8 +136,34 @@ export const CandadoVault: React.FC<CandadoVaultProps> = ({
         errorShake && !animacionesReducidas ? 'animate-[shake_0.28s_ease-in-out]' : ''
       }`}
     >
+      {/* Halo pastel ambiental sereno detrás de la bóveda */}
+      <div
+        aria-hidden="true"
+        className={`pointer-events-none absolute -inset-x-3 top-6 bottom-1 rounded-3xl blur-2xl transition-opacity duration-500 ${
+          abierta
+            ? esMinimalista
+              ? 'bg-emerald-400/20 opacity-90'
+              : 'bg-[#A6E5C5]/45 opacity-95'
+            : bloqueada
+            ? esMinimalista
+              ? 'bg-rose-400/18 opacity-85'
+              : 'bg-[#F5BAC2]/40 opacity-90'
+            : esMinimalista
+            ? 'bg-indigo-400/12 opacity-75'
+            : 'bg-[#E6DEC8]/45 opacity-75'
+        } ${
+          !animacionesReducidas ? 'animate-[candadoFloatGentle_6.5s_ease-in-out_infinite]' : ''
+        }`}
+      />
+
       {/* Grillete mate moderno */}
-      <div className="relative h-8 sm:h-9 w-24 sm:w-28 flex items-end justify-center overflow-visible -mb-2 z-0">
+      <div
+        className={`relative h-8 sm:h-9 w-24 sm:w-28 flex items-end justify-center overflow-visible -mb-2 z-0 ${
+          !abierta && !bloqueada && !animacionesReducidas
+            ? 'animate-[candadoFloatGentle_6s_ease-in-out_infinite]'
+            : ''
+        }`}
+      >
         <svg
           viewBox="0 0 180 90"
           className={`w-full h-full overflow-visible ${
@@ -181,7 +207,7 @@ export const CandadoVault: React.FC<CandadoVaultProps> = ({
           esMinimalista
             ? 'shadow-[0_14px_30px_-10px_rgba(0,0,0,0.55)]'
             : 'shadow-[0_10px_26px_-8px_rgba(38,41,59,0.14)]'
-        } p-2.5 sm:p-3 transition-colors`}
+        } p-2.5 sm:p-3 transition-colors duration-300`}
       >
         {/* Cabecera de estado */}
         <div className="flex items-center justify-between text-[11px] mb-1.5 gap-2">
@@ -221,7 +247,11 @@ export const CandadoVault: React.FC<CandadoVaultProps> = ({
                   onClick={() => onSelectSlot(idx)}
                   disabled={fase !== 'jugando'}
                   aria-label={`Dígito ${idx + 1}: ${val || 'vacío'}`}
-                  className={`relative ${slotHeightClass} rounded-xl flex items-center justify-center font-mono font-bold tabular-nums transition-all cursor-pointer select-none ${
+                  className={`relative ${slotHeightClass} rounded-xl flex items-center justify-center font-mono font-bold tabular-nums transition-all duration-150 cursor-pointer select-none ${
+                    fase === 'jugando' && !animacionesReducidas
+                      ? 'hover:-translate-y-0.5 active:scale-95'
+                      : ''
+                  } ${
                     abierta
                       ? esMinimalista
                         ? 'bg-emerald-400/20 text-emerald-100 border border-emerald-300/50'
@@ -243,11 +273,24 @@ export const CandadoVault: React.FC<CandadoVaultProps> = ({
                       : 'bg-[#EFE7D4] text-[#665F50] border border-[#D8CEB6] hover:border-[#B4A78B]'
                   }`}
                 >
-                  <span>{val !== '' ? val : '•'}</span>
+                  <span
+                    key={`${idx}-${val}`}
+                    className={
+                      val !== '' && !animacionesReducidas
+                        ? 'inline-block animate-[candadoDialPop_0.18s_cubic-bezier(0.16,1,0.3,1)]'
+                        : 'inline-block'
+                    }
+                  >
+                    {val !== '' ? val : '•'}
+                  </span>
                   {seleccionado && (
                     <span
                       className={`absolute bottom-0.5 w-3.5 h-0.5 rounded-full ${
                         esMinimalista ? 'bg-indigo-300' : 'bg-[#6B89D6]'
+                      } ${
+                        !animacionesReducidas
+                          ? 'animate-[candadoCursorBreathe_1.8s_ease-in-out_infinite]'
+                          : ''
                       }`}
                     />
                   )}

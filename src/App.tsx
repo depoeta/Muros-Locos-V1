@@ -47,7 +47,6 @@ import {
   obtenerDiagnosticoRed,
   obteneruserActual,
   penalizarAbandono,
-  pingServidor,
   sincronizarConNube,
   suscribirCambiosNube,
   suscribirDiagnostico,
@@ -70,6 +69,7 @@ import {
   VictoryModal,
 } from './components/Modals';
 import { OfflineIndicator } from './components/PWAInstallControl';
+import { AmbientBackdrop } from './components/AmbientBackdrop';
 import { CandadoGame, limpiarSesionCandadoPersistida } from './candado';
 
 function leerSalaDeUrl(): string | null {
@@ -368,13 +368,7 @@ export const App: React.FC = () => {
   // Suscripción permanente al estado de la Database + resincronización automática al volver internet
   useEffect(() => {
     const onBrowserOnline = () => {
-      pingServidor()
-        .then((diag) => {
-          if (diag.dbConectado) {
-            return sincronizarConNube(true);
-          }
-        })
-        .catch(() => {});
+      sincronizarConNube(true).catch(() => {});
     };
     window.addEventListener('online', onBrowserOnline);
 
@@ -404,9 +398,8 @@ export const App: React.FC = () => {
     sounds.playClick();
     setReconectandoDb(true);
     try {
-      const diag = await pingServidor();
-      if (diag.dbConectado) {
-        await sincronizarConNube(true);
+      const res = await sincronizarConNube(true);
+      if (res.dbConectado) {
         showToast('🟢 Conectado a la Database — Datos sincronizados');
       } else {
         showToast('🔴 Sigue sin conexión a la Database');
@@ -1563,7 +1556,7 @@ export const App: React.FC = () => {
 
   const murosRootClass =
     estiloMuros === 'pastel_oscuro'
-      ? 'bg-gradient-to-br from-[#11131E] via-[#151828] to-[#191D30] text-slate-100 selection:bg-indigo-300/30 selection:text-white'
+      ? 'bg-gradient-to-br from-[#14172B] via-[#1B1D36] to-[#231D38] text-slate-100 selection:bg-indigo-300/30 selection:text-white'
       : estiloMuros === 'pastel_claro'
       ? 'bg-gradient-to-b from-[#FCF8EC] via-[#FAF4E4] to-[#F7EFE0] text-[#171923] selection:bg-[#FCE8B8] selection:text-[#171923]'
       : 'bg-[#74c0fc] text-[#2b2140] selection:bg-[#ffd43b] selection:text-[#2b2140]';
@@ -1573,7 +1566,7 @@ export const App: React.FC = () => {
     <div
       className={`relative w-full h-full min-h-dvh flex flex-col items-center justify-between overflow-x-hidden overflow-y-auto transition-colors duration-300 ${
         juegoActivo === 'candado'
-          ? 'bg-[#131624] text-slate-100 selection:bg-indigo-300/30 selection:text-white'
+          ? 'bg-[#14172B] text-slate-100 selection:bg-indigo-300/30 selection:text-white'
           : murosRootClass
       }`}
     >
@@ -1618,22 +1611,12 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Nubes decorativas de fondo (solo en Muros Locos estilo Clásico) */}
-      {juegoActivo === 'muros' && estiloMuros === 'clasico' && (
-        <div className="pointer-events-none fixed inset-0 overflow-hidden z-0">
-          <div
-            className="absolute top-10 w-48 h-16 bg-white/40 rounded-full filter blur-xs animate-[cloudDriftA_35s_linear_infinite]"
-            style={{ animationDelay: '0s' }}
-          />
-          <div
-            className="absolute top-36 w-64 h-20 bg-white/30 rounded-full filter blur-xs animate-[cloudDriftB_45s_linear_infinite]"
-            style={{ animationDelay: '-15s' }}
-          />
-          <div
-            className="absolute top-72 w-52 h-16 bg-white/35 rounded-full filter blur-xs animate-[cloudDriftC_40s_linear_infinite]"
-            style={{ animationDelay: '-8s' }}
-          />
-        </div>
+      {/* Fondo animado ambiental (Clásico, Pastel Oscuro y Pastel Claro) */}
+      {juegoActivo === 'muros' && (
+        <AmbientBackdrop
+          variant={estiloMuros}
+          reducedMotion={ajustes.animacionesReducidas}
+        />
       )}
 
       {/* Alerta de desconexión del rival en modo Online */}

@@ -1165,11 +1165,15 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
             return (
               <div
                 key={itemA.numero}
-                className={
+                className={`${
+                  !animacionesReducidas
+                    ? 'animate-[candadoAttemptEnter_0.24s_cubic-bezier(0.16,1,0.3,1)] '
+                    : ''
+                }${
                   esMinimalista
                     ? 'px-2.5 py-1.5 rounded-xl bg-slate-800/70 border border-white/10 flex items-center justify-between gap-1.5'
                     : 'px-2.5 py-1.5 rounded-xl bg-[#FAF4E4] border border-[#E2D9C2] flex items-center justify-between gap-1.5'
-                }
+                }`}
               >
                 <span
                   className={`text-[10px] font-semibold tabular-nums w-5 shrink-0 ${
@@ -1224,11 +1228,15 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
           return (
             <div
               key={itemB.numero}
-              className={
+              className={`${
+                !animacionesReducidas
+                  ? 'animate-[candadoAttemptEnter_0.24s_cubic-bezier(0.16,1,0.3,1)] '
+                  : ''
+              }${
                 esMinimalista
                   ? 'px-2.5 py-1.5 rounded-xl bg-slate-800/70 border border-white/10 flex items-center justify-between gap-2'
                   : 'px-2.5 py-1.5 rounded-xl bg-[#FAF4E4] border border-[#E2D9C2] flex items-center justify-between gap-2'
-              }
+              }`}
             >
               <div className="flex items-center gap-1.5 min-w-0">
                 <span
@@ -1325,6 +1333,18 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
             1v1 Directo
           </span>
         </div>
+
+        {errorLobby && (
+          <div
+            className={
+              esMinimalista
+                ? 'px-3 py-2 rounded-xl bg-rose-400/20 border border-rose-400/35 text-rose-200 text-xs font-semibold text-center'
+                : 'px-3 py-2 rounded-xl bg-[#FAD8DD] border border-[#E59FA8] text-[#661924] text-xs font-semibold text-center'
+            }
+          >
+            ⚠️ {errorLobby}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-[1.05fr_0.95fr] gap-3">
           {/* Columna Izquierda: Crear Sala Candado */}
@@ -1669,18 +1689,6 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
                 Entrar
               </button>
             </div>
-
-            {errorLobby && (
-              <div
-                className={
-                  esMinimalista
-                    ? 'mb-2.5 px-3 py-2 rounded-xl bg-rose-400/20 border border-rose-400/35 text-rose-200 text-xs font-semibold'
-                    : 'mb-2.5 px-3 py-2 rounded-xl bg-[#FAD8DD] border border-[#E59FA8] text-[#661924] text-xs font-semibold'
-                }
-              >
-                {errorLobby}
-              </div>
-            )}
 
             <div className="flex items-center justify-between gap-2 mb-1.5">
               <h3 className="text-sm font-bold">Salas Candado ({salasPublicas.length})</h3>
@@ -2032,7 +2040,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
         {/* Avatares y turno */}
         <div className="flex items-center gap-2.5 min-w-0">
           <div
-            className={`flex items-center gap-1.5 px-2 py-1 rounded-xl border ${
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-xl border transition-all duration-300 ${
               esMiTurno
                 ? esMinimalista
                   ? 'bg-emerald-400/20 border-emerald-400/40 text-emerald-100'
@@ -2069,7 +2077,7 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
           </span>
 
           <div
-            className={`flex items-center gap-1.5 px-2 py-1 rounded-xl border ${
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-xl border transition-all duration-300 ${
               duelo.fase === 'jugando' && !esMiTurno
                 ? esMinimalista
                   ? 'bg-amber-300/20 border-amber-300/40 text-amber-100'
@@ -2311,6 +2319,10 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
           {duelo.fase === 'terminada' ? (
             <div
               className={`w-full rounded-2xl p-3.5 text-center border ${
+                !animacionesReducidas
+                  ? 'animate-[scaleIn_0.22s_cubic-bezier(0.16,1,0.3,1)] '
+                  : ''
+              }${
                 duelo.desenlaceParaMi === 'victoria'
                   ? esMinimalista
                     ? 'bg-emerald-950/60 border-emerald-400/35 text-emerald-100'
@@ -2498,7 +2510,9 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
                       type="button"
                       disabled={deshabilitadoPorVerif}
                       onClick={() => ingresarDigito(d)}
-                      className={`h-10 sm:h-11 rounded-xl font-mono font-bold text-base tabular-nums transition-colors cursor-pointer active:translate-y-0.5 disabled:opacity-45 ${
+                      className={`h-10 sm:h-11 rounded-xl font-mono font-bold text-base tabular-nums transition-all duration-150 cursor-pointer disabled:opacity-45 ${
+                        !animacionesReducidas ? 'hover:-translate-y-0.5 active:scale-95' : 'active:translate-y-0.5'
+                      } ${
                         nota === 'descartado'
                           ? esMinimalista
                             ? 'bg-slate-950/80 text-slate-600 border border-white/5 line-through'
@@ -2529,8 +2543,8 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
                   onClick={borrarDigito}
                   className={
                     esMinimalista
-                      ? 'h-10 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-45 text-slate-200 border border-white/10 font-semibold text-xs cursor-pointer'
-                      : 'h-10 rounded-xl bg-[#FAF4E4] hover:bg-[#FAD8DD] disabled:opacity-45 text-[#1F2333] hover:text-[#661924] border border-[#DDD3BA] font-semibold text-xs cursor-pointer'
+                      ? 'h-10 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-45 text-slate-200 border border-white/10 font-semibold text-xs cursor-pointer transition-all duration-150 active:scale-95'
+                      : 'h-10 rounded-xl bg-[#FAF4E4] hover:bg-[#FAD8DD] disabled:opacity-45 text-[#1F2333] hover:text-[#661924] border border-[#DDD3BA] font-semibold text-xs cursor-pointer transition-all duration-150 active:scale-95'
                   }
                 >
                   ⌫ Borrar
@@ -2541,8 +2555,8 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
                   onClick={limpiarEntrada}
                   className={
                     esMinimalista
-                      ? 'h-10 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-45 text-slate-200 border border-white/10 font-semibold text-xs cursor-pointer'
-                      : 'h-10 rounded-xl bg-[#FAF4E4] hover:bg-[#FCE8B8] disabled:opacity-45 text-[#1F2333] hover:text-[#4A3309] border border-[#DDD3BA] font-semibold text-xs cursor-pointer'
+                      ? 'h-10 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-45 text-slate-200 border border-white/10 font-semibold text-xs cursor-pointer transition-all duration-150 active:scale-95'
+                      : 'h-10 rounded-xl bg-[#FAF4E4] hover:bg-[#FCE8B8] disabled:opacity-45 text-[#1F2333] hover:text-[#4A3309] border border-[#DDD3BA] font-semibold text-xs cursor-pointer transition-all duration-150 active:scale-95'
                   }
                 >
                   Limpiar
@@ -2553,8 +2567,8 @@ export const CandadoOnlineView: React.FC<CandadoOnlineViewProps> = ({
                   onClick={enviarIntentoP2P}
                   className={
                     esMinimalista
-                      ? 'col-span-2 h-10 rounded-xl bg-emerald-300/90 hover:bg-emerald-200 disabled:opacity-45 text-slate-950 font-bold text-xs sm:text-sm cursor-pointer'
-                      : 'col-span-2 h-10 rounded-xl bg-[#B7EBD0] hover:bg-[#A4E3C2] disabled:opacity-45 text-[#0F3D27] border border-[#82CAA4] font-bold text-xs sm:text-sm cursor-pointer'
+                      ? 'col-span-2 h-10 rounded-xl bg-emerald-300/90 hover:bg-emerald-200 disabled:opacity-45 text-slate-950 font-bold text-xs sm:text-sm cursor-pointer transition-all duration-150 hover:-translate-y-0.5 active:scale-95'
+                      : 'col-span-2 h-10 rounded-xl bg-[#B7EBD0] hover:bg-[#A4E3C2] disabled:opacity-45 text-[#0F3D27] border border-[#82CAA4] font-bold text-xs sm:text-sm cursor-pointer transition-all duration-150 hover:-translate-y-0.5 active:scale-95'
                   }
                 >
                   {esperandoVerificacion

@@ -6,7 +6,7 @@
  * Mantiene total aislamiento respecto a src/game/onlineService.ts de Muros Locos.
  */
 
-import { getApiBaseUrl } from '../game/storage';
+import { getApiBaseUrl, obtenerGuestHostId, obtenerTokenSesion } from '../game/storage';
 import {
   ConfigDueloCandadoP2P,
   DigitosCandado,
@@ -145,6 +145,34 @@ class CandadoOnlineManager {
   private httpQueue: Array<{ msg: MensajeCandadoP2P; intento: number }> = [];
   private httpQueueRunning: boolean = false;
   private httpRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  constructor() {
+    if (typeof window !== 'undefined') {
+      const handleUnload = () => {
+        if (this.role && this.roomCode && !this.isExiting) {
+          if (this.inMatch) {
+            return;
+          }
+          if (this.role === 'host') {
+            const token = obtenerTokenSesion();
+            const qs = new URLSearchParams({
+              peerId: this.myPeerId || '',
+              guestHostId: obtenerGuestHostId(),
+            });
+            fetch(getApiBaseUrl(`/api/salas/${encodeURIComponent(this.roomCode)}?${qs.toString()}`), {
+              method: 'DELETE',
+              headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+              cache: 'no-store',
+              keepalive: true,
+            }).catch(() => {});
+          }
+          this.cleanUp();
+        }
+      };
+      window.addEventListener('pagehide', handleUnload);
+      window.addEventListener('beforeunload', handleUnload);
+    }
+  }
 
   public setCallbacks(cb: CandadoOnlineCallbacks) {
     this.callbacks = cb;
@@ -288,9 +316,14 @@ class CandadoOnlineManager {
     };
     this.lobbyPlayers = [hostJugador];
 
+    const token = obtenerTokenSesion();
+    const guestHostId = obtenerGuestHostId();
     const res = await fetch(getApiBaseUrl('/api/salas'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       cache: 'no-store',
       body: JSON.stringify({
         codigo: this.roomCode,
@@ -298,6 +331,7 @@ class CandadoOnlineManager {
         nombre: `Candado de ${this.myName}`,
         anfitrion: this.myName,
         cuentaId: this.myCuentaId,
+        guestHostId,
         hostPeerId: this.myPeerId,
         color: hostJugador.color,
         hat: hostJugador.hat,
@@ -317,8 +351,11 @@ class CandadoOnlineManager {
     });
 
     if (!res.ok) {
+      const errData = await res.json().catch(() => null);
+      this.role = null;
+      this.roomCode = '';
       this.cleanUp();
-      throw new Error('No se pudo crear la sala de Candado en el servidor.');
+      throw new Error(errData?.error || 'No se pudo crear la sala de Candado en el servidor.');
     }
 
     this.callbacks.onConnectionModeChange?.('http');
@@ -392,11 +429,15 @@ class CandadoOnlineManager {
       } catch {}
     }
 
+    const token = obtenerTokenSesion();
     const res = await fetch(
       getApiBaseUrl(`/api/salas/${encodeURIComponent(codigoLimpio)}/join`),
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         cache: 'no-store',
         body: JSON.stringify({
           peerId: this.myPeerId,
@@ -442,15 +483,21 @@ class CandadoOnlineManager {
     if (this.role !== 'host' || !this.roomCode) return;
     this.configSala = { ...config };
     try {
+      const token = obtenerTokenSesion();
+      const guestHostId = obtenerGuestHostId();
       await fetch(getApiBaseUrl('/api/salas'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         cache: 'no-store',
         body: JSON.stringify({
           codigo: this.roomCode,
           juego: 'candado',
           anfitrion: this.myName,
           cuentaId: this.myCuentaId,
+          guestHostId,
           hostPeerId: this.myPeerId,
           maxJugadores: 2,
           modoCandado: config.modo,
@@ -977,15 +1024,26 @@ class CandadoOnlineManager {
     if (!code) return;
     try {
       if (role === 'host' && !wasInMatch) {
-        await fetch(getApiBaseUrl(`/api/salas/${encodeURIComponent(code)}`), {
-          method: 'DELETE',
-          cache: 'no-store',
+        const token = obtenerTokenSesion();
+        const qs = new URLSearchParams({
+          peerId: peerId || '',
+          guestHostId: obtenerGuestHostId(),
         });
+        await fetch(
+          getApiBaseUrl(`/api/salas/${encodeURIComponent(code)}?${qs.toString()}`),
+          {
+            method: 'DELETE',
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+            cache: 'no-store',
+            keepalive: true,
+          }
+        );
       } else {
         await fetch(getApiBaseUrl(`/api/salas/${encodeURIComponent(code)}/leave`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           cache: 'no-store',
+          keepalive: true,
           body: JSON.stringify({ peerId, nombre, jugadorId }),
         });
       }
